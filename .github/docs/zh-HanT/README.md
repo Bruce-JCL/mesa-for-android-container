@@ -12,11 +12,11 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
   - 只編譯與絕大部分 Android 裝置相關的驅動程式，減小套件大小。  
 ## 相容性
 
-|          GPU           | OpenGL | OpenGL ES | Vulkan (Zink) | Vulkan |
-| :--------------------: | :----: | :-------: | :-----------: | :----: |
-|     **Adreno 660**     |  ✔️支援  |   ✔️支援    |     ✔️支援      |  ✔️支援  |
-| **Adreno 730/740/750** |  ✔️支援  |   ✔️支援    |     ✔️支援      |  ✔️支援  |
-|     **Adreno 840**     |  ✔️支援  |   ✔️支援    |     ❔未測試      |  ❌不支援  |
+|          GPU           | OpenGL | OpenGL ES | Vulkan |
+| :--------------------: | :----: | :-------: | :----: |
+|     **Adreno 660**     |  ✔️支援  |   ✔️支援    |  ✔️支援  |
+| **Adreno 730/740/750** |  ✔️支援  |   ✔️支援    |  ✔️支援  |
+|     **Adreno 840**     |  ✔️支援  |   ✔️支援    |  ❌不支援  |
 ## 安裝
 本專案的 Releases 有兩種形式的安裝包，一種可以使用 Linux 發行版的套件管理器安裝，另一種只能直接解壓來安裝。推薦使用第一種安裝包，若需要最新的 Mesa 功能（例如 Adreno 840 的支援），則可以使用第二種。  
 若常規的 Release（標題不帶 `turnip-` 前綴）中的 Turnip 驅動無法正常運作，可使用**未打補丁的 Turnip 驅動**（標題帶 `turnip-` 前綴），直接覆蓋安裝即可。  
@@ -27,6 +27,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 | :--------: | :----------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------: |
 |   Debian   |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 |   Ubuntu   | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
+|   Fedora   |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
 | Arch Linux |              [26.0.0-1.1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.0.0-devel-20251209)              |              [turnip-26.0.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.0.0-devel-20251215)              |
 ### 直接解壓  
 ℹ️**注意**：Releases 中 `.tar.gz` 格式的安裝包僅能覆蓋原有的 Mesa 驅動程式，卸載時需手動刪除解壓出來的檔案，僅供測試使用。  
