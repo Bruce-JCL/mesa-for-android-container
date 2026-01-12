@@ -68,13 +68,13 @@ static bool
 visit_cf_list(struct exec_list *list, struct divergence_state *state);
 
 bool
-nir_src_is_divergent(nir_src *src)
+nir_def_is_divergent_at_use_block(nir_def *def, nir_block *block)
 {
-   if (src->ssa->divergent)
+   if (def->divergent)
       return true;
 
-   nir_cf_node *use_node = nir_src_get_block(src)->cf_node.parent;
-   nir_cf_node *def_node = nir_def_block(src->ssa)->cf_node.parent;
+   nir_cf_node *use_node = block->cf_node.parent;
+   nir_cf_node *def_node = nir_def_block(def)->cf_node.parent;
 
    /* Short-cut the common case. */
    if (def_node == use_node)
@@ -83,7 +83,7 @@ nir_src_is_divergent(nir_src *src)
    /* If the source was computed in a divergent loop, and is not
     * loop-invariant, then it must also be considered divergent.
     */
-   bool loop_invariant = src->ssa->loop_invariant;
+   bool loop_invariant = def->loop_invariant;
    while (def_node) {
       if (def_node->type == nir_cf_node_loop) {
          /* Check whether the use is inside this loop. */
@@ -679,6 +679,13 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
       is_divergent = src_divergent(instr->src[0], state);
       break;
 
+   case nir_intrinsic_quad_swizzle_amd:
+   case nir_intrinsic_masked_swizzle_amd:
+      /* Without fetch inactive, reads for inactive lanes have to return 0. */
+      is_divergent = !nir_intrinsic_fetch_inactive(instr) ||
+                     src_divergent(instr->src[0], state);
+      break;
+
    /* Intrinsics with divergence depending on sources */
    case nir_intrinsic_convert_alu_types:
    case nir_intrinsic_ddx:
@@ -736,8 +743,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_converted_mem_pan:
    case nir_intrinsic_atomic_counter_read:
    case nir_intrinsic_atomic_counter_read_deref:
-   case nir_intrinsic_quad_swizzle_amd:
-   case nir_intrinsic_masked_swizzle_amd:
    case nir_intrinsic_is_sparse_texels_resident:
    case nir_intrinsic_is_sparse_resident_zink:
    case nir_intrinsic_sparse_residency_code_and:
@@ -817,8 +822,8 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
 
    /* Intrinsics which are always divergent */
    case nir_intrinsic_inverse_ballot:
-   case nir_intrinsic_load_color0:
-   case nir_intrinsic_load_color1:
+   case nir_intrinsic_load_color0_amd:
+   case nir_intrinsic_load_color1_amd:
    case nir_intrinsic_load_sample_id:
    case nir_intrinsic_load_sample_mask_in:
    case nir_intrinsic_load_interpolated_input:

@@ -19,9 +19,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * Authors (Collabora):
- *      Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
  */
 
 #ifndef __VALHALL_COMPILER_H
@@ -91,6 +88,10 @@ va_select_fau_page(const bi_instr *I)
 struct va_stats {
    /** Counts per pipe */
    unsigned fma, cvt, sfu, v, ls, t;
+   /** Mask of registers used */
+   uint64_t reg_mask;
+   /** number of uniform registers used */
+   unsigned nr_fau_uniforms;
 };
 
 void va_count_instr_stats(bi_instr *I, struct va_stats *stats);

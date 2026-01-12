@@ -35,9 +35,9 @@ radv_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struct radv
       /* Shaders are allocated in the 32-bit addr space and high bits are already configured. */
       radeon_begin(cs);
       if (pdev->info.gfx_level >= GFX12) {
-         gfx12_push_sh_reg(shader->info.regs.pgm_lo, reloc->va[s] >> 8);
+         gfx12_push_sh_reg(shader->regs.pgm_lo, reloc->va[s] >> 8);
       } else {
-         radeon_set_sh_reg(shader->info.regs.pgm_lo, reloc->va[s] >> 8);
+         radeon_set_sh_reg(shader->regs.pgm_lo, reloc->va[s] >> 8);
       }
       radeon_end();
    }
@@ -49,9 +49,9 @@ radv_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struct radv
 
       radeon_begin(ace_cs);
       if (pdev->info.gfx_level >= GFX12) {
-         gfx12_push_sh_reg(task_shader->info.regs.pgm_lo, va >> 8);
+         gfx12_push_sh_reg(task_shader->regs.pgm_lo, va >> 8);
       } else {
-         radeon_set_sh_reg(task_shader->info.regs.pgm_lo, va >> 8);
+         radeon_set_sh_reg(task_shader->regs.pgm_lo, va >> 8);
       }
       radeon_end();
    }
@@ -1388,7 +1388,8 @@ radv_fill_code_object_record(struct radv_device *device, struct rgp_shader_data 
    memset(shader_data->rt_shader_name, 0, sizeof(shader_data->rt_shader_name));
    shader_data->hash[0] = (uint64_t)(uintptr_t)shader;
    shader_data->hash[1] = (uint64_t)(uintptr_t)shader >> 32;
-   shader_data->code_size = shader->code_size;
+   shader_data->code_size =
+      shader->exec_size; /* Only include executable size so RGP doesn't try to disassemble constant data. */
    shader_data->code = shader->code;
    shader_data->vgpr_count = shader->config.num_vgprs;
    shader_data->sgpr_count = shader->config.num_sgprs;

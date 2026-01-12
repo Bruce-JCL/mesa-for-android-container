@@ -7,8 +7,6 @@
  *    Rob Clark <robclark@freedesktop.org>
  */
 
-#define FD_BO_NO_HARDPIN 1
-
 #include "pipe/p_state.h"
 #include "util/format/u_format.h"
 #include "util/u_helpers.h"
@@ -872,6 +870,12 @@ fd6_emit_static_non_context_regs(struct fd_context *ctx, fd_cs &cs)
             value = (value & ~A6XX_TPL1_DBG_ECO_CNTL1_TP_UBWC_FLAG_HINT) |
                     (screen->info->props.enable_tp_ubwc_flag_hint
                         ? A6XX_TPL1_DBG_ECO_CNTL1_TP_UBWC_FLAG_HINT
+                        : 0);
+            break;
+         case REG_A6XX_SP_CHICKEN_BITS:
+            value = (value & ~A6XX_SP_CHICKEN_BITS_EOLM_ENABLE) |
+                    (screen->info->props.has_eolm_eogm
+                        ? A6XX_SP_CHICKEN_BITS_EOLM_ENABLE
                         : 0);
             break;
       }

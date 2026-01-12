@@ -2006,7 +2006,7 @@ by a particular renderpass/blit.
 	<reg64 offset="0x8104" name="GRAS_LRZ_BUFFER_BASE" align="256" type="waddress" usage="rp_blit" variants="A8XX-"/>
 
 	<bitset name="a6xx_gras_lrz_buffer_pitch" inline="yes">
-		<bitfield name="PITCH" low="0" high="7" shr="5" type="uint"/>
+		<bitfield name="PITCH" low="0" high="7" shr="6" type="uint"/>
 		<bitfield name="ARRAY_PITCH" low="10" high="28" shr="8" type="uint"/>
 	</bitset>
 
@@ -2070,7 +2070,7 @@ by a particular renderpass/blit.
 
 	<!-- 0x810c-0x810f invalid -->
 
-	<reg32 offset="0x8110" name="GRAS_LRZ_BUFFER_SLICE_PITCH" low="0" high="31" shr="8" type="uint" variants="A8XX-"/>
+	<reg32 offset="0x8110" name="GRAS_LRZ_BUFFER_SLICE_PITCH" low="8" high="31" shr="8" type="uint" variants="A8XX-"/>
 
 	<reg32 offset="0x8110" name="GRAS_MODE_CNTL" low="0" high="1" variants="A6XX-A7XX" usage="cmd"/>
 	<reg32 offset="0x8213" name="GRAS_MODE_CNTL" low="0" high="1" variants="A8XX-" usage="cmd"/>
@@ -4271,7 +4271,14 @@ by a particular renderpass/blit.
 	<reg32 offset="0xae02" name="SP_NC_MODE_CNTL">
 		<!-- TODO: valid bits 0x3c3f, see kernel -->
 	</reg32>
-	<reg32 offset="0xae03" name="SP_CHICKEN_BITS" usage="init"/>
+	<reg32 offset="0xae03" name="SP_CHICKEN_BITS" usage="init">
+		<doc>
+			When this bit is enabled, new waves may be unlocked once
+			all invocations have signaled they don't need local
+			memory anymore using (eolm)nop.
+		</doc>
+		<bitfield name="EOLM_ENABLE" pos="1" type="boolean"/>
+	</reg32>
 	<reg32 offset="0xae04" name="SP_NC_MODE_CNTL_2" usage="init">
 		<bitfield name="F16_NO_INF" pos="3" type="boolean"/>
 	</reg32>

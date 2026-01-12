@@ -137,7 +137,7 @@ class A6xxGPUInfo(GPUInfo):
                  cs_shared_mem_size, wave_granularity, fibers_per_sp,
                  magic_regs, raw_magic_regs = None, highest_bank_bit = 15,
                  ubwc_swizzle = 0x6, macrotile_mode = 1,
-                 threadsize_base = 64, max_waves = 16):
+                 threadsize_base = 64, max_waves = 16, num_slices = 0):
         if chip == CHIP.A6XX:
             compute_lb_size = 0
         else:
@@ -163,6 +163,7 @@ class A6xxGPUInfo(GPUInfo):
                          compute_lb_size = compute_lb_size)
 
         self.num_ccu = num_ccu
+        self.num_slices = num_slices
 
         self.props = Struct()
 
@@ -319,6 +320,7 @@ a6xx_base = GPUProps(
         has_hw_multiview = True,
         has_fs_tex_prefetch = True,
         has_sampler_minmax = True,
+        has_astc_hdr = True,
 
         supports_double_threadsize = True,
 
@@ -348,6 +350,7 @@ a6xx_gen1_low = GPUProps(
         has_gmem_fast_clear = False,
         has_hw_multiview = False,
         has_sampler_minmax = False,
+        has_astc_hdr = False,
         has_fs_tex_prefetch = False,
         sysmem_per_ccu_color_cache_size = 8 * 1024,
         sysmem_per_ccu_depth_cache_size = 8 * 1024,
@@ -987,6 +990,7 @@ a7xx_base = GPUProps(
         has_sel_b_fneg = True,
         has_pred_bit = True,
         has_pc_dgen_so_cntl = True,
+        has_eolm_eogm = True,
     )
 
 a7xx_gen1 = GPUProps(
@@ -1460,6 +1464,7 @@ add_gpus([
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base],
         num_ccu = 6,
+        num_slices = 3,
         tile_align_w = 64,
         tile_align_h = 32,
         tile_max_w = 16384,
@@ -1514,6 +1519,7 @@ add_gpus([
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2],
         num_ccu = 6,
+        num_slices = 3,
         tile_align_w = 96,
         tile_align_h = 32,
         tile_max_w = 16416,
@@ -1532,6 +1538,7 @@ add_gpus([
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2],
         num_ccu = 8,
+        num_slices = 4,
         tile_align_w = 64,
         tile_align_h = 64,
         tile_max_w = 16384,

@@ -7,8 +7,6 @@
  *    Rob Clark <robclark@freedesktop.org>
  */
 
-#define FD_BO_NO_HARDPIN 1
-
 #include "util/format_srgb.h"
 #include "util/half_float.h"
 #include "util/u_dump.h"
@@ -808,7 +806,7 @@ clear_lrz_setup(fd_cs &cs, struct fd_resource *zsbuf, struct fd_bo *lrz, double 
    ncrb.add(GRAS_A2D_DEST_TL(CHIP, .x = 0, .y = 0));
    ncrb.add(GRAS_A2D_DEST_BR(CHIP,
       .x = zsbuf->lrz_layout.lrz_pitch - 1,
-      .y = zsbuf->lrz_layout.lrz_height - 1,
+      .y = zsbuf->lrz_layout.lrz_height * zsbuf->b.b.array_size - 1,
    ));
 
    union pipe_color_union clear_color = { .f = {depth} };

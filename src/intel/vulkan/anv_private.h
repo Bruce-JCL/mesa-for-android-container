@@ -1158,8 +1158,18 @@ struct anv_push_range {
 };
 
 enum anv_pipeline_bind_mask {
-   ANV_PIPELINE_BIND_MASK_USES_NUM_WORKGROUP = BITFIELD_BIT(0),
+   ANV_PIPELINE_BIND_MASK_SET0               = BITFIELD_BIT(0),
+   ANV_PIPELINE_BIND_MASK_SET1               = BITFIELD_BIT(1),
+   ANV_PIPELINE_BIND_MASK_SET2               = BITFIELD_BIT(2),
+   ANV_PIPELINE_BIND_MASK_SET3               = BITFIELD_BIT(3),
+   ANV_PIPELINE_BIND_MASK_SET4               = BITFIELD_BIT(4),
+   ANV_PIPELINE_BIND_MASK_SET5               = BITFIELD_BIT(5),
+   ANV_PIPELINE_BIND_MASK_SET6               = BITFIELD_BIT(6),
+   ANV_PIPELINE_BIND_MASK_SET7               = BITFIELD_BIT(7),
+   ANV_PIPELINE_BIND_MASK_USES_NUM_WORKGROUP = BITFIELD_BIT(8),
 };
+
+#define ANV_PIPELINE_BIND_MASK_SET(i) (ANV_PIPELINE_BIND_MASK_SET0 << i)
 
 struct anv_pipeline_bind_map {
    unsigned char                                surface_sha1[20];
@@ -1230,10 +1240,62 @@ struct anv_gfx_state_ptr {
              4 * _cmd_state->len);                                      \
    } while (0)
 
+#define ANV_SHADER_HEAP_MAX_BOS (128)
+
+struct anv_shader_heap {
+   struct anv_device *device;
+
+   struct anv_va_range va_range;
+
+   uint32_t start_pot_size;
+   uint32_t base_pot_size;
+
+   uint64_t start_chunk_size;
+   uint64_t base_chunk_size;
+
+   uint32_t small_chunk_count;
+
+   struct {
+      uint64_t addr;
+      uint64_t size;
+
+      struct anv_bo *bo;
+   } bos[ANV_SHADER_HEAP_MAX_BOS];
+   BITSET_DECLARE(allocated_bos, ANV_SHADER_HEAP_MAX_BOS);
+
+   struct util_vma_heap vma;
+   simple_mtx_t mutex;
+};
+
+struct anv_shader_alloc {
+   uint64_t offset;
+   uint64_t alloc_size;
+};
+
+VkResult anv_shader_heap_init(struct anv_shader_heap *heap,
+                              struct anv_device *device,
+                              struct anv_va_range va_range,
+                              uint32_t start_pot_size,
+                              uint32_t base_pot_size);
+void anv_shader_heap_finish(struct anv_shader_heap *heap);
+
+struct anv_shader_alloc anv_shader_heap_alloc(struct anv_shader_heap *heap,
+                                              uint64_t size,
+                                              uint64_t align,
+                                              bool capture_replay,
+                                              uint64_t requested_addr);
+void anv_shader_heap_free(struct anv_shader_heap *heap, struct anv_shader_alloc alloc);
+
+void anv_shader_heap_upload(struct anv_shader_heap *heap,
+                            struct anv_shader_alloc alloc,
+                            const void *data, uint64_t size);
+
 struct anv_shader {
    struct vk_shader vk;
 
-   struct anv_state kernel;
+   void *code;
+
+   struct anv_shader_alloc kernel;
 
    const struct brw_stage_prog_data *prog_data;
 
@@ -1241,7 +1303,6 @@ struct anv_shader {
    uint32_t num_stats;
 
    char *nir_str;
-   char *asm_str;
 
    struct nir_xfb_info *xfb_info;
 
@@ -1717,6 +1778,7 @@ struct anv_instance {
     bool                                        has_fake_sparse;
     bool                                        disable_fcv;
     bool                                        enable_buffer_comp;
+    bool                                        disable_xe2_drm_ccs_modifiers;
     bool                                        compression_control_enabled;
     bool                                        anv_fake_nonlocal_memory;
     bool                                        anv_upper_bound_descriptor_pool_sampler;
@@ -2462,6 +2524,8 @@ struct anv_device {
     struct util_vma_heap                        vma_dynamic_visible;
     struct util_vma_heap                        vma_trtt;
 
+    struct anv_shader_heap                      shader_heap;
+
     /** List of all anv_device_memory objects */
     struct list_head                            memory_objects;
 
@@ -2487,7 +2551,6 @@ struct anv_device {
     struct anv_state_pool                       general_state_pool;
     struct anv_state_pool                       aux_tt_pool;
     struct anv_state_pool                       dynamic_state_pool;
-    struct anv_state_pool                       instruction_state_pool;
     struct anv_state_pool                       binding_table_pool;
     struct anv_state_pool                       scratch_surface_state_pool;
     struct anv_state_pool                       internal_surface_state_pool;
@@ -3958,6 +4021,25 @@ enum anv_pipe_bits {
     */
    ANV_PIPE_POST_SYNC_BIT                    = (1 << 24),
 
+   /* This bit does not exist directly in PIPE_CONTROL. It indicates that the
+    * end-of-pipe write needs to be flushed out of L3. On Xe2+ this means that
+    * we cannot use RESOURCE_BARRIER to write that value since it'll stay in
+    * L3.
+    */
+   ANV_PIPE_END_OF_PIPE_SYNC_FORCE_FLUSH_L3_BIT = (1 << 25),
+
+   /* This bit does not exist directly in PIPE_CONTROL. It helps to track post
+    * fast clear flushes. BSpec 57340 says in relation to fast clear flushes
+    * that "RESOURCE_BARRIER allows hardware to opportunistically combine this
+    * operation with previous RESOURCE_BARRIER commands potentially reducing
+    * overall synchronization cost", that appears to be untrue as experienced
+    * with
+    * dEQP-VK.synchronization.op.single_queue.barrier.write_clear_color_image_read_copy_image_to_buffer.image_128x128_r8_unorm
+    *
+    * If a PIPE_CONTROL is emitted this should be converted to
+    * ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT.
+    */
+   ANV_PIPE_RT_BTI_CHANGE                    = (1 << 26),
 };
 
 /* These bits track the state of buffer writes for queries. They get cleared
@@ -3973,11 +4055,11 @@ enum anv_query_bits {
    ANV_QUERY_WRITES_DATA_FLUSH    = (1 << 3),
 };
 
-/* It's not clear why DG2 doesn't have issues with L3/CS coherency. But it's
- * likely related to performance workaround 14015868140.
+/* It's not clear why DG2/Xe2+ doesn't have issues with L3/CS coherency. But
+ * it's likely related to performance workaround 14015868140.
  *
- * For now we enable this only on DG2 and platform prior to Gfx12 where there
- * is no tile cache.
+ * For now we enable this only on DG2/Xe2+ and platform prior to Gfx12 where
+ * there is no tile cache.
  */
 #define ANV_DEVINFO_HAS_COHERENT_L3_CS(devinfo) \
    (intel_device_info_is_dg2(devinfo))
@@ -3985,8 +4067,9 @@ enum anv_query_bits {
 /* Things we need to flush before accessing query data using the command
  * streamer.
  *
- * Prior to DG2 experiments show that the command streamer is not coherent
- * with the tile cache so we need to flush it to make any data visible to CS.
+ * Prior to DG2/Xe2+ experiments show that the command streamer is not
+ * coherent with the tile cache so we need to flush it to make any data
+ * visible to CS.
  *
  * Otherwise we want to flush the RT cache which is where blorp writes, either
  * for clearing the query buffer or for clearing the destination buffer in
@@ -4030,6 +4113,12 @@ enum anv_query_bits {
    ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT | \
    ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT | \
    ANV_PIPE_TILE_CACHE_FLUSH_BIT)
+
+#define ANV_PIPE_L1_L2_BARRIER_FLUSH_BITS ( \
+   ANV_PIPE_DEPTH_CACHE_FLUSH_BIT | \
+   ANV_PIPE_HDC_PIPELINE_FLUSH_BIT | \
+   ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT | \
+   ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT)
 
 #define ANV_PIPE_STALL_BITS ( \
    ANV_PIPE_STALL_AT_SCOREBOARD_BIT | \
@@ -4571,6 +4660,8 @@ struct anv_cmd_state {
    struct anv_cmd_compute_state                 compute;
    struct anv_cmd_ray_tracing_state             rt;
 
+   VkPipelineStageFlags2                        pending_src_stages;
+   VkPipelineStageFlags2                        pending_dst_stages;
    enum anv_pipe_bits                           pending_pipe_bits;
 
    /**
@@ -5095,7 +5186,7 @@ void anv_cmd_buffer_restore_state(struct anv_cmd_buffer *cmd_buffer,
 
 struct anv_event {
    struct vk_object_base                        base;
-   uint64_t                                     semaphore;
+   VkEventCreateFlags                           flags;
    struct anv_state                             state;
 };
 
@@ -5167,7 +5258,9 @@ struct anv_shader_internal {
 
    mesa_shader_stage stage;
 
-   struct anv_state kernel;
+   void *code;
+
+   struct anv_shader_alloc kernel;
    uint32_t kernel_size;
 
    const struct brw_stage_prog_data *prog_data;
@@ -6702,21 +6795,30 @@ anv_dump_pipe_bits(enum anv_pipe_bits bits, struct log_stream *stream);
 
 void
 anv_cmd_buffer_pending_pipe_debug(struct anv_cmd_buffer *cmd_buffer,
+                                  VkPipelineStageFlags2 src_stages,
+                                  VkPipelineStageFlags2 dst_stages,
                                   enum anv_pipe_bits bits,
                                   const char* reason);
 
 static inline void
 anv_add_pending_pipe_bits(struct anv_cmd_buffer* cmd_buffer,
+                          VkPipelineStageFlags2 src_stages,
+                          VkPipelineStageFlags2 dst_stages,
                           enum anv_pipe_bits bits,
                           const char* reason)
 {
+   cmd_buffer->state.pending_src_stages |= src_stages;
+   cmd_buffer->state.pending_dst_stages |= dst_stages;
    cmd_buffer->state.pending_pipe_bits |= bits;
    if (unlikely(u_trace_enabled(&cmd_buffer->device->ds.trace_context))) {
       if (cmd_buffer->batch.pc_reasons_count < ARRAY_SIZE(cmd_buffer->batch.pc_reasons))
          cmd_buffer->batch.pc_reasons[cmd_buffer->batch.pc_reasons_count++] = reason;
    }
-   if (INTEL_DEBUG(DEBUG_PIPE_CONTROL))
-      anv_cmd_buffer_pending_pipe_debug(cmd_buffer, bits, reason);
+   if (INTEL_DEBUG(DEBUG_PIPE_CONTROL)) {
+      anv_cmd_buffer_pending_pipe_debug(cmd_buffer,
+                                        src_stages, dst_stages, bits,
+                                        reason);
+   }
 }
 
 struct anv_performance_configuration_intel {

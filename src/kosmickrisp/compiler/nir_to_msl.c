@@ -1063,8 +1063,11 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_global: {
       enum gl_access_qualifier access = nir_intrinsic_access(instr);
       const char *type = msl_type_for_def(ctx->types, &instr->def);
-      const char *addressing =
-         access & ACCESS_COHERENT ? "coherent device" : "device";
+      const bool apply_workaround =
+         !(ctx->disabled_workarounds & BITFIELD64_BIT(6));
+      const char *addressing = apply_workaround || (access & ACCESS_COHERENT)
+                                  ? "coherent device"
+                                  : "device";
       if (access & ACCESS_ATOMIC) {
          assert(instr->num_components == 1u &&
                 "We can only do single component with atomics");
@@ -1133,8 +1136,11 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
    case nir_intrinsic_store_global: {
       enum gl_access_qualifier access = nir_intrinsic_access(instr);
       const char *type = msl_type_for_src(ctx->types, &instr->src[0]);
-      const char *addressing =
-         access & ACCESS_COHERENT ? "coherent device" : "device";
+      const bool apply_workaround =
+         !(ctx->disabled_workarounds & BITFIELD64_BIT(6));
+      const char *addressing = apply_workaround || (access & ACCESS_COHERENT)
+                                  ? "coherent device"
+                                  : "device";
       if (access & ACCESS_ATOMIC) {
          assert(instr->num_components == 1u &&
                 "We can only do single component with atomics");
@@ -1925,7 +1931,7 @@ msl_preprocess_nir(struct nir_shader *nir)
 
    NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
             nir_var_shader_in | nir_var_shader_out, UINT32_MAX);
-   NIR_PASS(_, nir, nir_lower_vars_to_scratch, nir_var_function_temp, 0,
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 0,
             glsl_get_natural_size_align_bytes,
             glsl_get_natural_size_align_bytes);
 

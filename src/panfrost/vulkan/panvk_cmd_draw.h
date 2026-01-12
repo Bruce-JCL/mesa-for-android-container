@@ -49,6 +49,8 @@ struct panvk_rendering_state {
    enum vk_rp_attachment_flags bound_attachments;
    struct {
       struct panvk_image_view *iviews[MAX_RTS];
+      /* If non-null, preload_iviews[i] overrides iviews[i] for preloads. */
+      struct panvk_image_view *preload_iviews[MAX_RTS];
       VkFormat fmts[MAX_RTS];
       uint8_t samples[MAX_RTS];
       struct panvk_resolve_attachment resolve[MAX_RTS];
@@ -59,6 +61,8 @@ struct panvk_rendering_state {
 
    struct {
       struct panvk_image_view *iview;
+      /* If non-null, preload_iview overrides iview for preloads. */
+      struct panvk_image_view *preload_iview;
       VkFormat fmt;
       struct panvk_resolve_attachment resolve;
    } z_attachment, s_attachment;
@@ -247,7 +251,7 @@ panvk_select_tiler_hierarchy_mask(const struct panvk_physical_device *phys_dev,
                                   unsigned bin_ptr_mem_budget)
 {
    struct pan_tiler_features tiler_features =
-      pan_query_tiler_features(&phys_dev->kmod.props);
+      pan_query_tiler_features(&phys_dev->kmod.dev->props);
 
    uint32_t hierarchy_mask = GENX(pan_select_tiler_hierarchy_mask)(
       state->render.fb.info.width, state->render.fb.info.height,

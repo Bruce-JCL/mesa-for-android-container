@@ -19,6 +19,10 @@
 #include "vn_physical_device.h"
 #include "vn_queue.h"
 
+#ifndef DRM_FORMAT_MOD_LINEAR
+#define DRM_FORMAT_MOD_LINEAR 0
+#endif
+
 /* The common WSI support makes some assumptions about the driver.
  *
  * In wsi_device_init, it assumes VK_EXT_pci_bus_info is available.  In
@@ -51,7 +55,7 @@
 /* cast a WSI object to a pointer for logging */
 #define VN_WSI_PTR(obj) ((const void *)(uintptr_t)(obj))
 
-static PFN_vkVoidFunction
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vn_wsi_proc_addr(VkPhysicalDevice physicalDevice, const char *pName)
 {
    struct vn_physical_device *physical_dev =
@@ -63,13 +67,12 @@ vn_wsi_proc_addr(VkPhysicalDevice physicalDevice, const char *pName)
 VkResult
 vn_wsi_init(struct vn_physical_device *physical_dev)
 {
-   /* TODO Drop the workaround for NVIDIA_PROPRIETARY once hw prime buffer
-    * blit path works there.
-    */
    const bool use_sw_device =
       !physical_dev->base.vk.supported_extensions
           .EXT_external_memory_dma_buf ||
-      physical_dev->renderer_driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+      (physical_dev->renderer_driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+       physical_dev->renderer_driver_version <
+          VN_MAKE_NVIDIA_VERSION(590, 48, 1, 0));
 
    const VkAllocationCallbacks *alloc =
       &physical_dev->instance->base.vk.alloc;
@@ -251,7 +254,7 @@ vn_wsi_validate_image_format_info(struct vn_physical_device *physical_dev,
 
 /* swapchain commands */
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_AcquireNextImage2KHR(VkDevice device,
                         const VkAcquireNextImageInfoKHR *pAcquireInfo,
                         uint32_t *pImageIndex)

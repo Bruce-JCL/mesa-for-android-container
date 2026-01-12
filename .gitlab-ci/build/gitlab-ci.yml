@@ -58,7 +58,7 @@ debian-x86_64-asan:
     - .build-run-long
   variables:
     VULKAN_DRIVERS: "swrast,amd,intel"
-    GALLIUM_DRIVERS: "llvmpipe,softpipe,zink"
+    GALLIUM_DRIVERS: "llvmpipe,softpipe,zink,r300"
     C_ARGS: >
       -Wno-error=stringop-truncation
       -Wno-error=deprecated-declarations
@@ -507,8 +507,8 @@ debian-arm64-asan:
     - .meson-build-for-tests
     - .build-run-long
   variables:
-    VULKAN_DRIVERS: "broadcom,freedreno"
-    GALLIUM_DRIVERS: "freedreno,vc4,v3d"
+    VULKAN_DRIVERS: "broadcom,freedreno,panfrost"
+    GALLIUM_DRIVERS: "freedreno,vc4,v3d,panfrost"
     C_ARGS: >
       -Wno-error=deprecated-declarations
     DRI_LOADERS:

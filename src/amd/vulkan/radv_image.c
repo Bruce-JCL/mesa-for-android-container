@@ -657,6 +657,23 @@ radv_get_surface_flags(struct radv_device *device, struct radv_image *image, uns
       UNREACHABLE("unhandled image type");
    }
 
+   if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
+      if ((image->vk.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && !(image->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT)) {
+         /* Select a 2D swizzle mode for 3D CB render targets because it's optimal regardless of the
+          * access pattern (CB prefers thin tiling). This optimization isn't applied to images that
+          * can be used as storage because it mostly depends on the access pattern, and it's really
+          * just a heuristic.
+          */
+         flags |= RADEON_SURF_VIEW_3D_AS_2D_ARRAY;
+      }
+
+      if ((image->vk.usage & VK_IMAGE_USAGE_STORAGE_BIT) &&
+          instance->drirc.performance.prefer_2d_swizzle_for_3d_storage) {
+         /* Some applications perform much better with a 2D swizzle mode for 3D storage images. */
+         flags |= RADEON_SURF_VIEW_3D_AS_2D_ARRAY;
+      }
+   }
+
    /* Required for clearing/initializing a specific layer on GFX8. */
    flags |= RADEON_SURF_CONTIGUOUS_DCC_LAYERS;
 
@@ -1776,18 +1793,11 @@ radv_CreateImage(VkDevice _device, const VkImageCreateInfo *pCreateInfo, const V
       return radv_image_from_gralloc(_device, pCreateInfo, gralloc_info, pAllocator, pImage);
 #endif
 
-#ifdef RADV_USE_WSI_PLATFORM
-   /* Ignore swapchain creation info on Android. Since we don't have an implementation in Mesa,
-    * we're guaranteed to access an Android object incorrectly.
-    */
    VK_FROM_HANDLE(radv_device, device, _device);
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const VkImageSwapchainCreateInfoKHR *swapchain_info =
-      vk_find_struct_const(pCreateInfo->pNext, IMAGE_SWAPCHAIN_CREATE_INFO_KHR);
-   if (swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE) {
-      return wsi_common_create_swapchain_image(pdev->vk.wsi_device, pCreateInfo, swapchain_info->swapchain, pImage);
-   }
-#endif
+
+   if (wsi_common_is_swapchain_image(pCreateInfo))
+      return wsi_common_create_swapchain_image(pdev->vk.wsi_device, pCreateInfo, pImage);
 
    const struct wsi_image_create_info *wsi_info = vk_find_struct_const(pCreateInfo->pNext, WSI_IMAGE_CREATE_INFO_MESA);
    bool scanout = wsi_info && wsi_info->scanout;

@@ -334,6 +334,12 @@ match_value(const nir_algebraic_table *table,
                                                new_swizzle[i]);
             if (val != const_val->data.d)
                return false;
+
+            /* The comparison above does not check the sign bit for 0.0,
+             * so do it manually.
+             */
+            if ((dui(val) == 0) != (dui(const_val->data.d) == 0))
+               return false;
          }
          return true;
       }
@@ -480,7 +486,7 @@ construct_value(nir_builder *build,
        * replacement should be exact.
        */
       alu->exact = state->has_exact_alu || expr->exact;
-      alu->fp_fast_math = nir_instr_as_alu(instr)->fp_fast_math;
+      alu->fp_math_ctrl = nir_instr_as_alu(instr)->fp_math_ctrl;
 
       for (unsigned i = 0; i < nir_op_infos[op].num_inputs; i++) {
          /* If the source is an explicitly sized source, then we need to reset

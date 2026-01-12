@@ -169,6 +169,7 @@ struct radv_device {
    /* GFX7 and later */
    uint32_t gfx_init_size_dw;
    struct radeon_winsys_bo *gfx_init;
+   struct radeon_winsys_bo *zero_bo;
 
    struct radeon_winsys_bo *trace_bo;
    struct radv_trace_data *trace_data;
@@ -307,6 +308,8 @@ struct radv_device {
    /* PSO cache stats */
    simple_mtx_t pso_cache_stats_mtx;
    struct radv_pso_cache_stats pso_cache_stats[RADV_PIPELINE_TYPE_COUNT];
+
+   simple_mtx_t blit_queue_mtx;
 
    struct radv_address_binding_tracker *addr_binding_tracker;
 };

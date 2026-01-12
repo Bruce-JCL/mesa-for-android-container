@@ -19,9 +19,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * Authors:
- *   Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
  */
 
 #ifndef PAN_PROPS_H
@@ -143,13 +140,6 @@ pan_get_max_msaa(unsigned arch, unsigned max_tib_size, unsigned max_cbuf_atts,
 
    assert(max_cbuf_atts > 0);
    assert(format_size > 0);
-
-   /* When using an internal format with less than 32-bit per pixels, we're
-    * currently using either AU (Additional precision, Unorm) or PU (Padded
-    * precision, Unorm), meaning that we need additional bits in the tilebuffer
-    * that's used by dithering.
-    */
-   format_size = MAX2(format_size, 4);
 
    const unsigned min_tile_size = 4 * 4;
    unsigned max_msaa = max_tib_size / (max_cbuf_atts * format_size *

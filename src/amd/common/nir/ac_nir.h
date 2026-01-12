@@ -238,14 +238,10 @@ ac_nir_lower_ngg_mesh(nir_shader *shader,
 
 bool
 ac_nir_lower_task_outputs_to_mem(nir_shader *shader,
-                                 unsigned task_payload_entry_bytes,
-                                 unsigned task_num_entries,
                                  bool has_query);
 
 bool
-ac_nir_lower_mesh_inputs_to_mem(nir_shader *shader,
-                                unsigned task_payload_entry_bytes,
-                                unsigned task_num_entries);
+ac_nir_lower_mesh_inputs_to_mem(nir_shader *shader);
 
 bool
 ac_nir_lower_global_access(nir_shader *shader);
@@ -332,6 +328,9 @@ typedef struct {
    bool fbfetch_msaa;
    bool fbfetch_apply_fmask;
 
+   /* Inputs. */
+   bool lower_color_inputs_to_load_color01;
+
    /* Outputs. */
    bool clamp_color;                /* GL only */
    bool alpha_test_alpha_to_one;    /* GL only, this only affects alpha test */
@@ -414,6 +413,13 @@ ac_nir_opt_shared_append(nir_shader *shader);
 
 bool
 ac_nir_flag_smem_for_loads(nir_shader *shader, enum amd_gfx_level gfx_level, bool use_llvm);
+
+bool
+ac_nir_fixup_mem_access_gfx6(nir_shader *shader,
+                             struct ac_shader_args *args,
+                             const uint32_t padding_bytes,
+                             const bool fixup_null_desc,
+                             const bool fixup_robust_oob);
 
 bool
 ac_nir_lower_mem_access_bit_sizes(nir_shader *shader, enum amd_gfx_level gfx_level, bool use_llvm);

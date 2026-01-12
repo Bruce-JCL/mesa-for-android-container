@@ -170,14 +170,14 @@ radv_get_acceleration_structure_layout(struct radv_device *device,
 
    if (!(state->config.encode_key[0] & RADV_ENCODE_KEY_BATCH_COMPRESS_GFX12)) {
       accel_struct->leaf_nodes_offset = offset;
-      offset += bvh_leaf_size * state->leaf_node_count;
+      offset += bvh_leaf_size * hw_leaf_node_count;
    }
 
    accel_struct->internal_nodes_offset = offset;
    /* Factor out the root node. */
    offset += internal_node_size * (internal_count - 1);
    if (state->config.encode_key[0] & RADV_ENCODE_KEY_BATCH_COMPRESS_GFX12)
-      offset += bvh_leaf_size * state->leaf_node_count;
+      offset += bvh_leaf_size * hw_leaf_node_count;
 
    accel_struct->size = offset;
 }
@@ -198,9 +198,6 @@ radv_get_update_scratch_layout(struct radv_device *device, const struct vk_accel
 
       scratch->bounds_offsets = offset;
       offset += sizeof(vk_aabb) * internal_count;
-   } else {
-      scratch->bounds_offsets = offset;
-      offset += sizeof(vk_aabb) * state->leaf_node_count;
    }
 
    scratch->internal_ready_count_offset = offset;
@@ -825,7 +822,6 @@ radv_update_as(VkCommandBuffer commandBuffer, const struct vk_acceleration_struc
    struct update_args update_consts = {
       .src = vk_acceleration_structure_get_va(src),
       .dst = vk_acceleration_structure_get_va(dst),
-      .leaf_bounds = state->build_info->scratchData.deviceAddress,
       .internal_ready_count = state->build_info->scratchData.deviceAddress + layout.internal_ready_count_offset,
       .leaf_node_count = state->leaf_node_count,
    };

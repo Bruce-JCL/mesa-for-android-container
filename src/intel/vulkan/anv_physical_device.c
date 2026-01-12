@@ -17,6 +17,7 @@
 #include "git_sha1.h"
 
 #include "util/disk_cache.h"
+#include "util/os_misc.h"
 #include "util/mesa-sha1.h"
 #include "util/os_misc.h"
 
@@ -283,7 +284,11 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_calibrated_timestamps             = device->has_reg_timestamp,
       .EXT_color_write_enable                = true,
       .EXT_conditional_rendering             = true,
-      .EXT_conservative_rasterization        = true,
+      /* Skylake has broken conservative rasterization with backface culling.
+       * There is a chicken bit in 3D_CHICKEN3 to reenable the broken behavior
+       * on KBL+. So just disable crast on SKL.
+       */
+      .EXT_conservative_rasterization        = device->info.platform != INTEL_PLATFORM_SKL,
       .EXT_custom_border_color               = true,
       .EXT_depth_bias_control                = true,
       .EXT_depth_clamp_control               = true,
@@ -1277,6 +1282,10 @@ get_properties(const struct anv_physical_device *pdevice,
 
       const struct intel_device_info *devinfo = &pdevice->info;
 
+   uint64_t page_size;
+   if (!os_get_page_size(&page_size))
+      page_size = 4096;         /* fallback */
+
    const VkDeviceSize max_heap_size = anx_get_physical_device_max_heap_size(pdevice);
 
    const uint32_t max_workgroup_size =
@@ -1387,7 +1396,7 @@ get_properties(const struct anv_physical_device *pdevice,
       .maxViewportDimensions                    = { (1 << 14), (1 << 14) },
       .viewportBoundsRange                      = { INT16_MIN, INT16_MAX },
       .viewportSubPixelBits                     = 13, /* We take a float? */
-      .minMemoryMapAlignment                    = 4096, /* A page */
+      .minMemoryMapAlignment                    = page_size,
       /* The dataport requires texel alignment so we need to assume a worst
        * case of R32G32B32A32 which is 16 bytes.
        */
@@ -1495,14 +1504,16 @@ get_properties(const struct anv_physical_device *pdevice,
       props->maxFragmentSizeAspectRatio =
          pdevice->info.has_coarse_pixel_primitive_and_cb ?
          2 : 4;
-      props->maxFragmentShadingRateCoverageSamples = 4 * 4 *
-         (pdevice->info.has_coarse_pixel_primitive_and_cb ? 4 : 16);
+      props->maxFragmentShadingRateCoverageSamples =
+         devinfo->verx10 >= 125 ? 16:
+         4 * 4 * 16; /* Technically wrong, but some CTS tests fail because of the rates we
+                        report on prior platforms. Fixing all of that is a task for another day. */
       props->maxFragmentShadingRateRasterizationSamples =
       pdevice->info.has_coarse_pixel_primitive_and_cb ?
          VK_SAMPLE_COUNT_4_BIT :  VK_SAMPLE_COUNT_16_BIT;
       props->fragmentShadingRateWithShaderDepthStencilWrites = false;
       props->fragmentShadingRateWithSampleMask = true;
-      props->fragmentShadingRateWithShaderSampleMask = false;
+      props->fragmentShadingRateWithShaderSampleMask = devinfo->verx10 >= 200;
       props->fragmentShadingRateWithConservativeRasterization = true;
       props->fragmentShadingRateWithFragmentShaderInterlock = true;
       props->fragmentShadingRateWithCustomSampleLocations = true;
@@ -1720,7 +1731,7 @@ get_properties(const struct anv_physical_device *pdevice,
 
    /* VK_EXT_external_memory_host */
    {
-      props->minImportedHostPointerAlignment = 4096;
+      props->minImportedHostPointerAlignment = page_size;
    }
 
    /* VK_EXT_graphics_pipeline_library */
@@ -1823,7 +1834,7 @@ get_properties(const struct anv_physical_device *pdevice,
 
    /* VK_EXT_map_memory_placed */
    {
-      props->minPlacedMemoryMapAlignment = 4096;
+      props->minPlacedMemoryMapAlignment = page_size;
    }
 
    /* VK_EXT_mesh_shader */

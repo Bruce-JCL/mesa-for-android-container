@@ -74,8 +74,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .KHR_separate_depth_stencil_layouts = true,
       .KHR_shader_atomic_int64 = false,
       .KHR_shader_float_controls = true,
-      .KHR_shader_float16_int8 =
-         false, /* TODO_KOSMICKRISP shaderInt8 shaderFloat16 */
+      .KHR_shader_float16_int8 = true,
       .KHR_shader_subgroup_extended_types = true,
       .KHR_spirv_1_4 = true,
       .KHR_timeline_semaphore = true,
@@ -123,6 +122,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .EXT_vertex_attribute_divisor = true,
 
       /* Optional extensions */
+      .KHR_calibrated_timestamps = true,
       .KHR_shader_maximal_reconvergence = true,
       .KHR_shader_relaxed_extended_instruction = true,
       .KHR_shader_subgroup_uniform_control_flow = true,
@@ -132,6 +132,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
 #endif
       .KHR_workgroup_memory_explicit_layout = true,
 
+      .EXT_calibrated_timestamps = true,
       .EXT_external_memory_metal = true,
       .EXT_load_store_op_none = true,
       .EXT_mutable_descriptor_type = true,
@@ -155,19 +156,14 @@ kk_get_device_features(
       .depthClamp = true,
       .drawIndirectFirstInstance = true,
       .dualSrcBlend = true,
-      /* TODO_KOSMICKRISP
-       * Enabling fragmentStoresAndAtomics fails the following CTS tests, need
-       * to investigate:
-       * dEQP-VK.fragment_operations.early_fragment.discard_no_early_fragment_tests_depth
-       * dEQP-VK.robustness.image_robustness.bind.notemplate.*i.unroll.nonvolatile.sampled_image.no_fmt_qual.img.samples_1.*d_array.frag
-       */
-      .fragmentStoresAndAtomics = false,
+      .fragmentStoresAndAtomics = true,
       .fullDrawIndexUint32 = true,
       .imageCubeArray = true,
       .independentBlend = true,
       .inheritedQueries = true,
       .logicOp = true,
       .multiViewport = true,
+      .occlusionQueryPrecise = true,
       .robustBufferAccess = true,
       .samplerAnisotropy = true,
       .shaderClipDistance = true,
@@ -220,25 +216,10 @@ kk_get_device_features(
       .samplerMirrorClampToEdge = true,
       .scalarBlockLayout = true,
       .separateDepthStencilLayouts = true,
-      /* TODO_KOSMICKRISP shaderFloat16
-       * Failing:
-       * dEQP-VK.spirv_assembly.instruction.*.float16.opcompositeinsert.*
-       * dEQP-VK.memory_model.shared.16bit.nested_structs_arrays.*
-       */
-      .shaderFloat16 = false,
+      .shaderFloat16 = true,
       .shaderInputAttachmentArrayDynamicIndexing = true,
       .shaderInputAttachmentArrayNonUniformIndexing = true,
-      /* TODO_KOSMICKRISP shaderInt8
-       * Multiple MSL compiler crashes if we enable shaderInt8, need to
-       * understand why and a workaround:
-       * dEQP-VK.memory_model.shared.8bit.vector_types.9
-       * dEQP-VK.memory_model.shared.8bit.basic_types.8
-       * dEQP-VK.memory_model.shared.8bit.basic_arrays.2
-       * dEQP-VK.memory_model.shared.8bit.arrays_of_arrays.1
-       * dEQP-VK.memory_model.shared.8bit.arrays_of_arrays.8
-       * Probably more
-       */
-      .shaderInt8 = false,
+      .shaderInt8 = true,
       .shaderOutputLayer = true,
       .shaderOutputViewportIndex = true,
       .shaderSampledImageArrayNonUniformIndexing = true,
@@ -1023,31 +1004,6 @@ kk_GetPhysicalDeviceQueueFamilyProperties2(
             (VkExtent3D){1, 1, 1};
       }
    }
-}
-
-static const VkTimeDomainKHR kk_time_domains[] = {
-   VK_TIME_DOMAIN_DEVICE_KHR,
-   VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR,
-#ifdef CLOCK_MONOTONIC_RAW
-   VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR,
-#endif
-};
-
-VKAPI_ATTR VkResult VKAPI_CALL
-kk_GetPhysicalDeviceCalibrateableTimeDomainsKHR(VkPhysicalDevice physicalDevice,
-                                                uint32_t *pTimeDomainCount,
-                                                VkTimeDomainKHR *pTimeDomains)
-{
-   VK_OUTARRAY_MAKE_TYPED(VkTimeDomainKHR, out, pTimeDomains, pTimeDomainCount);
-
-   for (int d = 0; d < ARRAY_SIZE(kk_time_domains); d++) {
-      vk_outarray_append_typed(VkTimeDomainKHR, &out, i)
-      {
-         *i = kk_time_domains[d];
-      }
-   }
-
-   return vk_outarray_status(&out);
 }
 
 VKAPI_ATTR void VKAPI_CALL

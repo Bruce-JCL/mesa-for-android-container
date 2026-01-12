@@ -1183,8 +1183,10 @@ CDX12EncHMFT::ConfigureAsyncStatsMetadataOutputSampleAttributes( IMFSample *pSam
    // releases the MF sample, the d3d12resource will be returned back to the pool
    if( m_uiVideoOutputQPMapBlockSize && pPipeResourceQPMapStats != nullptr )
    {
-      CHECKHR_GOTO(
-         m_spQPMapStatsBufferPool->AttachPipeResourceAsSampleExtension( pPipeResourceQPMapStats, pSyncObjectQueue, pSample ),
+      CHECKHR_GOTO( m_spQPMapStatsBufferPool->AttachPipeResourceAsSampleExtension( m_pPipeContext,
+                                                                                   pPipeResourceQPMapStats,
+                                                                                   pSyncObjectQueue,
+                                                                                   pSample ),
          done );
    }
 
@@ -1192,7 +1194,8 @@ CDX12EncHMFT::ConfigureAsyncStatsMetadataOutputSampleAttributes( IMFSample *pSam
    // the app releases the MF sample, the d3d12resource will be returned back to the pool
    if( m_uiVideoOutputBitsUsedMapBlockSize && pPipeResourceRCBitAllocMapStats != nullptr )
    {
-      CHECKHR_GOTO( m_spBitsUsedStatsBufferPool->AttachPipeResourceAsSampleExtension( pPipeResourceRCBitAllocMapStats,
+      CHECKHR_GOTO( m_spBitsUsedStatsBufferPool->AttachPipeResourceAsSampleExtension( m_pPipeContext,
+                                                                                      pPipeResourceRCBitAllocMapStats,
                                                                                       pSyncObjectQueue,
                                                                                       pSample ),
                     done );
@@ -1202,9 +1205,11 @@ CDX12EncHMFT::ConfigureAsyncStatsMetadataOutputSampleAttributes( IMFSample *pSam
    // releases the MF sample, the d3d12resource will be returned back to the pool
    if( m_uiVideoSatdMapBlockSize && pPipeResourceSATDMapStats != nullptr )
    {
-      CHECKHR_GOTO(
-         m_spSatdStatsBufferPool->AttachPipeResourceAsSampleExtension( pPipeResourceSATDMapStats, pSyncObjectQueue, pSample ),
-         done );
+      CHECKHR_GOTO( m_spSatdStatsBufferPool->AttachPipeResourceAsSampleExtension( m_pPipeContext,
+                                                                                  pPipeResourceSATDMapStats,
+                                                                                  pSyncObjectQueue,
+                                                                                  pSample ),
+                    done );
    }
 
    // Conditionally attach reconstructed picture copy (d3d12resource), gated by the completion fence
@@ -1230,7 +1235,8 @@ CDX12EncHMFT::ConfigureAsyncStatsMetadataOutputSampleAttributes( IMFSample *pSam
          assert( pPipeResourceReconstructedPicture );
          assert( spReconstructedPictureCompletionFence );   // Copy completion fence must be valid in this mode
          pSyncObjectQueue->Wait( spReconstructedPictureCompletionFence.Get(), ReconstructedPictureCompletionFenceValue );
-         CHECKHR_GOTO( m_spReconstructedPictureBufferPool->AttachPipeResourceAsSampleExtension( pPipeResourceReconstructedPicture,
+         CHECKHR_GOTO( m_spReconstructedPictureBufferPool->AttachPipeResourceAsSampleExtension( m_pPipeContext,
+                                                                                                pPipeResourceReconstructedPicture,
                                                                                                 pSyncObjectQueue,
                                                                                                 pSample ),
                        done );
@@ -2500,7 +2506,6 @@ CDX12EncHMFT::ProcessInput( DWORD dwInputStreamIndex, IMFSample *pSample, DWORD 
 {
    HMFT_ETW_EVENT_START( "ProcessInput", this );
    HRESULT hr = S_OK;
-   UINT32 unChromaOnly = 0;
    LPDX12EncodeContext pDX12EncodeContext = nullptr;
    BYTE *qpData = nullptr;
    DWORD qpSize = 0;
@@ -2535,10 +2540,8 @@ CDX12EncHMFT::ProcessInput( DWORD dwInputStreamIndex, IMFSample *pSample, DWORD 
    //
    m_bEncodingStarted = TRUE;
 
-   (void) pSample->GetUINT32( MFSampleExtension_ChromaOnly, &unChromaOnly );
-
    // setup the source buffer
-   CHECKHR_HRGOTO( PrepareForEncode( pSample, &pDX12EncodeContext ), MF_E_INVALIDMEDIATYPE, done );
+   CHECKHR_GOTO( PrepareForEncode( pSample, &pDX12EncodeContext ), done );
    if( SUCCEEDED( GetQPMapBufferFromSampleLockHeld( pSample, &qpData, &qpSize, qpMapBuffer ) ) && qpMapBuffer )
    {
       pDX12EncodeContext->SetPipeQPMapBufferInfo( qpData, qpSize );

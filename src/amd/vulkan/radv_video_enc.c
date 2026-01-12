@@ -1131,8 +1131,9 @@ radv_enc_slice_header(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 
       radv_enc_code_fixed_bits(cmd_buffer, ref_lists->flags.ref_pic_list_modification_flag_l0, 1);
       if (ref_lists->flags.ref_pic_list_modification_flag_l0) {
+         const StdVideoEncodeH264RefListModEntry *entry = NULL;
          for (unsigned op = 0; op < MIN2(ref_lists->refList0ModOpCount, num_active_l0_refs_minus1 + 1); op++) {
-            const StdVideoEncodeH264RefListModEntry *entry = &ref_lists->pRefList0ModOperations[op];
+            entry = &ref_lists->pRefList0ModOperations[op];
 
             radv_enc_code_ue(cmd_buffer, entry->modification_of_pic_nums_idc);
             if (entry->modification_of_pic_nums_idc ==
@@ -1142,13 +1143,17 @@ radv_enc_slice_header(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
             else if (entry->modification_of_pic_nums_idc == STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_LONG_TERM)
                radv_enc_code_ue(cmd_buffer, entry->long_term_pic_num);
          }
+
+         if (entry && entry->modification_of_pic_nums_idc != STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_END)
+            radv_enc_code_ue(cmd_buffer, STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_END);
       }
 
       if (pic->primary_pic_type == STD_VIDEO_H264_PICTURE_TYPE_B) {
          radv_enc_code_fixed_bits(cmd_buffer, ref_lists->flags.ref_pic_list_modification_flag_l1, 1);
          if (ref_lists->flags.ref_pic_list_modification_flag_l1) {
+            const StdVideoEncodeH264RefListModEntry *entry = NULL;
             for (unsigned op = 0; op < MIN2(ref_lists->refList1ModOpCount, /* num_active_l1_refs_minus1 + */ 1); op++) {
-               const StdVideoEncodeH264RefListModEntry *entry = &ref_lists->pRefList1ModOperations[op];
+               entry = &ref_lists->pRefList1ModOperations[op];
 
                radv_enc_code_ue(cmd_buffer, entry->modification_of_pic_nums_idc);
                if (entry->modification_of_pic_nums_idc ==
@@ -1158,6 +1163,9 @@ radv_enc_slice_header(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
                else if (entry->modification_of_pic_nums_idc == STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_LONG_TERM)
                   radv_enc_code_ue(cmd_buffer, entry->long_term_pic_num);
             }
+
+            if (entry && entry->modification_of_pic_nums_idc != STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_END)
+               radv_enc_code_ue(cmd_buffer, STD_VIDEO_H264_MODIFICATION_OF_PIC_NUMS_IDC_END);
          }
       }
    }
@@ -3018,27 +3026,22 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 }
 
 void
+radv_video_enc_init_ctx(struct radv_device *device, struct radv_video_session *vid)
+{
+   if (vid->enc_standard == RENCODE_ENCODE_STANDARD_AV1) {
+      uint8_t *cdfptr = radv_buffer_map(device->ws, vid->ctx.mem->bo);
+      cdfptr += vid->ctx.offset;
+      memcpy(cdfptr, rvcn_av1_cdf_default_table, VCN_ENC_AV1_DEFAULT_CDF_SIZE);
+      device->ws->buffer_unmap(device->ws, vid->ctx.mem->bo, false);
+   }
+}
+
+void
 radv_video_enc_control_video_coding(struct radv_cmd_buffer *cmd_buffer, const VkVideoCodingControlInfoKHR *control_info)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_video_session *vid = cmd_buffer->video.vid;
-
-   switch (vid->vk.op) {
-   case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
-   case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR:
-      break;
-   case VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR:
-      if (control_info->flags & VK_VIDEO_CODING_CONTROL_RESET_BIT_KHR) {
-         uint8_t *cdfptr = radv_buffer_map(device->ws, vid->ctx.mem->bo);
-         cdfptr += vid->ctx.offset;
-         memcpy(cdfptr, rvcn_av1_cdf_default_table, VCN_ENC_AV1_DEFAULT_CDF_SIZE);
-         device->ws->buffer_unmap(device->ws, vid->ctx.mem->bo, false);
-      }
-      break;
-   default:
-      UNREACHABLE("Unsupported\n");
-   }
 
    bool session_init = false;
    bool rate_control_init = false;

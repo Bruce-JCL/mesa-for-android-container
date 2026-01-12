@@ -119,6 +119,7 @@ common_per_arch_files = [
   'panvk_vX_query_pool.c',
   'panvk_vX_image_view.c',
   'panvk_vX_nir_lower_descriptors.c',
+  'panvk_vX_nir_lower_input_attachment_loads.c',
   'panvk_vX_sampler.c',
   'panvk_vX_shader.c',
   sha1_h,
@@ -271,5 +272,3 @@ _dev_icd = custom_target(
 )
 
 devenv.append('VK_DRIVER_FILES', _dev_icd.full_path())
-# Deprecated: replaced by VK_DRIVER_FILES above
-devenv.append('VK_ICD_FILENAMES', _dev_icd.full_path())

@@ -1305,7 +1305,7 @@ anv_cmd_buffer_set_stack_size(struct vk_command_buffer *vk_cmd_buffer,
    if (stack_size_log2 < 10)
       stack_size_log2 = 10;
 
-   if (rt->scratch.layout.total_size == 1 << stack_size_log2)
+   if (rt->scratch.layout.sw_stack_size == 1 << stack_size_log2)
       return;
 
    brw_rt_compute_scratch_layout(&rt->scratch.layout, device->info,
@@ -1588,10 +1588,12 @@ bind_graphics_shaders(struct anv_cmd_buffer *cmd_buffer,
             set_dirty_for_bind_map(cmd_buffer, s, &shader->bind_map);
 
          for (uint32_t i = 0; i < MAX_SETS; i++) {
-            assert(dynamic_descriptors[i] == 0 ||
-                   dynamic_descriptors[i] ==
-                   shader->bind_map.dynamic_descriptors[i]);
-            dynamic_descriptors[i] = shader->bind_map.dynamic_descriptors[i];
+            if (shader->bind_map.binding_mask & ANV_PIPELINE_BIND_MASK_SET(i)) {
+               assert(dynamic_descriptors[i] == 0 ||
+                      dynamic_descriptors[i] ==
+                      shader->bind_map.dynamic_descriptors[i]);
+               dynamic_descriptors[i] = shader->bind_map.dynamic_descriptors[i];
+            }
          }
       }
 
@@ -1794,6 +1796,8 @@ anv_begin_companion_cmd_buffer_helper(struct anv_cmd_buffer **cmd_buffer,
     */
    if (prev_cmd_buffer->device->info->has_aux_map) {
       anv_add_pending_pipe_bits(prev_cmd_buffer->companion_rcs_cmd_buffer,
+                                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                                  ANV_PIPE_AUX_TABLE_INVALIDATE_BIT,
                                  "new cmd buffer with aux-tt");
    }

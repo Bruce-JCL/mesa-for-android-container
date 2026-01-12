@@ -69,6 +69,8 @@ struct fd_dev_info {
       uint32_t num_ccu;
    };
 
+   uint32_t num_slices;    /* gen8+ */
+
    struct {
       uint32_t RB_DBG_ECO_CNTL;
       uint32_t RB_DBG_ECO_CNTL_blit;
@@ -207,6 +209,8 @@ struct fd_dev_info {
       bool supports_double_threadsize;
 
       bool has_sampler_minmax;
+
+      bool has_astc_hdr;
 
       bool broken_ds_ubwc_quirk;
 
@@ -403,6 +407,9 @@ struct fd_dev_info {
        * driver.
        */
       bool has_hw_bin_scaling;
+
+      /* Whether the (eolm) and (eogm) nop flags are supported. */
+      bool has_eolm_eogm;
    } props;
 };
 

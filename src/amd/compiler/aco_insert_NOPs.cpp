@@ -464,10 +464,9 @@ set_bitset_range(BITSET_WORD* words, unsigned start, unsigned size)
 bool
 test_bitset_range(BITSET_WORD* words, unsigned start, unsigned size)
 {
-   unsigned end = start + size - 1;
    unsigned start_mod = start % BITSET_WORDBITS;
    if (start_mod + size <= BITSET_WORDBITS) {
-      return BITSET_TEST_RANGE(words, start, end);
+      return BITSET_TEST_COUNT(words, start, size);
    } else {
       unsigned first_size = BITSET_WORDBITS - start_mod;
       return test_bitset_range(words, start, BITSET_WORDBITS - start_mod) ||
@@ -1688,7 +1687,7 @@ handle_instruction_gfx11(State& state, NOP_ctx_gfx11& ctx, aco_ptr<Instruction>&
       } else {
          uint8_t vmem_type =
             state.program->gfx_level >= GFX12
-               ? get_vmem_type(state.program->gfx_level, state.program->family, instr.get())
+               ? get_vmem_type(instr.get(), state.program->dev.has_point_sample_accel)
                : vmem_nosampler;
          std::bitset<256>* vgprs = &ctx.vgpr_used_by_vmem_load;
          if (vmem_type == vmem_sampler)

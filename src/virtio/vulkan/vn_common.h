@@ -20,16 +20,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <vulkan/vulkan.h>
 
 #include "c11/threads.h"
-#include "drm-uapi/drm_fourcc.h"
 #include "util/bitscan.h"
 #include "util/bitset.h"
 #include "util/compiler.h"
 #include "util/detect_os.h"
-#include "util/libsync.h"
 #include "util/list.h"
 #include "util/macros.h"
 #include "util/os_time.h"
@@ -51,6 +48,15 @@
 #include "vk_queue.h"
 #include "vk_util.h"
 
+#if DETECT_OS_WINDOWS
+#include <processthreadsapi.h>
+#else
+#include <sys/syscall.h>
+
+#include "drm-uapi/drm_fourcc.h"
+#include "util/libsync.h"
+#endif
+
 #include "vn_entrypoints.h"
 
 #define VN_DEFAULT_ALIGN             8
@@ -66,6 +72,10 @@
 
 #define VN_TRACE_SCOPE(name) MESA_TRACE_SCOPE(name)
 #define VN_TRACE_FUNC()      MESA_TRACE_SCOPE(__func__)
+
+#define VN_MAKE_NVIDIA_VERSION(major, minor, sub_minor, patch)               \
+   ((((uint32_t)(major)) << 22U) | (((uint32_t)(minor)) << 14U) |            \
+    (((uint32_t)(sub_minor)) << 6U) | ((uint32_t)(patch)))
 
 struct vn_instance;
 struct vn_physical_device;
@@ -614,8 +624,10 @@ vn_gettid(void)
 {
 #if DETECT_OS_ANDROID
    return gettid();
-#elif defined(__FreeBSD__)
+#elif DETECT_OS_FREEBSD
    return syscall(SYS_thr_self);
+#elif DETECT_OS_WINDOWS
+   return GetCurrentThreadId();
 #else
    return syscall(SYS_gettid);
 #endif

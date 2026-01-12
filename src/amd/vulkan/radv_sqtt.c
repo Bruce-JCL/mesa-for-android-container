@@ -471,7 +471,7 @@ radv_begin_sqtt(struct radv_queue *queue)
       device->sqtt.start_cs[family] = NULL;
    }
 
-   radv_init_cmd_stream(&cs, radv_queue_ring(queue));
+   radv_init_cmd_stream(device, &cs, radv_queue_ring(queue));
 
    cs.b = ws->cs_create(ws, cs.hw_ip, false);
    if (!cs.b)
@@ -521,7 +521,7 @@ radv_begin_sqtt(struct radv_queue *queue)
 
    if (device->spm.bo) {
       radeon_check_space(ws, cs.b, 8);
-      ac_emit_spm_start(cs.b, cs.hw_ip);
+      ac_emit_spm_start(cs.b, cs.hw_ip, &pdev->info);
    }
 
    result = ws->cs_finalize(cs.b);
@@ -551,7 +551,7 @@ radv_end_sqtt(struct radv_queue *queue)
       device->sqtt.stop_cs[family] = NULL;
    }
 
-   radv_init_cmd_stream(&cs, radv_queue_ring(queue));
+   radv_init_cmd_stream(device, &cs, radv_queue_ring(queue));
 
    cs.b = ws->cs_create(ws, cs.hw_ip, false);
    if (!cs.b)

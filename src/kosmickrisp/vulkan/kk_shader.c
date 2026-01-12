@@ -66,6 +66,7 @@ kk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
       .lower_doubles_options = (nir_lower_doubles_options)(~0),
       .lower_int64_options =
          nir_lower_ufind_msb64 | nir_lower_subgroup_shuffle64,
+      .io_options = nir_io_mediump_is_32bit,
    };
    return &options;
 }
@@ -417,6 +418,9 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
             nir->info.fs.needs_coarse_quad_helper_invocations)
       NIR_PASS(_, nir, msl_lower_static_sample_mask, 0xFFFFFFFF);
 
+   /* KK_WORKAROUND_5 */
+   if (!(dev->disabled_workarounds & BITFIELD64_BIT(5)))
+      NIR_PASS(_, nir, msl_nir_fake_guard_for_discards);
    /* KK_WORKAROUND_4 */
    if (!(dev->disabled_workarounds & BITFIELD64_BIT(4))) {
       NIR_PASS(_, nir, nir_lower_helper_writes, true);
@@ -438,7 +442,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir,
       /* kk_nir_lower_vs_multiview may create a temporary array to assign the
        * correct view index. Since we don't handle derefs, we need to get rid of
        * them. */
-      NIR_PASS(_, nir, nir_lower_vars_to_scratch, nir_var_function_temp, 0,
+      NIR_PASS(_, nir, nir_lower_vars_to_scratch, 0,
                glsl_get_natural_size_align_bytes,
                glsl_get_natural_size_align_bytes);
 
@@ -949,6 +953,7 @@ kk_compile_graphics_pipeline(struct kk_device *device,
          pipeline_descriptor, max_amplification);
    }
 
+   vertex_shader->pipeline.gfx.sample_count = 1u;
    if (state->ms) {
       mtl_render_pipeline_descriptor_set_raster_sample_count(
          pipeline_descriptor, state->ms->rasterization_samples);
@@ -956,6 +961,8 @@ kk_compile_graphics_pipeline(struct kk_device *device,
          pipeline_descriptor, state->ms->alpha_to_coverage_enable);
       mtl_render_pipeline_descriptor_set_alpha_to_one(
          pipeline_descriptor, state->ms->alpha_to_one_enable);
+      vertex_shader->pipeline.gfx.sample_count =
+         state->ms->rasterization_samples;
    }
 
    vertex_shader->pipeline.gfx.handle =
@@ -1212,6 +1219,8 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
    cmd->state.gfx.is_depth_stencil_dynamic = requires_dynamic_depth_stencil;
    cmd->state.gfx.dirty |= KK_DIRTY_PIPELINE;
    cmd->state.gfx.dirty |= KK_DIRTY_VB;
+
+   cmd->state.gfx.sample_count = shader->pipeline.gfx.sample_count;
 }
 
 static void

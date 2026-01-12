@@ -102,6 +102,8 @@ struct radv_ps_epilog_key {
    uint8_t color_is_int10;
    uint8_t enable_mrt_output_nan_fixup;
 
+   uint32_t colors_needed;
+
    uint32_t colors_written;
    uint8_t color_map[MAX_RTS];
    bool mrt0_is_dual_src;
@@ -420,6 +422,7 @@ struct radv_shader {
    uint32_t code_size;
    uint32_t exec_size;
    struct radv_shader_info info;
+   struct radv_shader_regs regs;
    uint32_t max_waves;
 
    blake3_hash hash;
@@ -707,10 +710,10 @@ radv_shader_need_push_constants_upload(const struct radv_shader *shader)
    return loc->sgpr_idx != -1;
 }
 
-void radv_precompute_registers_hw_gs(struct radv_device *device, struct radv_shader_info *es_info, struct radv_shader_info *gs_info);
+void radv_precompute_registers_hw_gs(struct radv_device *device, const struct radv_shader_info *es_info,
+                                     struct radv_shader *shader);
 
-void radv_precompute_registers_hw_ngg(struct radv_device *device, const struct ac_shader_config *config,
-                                      struct radv_shader_info *info);
+void radv_precompute_registers_hw_ngg(struct radv_device *device, struct radv_shader *shader);
 
 void radv_set_stage_key_robustness(const struct vk_pipeline_robustness_state *rs, mesa_shader_stage stage,
                                    struct radv_shader_stage_key *key);

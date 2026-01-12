@@ -74,6 +74,7 @@ static const nir_shader_compiler_options nir_options = {
    .lower_helper_invocation = true,
 
    .max_unroll_iterations = 16,
+   .max_samples = 4,
 
    .io_options = nir_io_vectorizer_ignores_types,
 };
@@ -595,7 +596,6 @@ void pco_preprocess_nir(pco_ctx *ctx, nir_shader *nir)
       NIR_PASS(_,
                nir,
                nir_lower_vars_to_scratch,
-               nir_var_function_temp,
                8,
                glsl_get_natural_size_align_bytes,
                glsl_get_word_size_align_bytes);
