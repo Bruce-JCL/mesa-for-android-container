@@ -34,16 +34,16 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下載一個 `.tar.gz` 格式的安裝包。請注意檔案名稱中的 Linux 發行版後綴（例如 `debian_trixie_arm64`），僅可安裝與發行版相符的安裝包。
 2.  直接將安裝包解壓縮到根目錄。  
-```shell
+```bash
 sudo tar -zxvf mesa-for-android-container_26.0.0-devel-20251209_debian_trixie_arm64.tar.gz -C /
 ```
 3.  更新動態連結器快取。  
-```shell
+```bash
 sudo ldconfig
 ```
 
 卸載可參考以下指令：  
-```shell
+```bash
 # 複製這條指令輸出的檔案清單
 tar tf mesa-for-android-container_26.0.0-devel-20251209_debian_trixie_arm64.tar.gz | grep -v '/$' | tr '\n' ' ' ; echo
 cd /
@@ -60,7 +60,7 @@ sudo pacman -S mesa mesa-docs opencl-mesa vulkan-freedreno vulkan-mesa-implicit-
 ```
 ## 使用
 在執行特定程式時指定環境變數`MESA_LOADER_DRIVER_OVERRIDE`和`TU_DEBUG`，例如：  
-```shell
+```bash
 MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform glmark2
 ```
 或者將其新增至`/etc/environment`檔案中，以便在開啟容器時自動載入：  
@@ -70,53 +70,86 @@ TU_DEBUG=noconform
 ```
 ## 建置
 
-詳細的建置流程請參照 Mesa 官方說明（[Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)），以下為在 Debian 13 arm64 環境下建置的關鍵步驟：  
+詳細的建置流程請參照 Mesa 官方說明（[Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)），建構可使用套件管理器（如 `apt`、`dnf`、`pacman`）安裝的安裝包之關鍵指令可參考[此文件](../common/build-for-distros.md)。以下為在 Debian 13 arm64 環境下建置的關鍵步驟：  
 
 1.  檢查是否已啟用原始碼軟體來源。若使用傳統格式（`/etc/apt/sources.list`）的軟體來源，可檢查是否有類似於以下的設定。  
 ```plaintext
 deb-src https://deb.debian.org/debian trixie main contrib non-free non-free-firmware
 ```
 2.  安裝建置 Mesa 所需的依賴套件。  
-```shell
+```bash
 sudo apt build-dep mesa
 ```
 3.  複製本專案的儲存庫。  
-```shell
+```bash
 git clone https://github.com/lfdevs/mesa-for-android-container.git
 ```
 4.  切換到已應用相關修補程式的分支，如 `adreno-main`。  
-```shell
+```bash
 cd mesa-for-android-container
 git checkout adreno-main
 ```
 5.  初始化建置目錄。可以參照 [meson.options](https://github.com/lfdevs/mesa-for-android-container/blob/main/meson.options) 檔案來查看所有的建置選項。  
-```shell
+```bash
 meson setup build/ \
     --prefix=/usr \
     -Dplatforms=x11,wayland \
     -Dgallium-drivers=freedreno,zink,virgl,llvmpipe \
+    -Dgallium-va=disabled \
+    -Dgallium-mediafoundation=disabled \
     -Dvulkan-drivers=freedreno \
+    -Dvulkan-layers= \
     -Degl=enabled \
     -Dgles2=enabled \
     -Dglvnd=enabled \
     -Dglx=dri \
     -Dlibunwind=disabled \
+    -Dintel-rt=disabled \
     -Dmicrosoft-clc=disabled \
     -Dvalgrind=disabled \
     -Dgles1=disabled \
     -Dfreedreno-kmds=kgsl \
     -Dbuildtype=release
 ```
+若需要單獨建構 Turnip 驅動程式，可使用下列的初始化指令：  
+```bash
+meson setup build/ \
+    --prefix=/usr \
+    -Dplatforms=x11,wayland \
+    -Dgallium-drivers= \
+    -Dgallium-va=disabled \
+    -Dgallium-mediafoundation=disabled \
+    -Dvulkan-drivers=freedreno \
+    -Dvulkan-layers= \
+    -Dgles1=disabled \
+    -Dgles2=disabled \
+    -Dopengl=false \
+    -Dgbm=disabled \
+    -Dglx=disabled \
+    -Dxlib-lease=disabled \
+    -Dfreedreno-kmds=kgsl \
+    -Degl=disabled \
+    -Dglvnd=disabled \
+    -Dintel-rt=disabled \
+    -Dmicrosoft-clc=disabled \
+    -Dllvm=disabled \
+    -Dvalgrind=disabled \
+    -Dbuild-tests=false \
+    -Dlibunwind=disabled \
+    -Dlmsensors=disabled \
+    -Dandroid-libbacktrace=disabled \
+    -Dbuildtype=release
+```
 6.  開始建置。  
-```shell
+```bash
 ninja -C build/
 ```
 7.  若要直接在編譯裝置上安裝，可執行以下指令：  
-```shell
+```bash
 ninja -C build/ install
 ```
 8.  若需打包建置好的 Mesa 驅動程式，並在相同發行版的其他裝置上安裝，可參考以下指令：  
-```shell
+```bash
 export MESA_RELEASE_NAME_SUFFIX=26.0.0-devel-20251209_debian_trixie_arm64
 sudo mkdir /tmp/mesa-install-tmp
 sudo DESTDIR=/tmp/mesa-install-tmp meson install -C build/

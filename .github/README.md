@@ -35,16 +35,16 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 
 1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download a `.tar.gz` installation package. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution.  
 2.  Extract the installation package directly to the root directory.  
-```shell
+```bash
 sudo tar -zxvf mesa-for-android-container_26.0.0-devel-20251209_debian_trixie_arm64.tar.gz -C /
 ```
 3.  Refresh the dynamic linker cache.  
-```shell
+```bash
 sudo ldconfig
 ```
 
 Uninstallation can be performed by referring to the following commands:  
-```shell
+```bash
 # Copy the file list output by this command
 tar tf mesa-for-android-container_26.0.0-devel-20251209_debian_trixie_arm64.tar.gz | grep -v '/$' | tr '\n' ' ' ; echo
 cd /
@@ -61,7 +61,7 @@ sudo pacman -S mesa mesa-docs opencl-mesa vulkan-freedreno vulkan-mesa-implicit-
 ```
 ## Usage
 Specify the environment variables `MESA_LOADER_DRIVER_OVERRIDE` and `TU_DEBUG` when running a specific program, as follows:  
-```shell
+```bash
 MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform glmark2
 ```
 Alternatively, add them to the `/etc/environment` file so they are loaded automatically when the container starts:  
@@ -70,53 +70,86 @@ MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
 ```
 ## Building
-For detailed building procedures, please refer to the official Mesa documentation ([Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)). Below are the key steps for building Mesa in a Debian 13 arm64 environment:  
+For detailed building procedures, please refer to the official Mesa documentation ([Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)). Key commands for building installable packages compatible with package managers (e.g., `apt`, `dnf`, `pacman`) can be found in [this document](docs/common/build-for-distros.md). Below are the key steps for building Mesa in a Debian 13 arm64 environment:  
 
 1.  Check if the source code repositories are enabled. If you are using the traditional format for software sources (`/etc/apt/sources.list`), check for a configuration similar to the following.  
 ```plaintext
 deb-src https://deb.debian.org/debian trixie main contrib non-free non-free-firmware
 ```
 2.  Install the dependencies required to build Mesa.  
-```shell
+```bash
 sudo apt build-dep mesa
 ```
 3.  Clone this project's repository.  
-```shell
+```bash
 git clone https://github.com/lfdevs/mesa-for-android-container.git
 ```
 4.  Switch to the branch where the relevant patches have been applied, such as `adreno-main`.  
-```shell
+```bash
 cd mesa-for-android-container
 git checkout adreno-main
 ```
 5.  Initialize the build directory. You can refer to the [meson.options](https://github.com/lfdevs/mesa-for-android-container/blob/main/meson.options) file to see all available build options.  
-```shell
+```bash
 meson setup build/ \
     --prefix=/usr \
     -Dplatforms=x11,wayland \
     -Dgallium-drivers=freedreno,zink,virgl,llvmpipe \
+    -Dgallium-va=disabled \
+    -Dgallium-mediafoundation=disabled \
     -Dvulkan-drivers=freedreno \
+    -Dvulkan-layers= \
     -Degl=enabled \
     -Dgles2=enabled \
     -Dglvnd=enabled \
     -Dglx=dri \
     -Dlibunwind=disabled \
+    -Dintel-rt=disabled \
     -Dmicrosoft-clc=disabled \
     -Dvalgrind=disabled \
     -Dgles1=disabled \
     -Dfreedreno-kmds=kgsl \
     -Dbuildtype=release
 ```
+If you need to build the Turnip driver separately, you can use the following initialization command:  
+```bash
+meson setup build/ \
+    --prefix=/usr \
+    -Dplatforms=x11,wayland \
+    -Dgallium-drivers= \
+    -Dgallium-va=disabled \
+    -Dgallium-mediafoundation=disabled \
+    -Dvulkan-drivers=freedreno \
+    -Dvulkan-layers= \
+    -Dgles1=disabled \
+    -Dgles2=disabled \
+    -Dopengl=false \
+    -Dgbm=disabled \
+    -Dglx=disabled \
+    -Dxlib-lease=disabled \
+    -Dfreedreno-kmds=kgsl \
+    -Degl=disabled \
+    -Dglvnd=disabled \
+    -Dintel-rt=disabled \
+    -Dmicrosoft-clc=disabled \
+    -Dllvm=disabled \
+    -Dvalgrind=disabled \
+    -Dbuild-tests=false \
+    -Dlibunwind=disabled \
+    -Dlmsensors=disabled \
+    -Dandroid-libbacktrace=disabled \
+    -Dbuildtype=release
+```
 6.  Start the build.  
-```shell
+```bash
 ninja -C build/
 ```
 7.  To install directly on the build device, run the following command:  
-```shell
+```bash
 ninja -C build/ install
 ```
 8.  If you need to package the built Mesa drivers for installation on other devices with the same distribution, refer to the following commands:  
-```shell
+```bash
 export MESA_RELEASE_NAME_SUFFIX=26.0.0-devel-20251209_debian_trixie_arm64
 sudo mkdir /tmp/mesa-install-tmp
 sudo DESTDIR=/tmp/mesa-install-tmp meson install -C build/
