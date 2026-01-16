@@ -257,7 +257,7 @@ for src_t in [tint, tuint, tfloat, tbool]:
    for dst_t in dst_types:
       for dst_bit_size in type_sizes(dst_t):
           if dst_bit_size == 16 and dst_t == tfloat and src_t == tfloat:
-              rnd_modes = ['_rtne', '_rtz', '']
+              rnd_modes = ['_rtne', '_rtz', '_ru', '_rd', '']
               for rnd_mode in rnd_modes:
                   if rnd_mode == '_rtne':
                       conv_expr = """
@@ -275,6 +275,22 @@ for src_t in [tint, tuint, tfloat, tbool]:
                          dst = _mesa_half_to_float(_mesa_double_to_float16_rtz(src0));
                       } else if (bit_size > 16) {
                          dst = _mesa_half_to_float(_mesa_float_to_float16_rtz(src0));
+                      } else {
+                         dst = src0;
+                      }
+                      """
+                  elif rnd_mode == '_ru':
+                      conv_expr = """
+                      if (bit_size > 16) {
+                         dst = _mesa_half_to_float(_mesa_float_to_float16_ru(src0));
+                      } else {
+                         dst = src0;
+                      }
+                      """
+                  elif rnd_mode == '_rd':
+                      conv_expr = """
+                      if (bit_size > 16) {
+                         dst = _mesa_half_to_float(_mesa_float_to_float16_rd(src0));
                       } else {
                          dst = src0;
                       }
@@ -361,7 +377,7 @@ unop("ffloor", tfloat, "bit_size == 64 ? floor(src0) : floorf(src0)")
 unop("ffract", tfloat, "src0 - (bit_size == 64 ? floor(src0) : floorf(src0))")
 unop("fround_even", tfloat, "bit_size == 64 ? _mesa_roundeven(src0) : _mesa_roundevenf(src0)")
 
-unop("fquantize2f16", tfloat, "(fabs(src0) < ldexpf(1.0, -14)) ? copysignf(0.0f, src0) : _mesa_half_to_float(_mesa_float_to_half(src0))")
+unop("fquantize2f16", tfloat32, "(fabsf(src0) < ldexpf(1.0, -14)) ? copysignf(0.0f, src0) : _mesa_half_to_float(_mesa_float_to_half(src0))")
 
 # Trigonometric operations.
 
@@ -781,7 +797,7 @@ binop("umul_32x16", tuint32, "", "src0 * (uint16_t) src1",
       description = "Multiply 32-bits with low 16-bits, with zero extension")
 
 binop("fdiv", tfloat, "", "src0 / src1")
-binop("idiv", tint, "", "src1 == 0 ? 0 : (src0 / src1)")
+binop("idiv", tint, "", "(src1 == 0 || (src0 == u_intN_min(bit_size) && src1 == -1)) ? 0 : (src0 / src1)")
 binop("udiv", tuint, "", "src1 == 0 ? 0 : (src0 / src1)")
 
 binop_convert("uadd_carry", tuint, tuint, _2src_commutative,
@@ -832,10 +848,10 @@ binop("umod", tuint, "", "src1 == 0 ? 0 : src0 % src1")
 #
 # http://mathforum.org/library/drmath/view/52343.html
 
-binop("irem", tint, "", "src1 == 0 ? 0 : src0 % src1")
-binop("imod", tint, "",
-      "src1 == 0 ? 0 : ((src0 % src1 == 0 || (src0 >= 0) == (src1 >= 0)) ?"
-      "                 src0 % src1 : src0 % src1 + src1)")
+binop("irem", tint, "", "(src1 == 0 || (src0 == u_intN_min(bit_size) && src1 == -1)) ? 0 : src0 % src1")
+binop("imod", tint, "", "(src1 == 0 || (src0 == u_intN_min(bit_size) && src1 == -1)) ?"
+                        " 0 : ((src0 % src1 == 0 || (src0 >= 0) == (src1 >= 0)) ?"
+                        " src0 % src1 : src0 % src1 + src1)")
 binop("fmod", tfloat, "", "src0 - src1 * floorf(src0 / src1)")
 binop("frem", tfloat, "", "src0 - src1 * truncf(src0 / src1)")
 
@@ -1502,7 +1518,7 @@ if (!isnormal(dst))
 binop("usadd_4x8_vc4", tint32, _2src_commutative + associative, """
 dst = 0;
 for (int i = 0; i < 32; i += 8) {
-   dst |= MIN2(((src0 >> i) & 0xff) + ((src1 >> i) & 0xff), 0xff) << i;
+   dst |= (uint32_t)MIN2(((src0 >> i) & 0xff) + ((src1 >> i) & 0xff), 0xff) << i;
 }
 """)
 

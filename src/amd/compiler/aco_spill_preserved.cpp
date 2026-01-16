@@ -117,8 +117,7 @@ add_instr(spill_preserved_ctx& ctx, unsigned block_index, bool seen_reload,
       /* Round down subdword registers to their base */
       PhysReg start_reg = PhysReg{op.physReg().reg()};
       for (PhysReg reg = start_reg; reg < start_reg.advance(op.bytes()); reg = reg.advance(4)) {
-         if (instr->opcode == aco_opcode::p_spill && &op == &instr->operands[0]) {
-            assert(op.regClass().is_linear_vgpr());
+         if (instr->opcode != aco_opcode::p_end_linear_vgpr && op.regClass().is_linear_vgpr()) {
             ctx.preserved_linear_vgprs.insert(reg);
          }
 
@@ -169,7 +168,7 @@ add_preserved_sgpr_spill(spill_preserved_ctx& ctx, PhysReg reg,
 
 void
 emit_vgpr_spills_reloads(spill_preserved_ctx& ctx, Builder& bld,
-                         std::vector<std::pair<PhysReg, unsigned>>& spills, PhysReg stack_reg,
+                         const std::vector<std::pair<PhysReg, unsigned>>& spills, PhysReg stack_reg,
                          bool reload, bool linear)
 {
    if (spills.empty())
@@ -177,12 +176,12 @@ emit_vgpr_spills_reloads(spill_preserved_ctx& ctx, Builder& bld,
 
    unsigned first_spill_offset =
       DIV_ROUND_UP(ctx.program->config->scratch_bytes_per_wave, ctx.program->wave_size);
+   unsigned spill_stack_base = 0;
 
    int end_offset = (int)spills.back().second;
    bool overflow = end_offset >= ctx.program->dev.scratch_global_offset_max;
    if (overflow) {
-      for (auto& spill : spills)
-         spill.second -= first_spill_offset;
+      spill_stack_base = first_spill_offset;
 
       if (ctx.program->gfx_level < GFX9)
          first_spill_offset *= ctx.program->wave_size;
@@ -202,25 +201,26 @@ emit_vgpr_spills_reloads(spill_preserved_ctx& ctx, Builder& bld,
          if (reload)
             bld.scratch(aco_opcode::scratch_load_dword,
                         Definition(spill.first, linear ? v1.as_linear() : v1), Operand(v1),
-                        Operand(stack_reg, s1), spill.second,
+                        Operand(stack_reg, s1), spill.second - spill_stack_base,
                         memory_sync_info(storage_vgpr_spill, semantic_private));
          else
             bld.scratch(aco_opcode::scratch_store_dword, Operand(v1), Operand(stack_reg, s1),
                         Operand(spill.first, linear ? v1.as_linear() : v1),
-                        spill.second,
+                        spill.second - spill_stack_base,
                         memory_sync_info(storage_vgpr_spill, semantic_private));
       } else {
          if (reload) {
-            Instruction* instr = bld.mubuf(
-               aco_opcode::buffer_load_dword, Definition(spill.first, linear ? v1.as_linear() : v1),
-               Operand(stack_reg, s4), Operand(v1), Operand::c32(0), spill.second, false);
+            Instruction* instr = bld.mubuf(aco_opcode::buffer_load_dword,
+                                           Definition(spill.first, linear ? v1.as_linear() : v1),
+                                           Operand(stack_reg, s4), Operand(v1), Operand::c32(0),
+                                           spill.second - spill_stack_base, false);
             instr->mubuf().sync = memory_sync_info(storage_vgpr_spill, semantic_private);
             instr->mubuf().cache.value = ac_swizzled;
          } else {
             Instruction* instr =
                bld.mubuf(aco_opcode::buffer_store_dword, Operand(stack_reg, s4), Operand(v1),
                          Operand::c32(0), Operand(spill.first, linear ? v1.as_linear() : v1),
-                         spill.second, false);
+                         spill.second - spill_stack_base, false);
             instr->mubuf().sync = memory_sync_info(storage_vgpr_spill, semantic_private);
             instr->mubuf().cache.value = ac_swizzled;
          }
@@ -587,25 +587,30 @@ emit_preserved_spills(spill_preserved_ctx& ctx)
 
       unsigned min_common_postdom = *it->second.begin();
 
-      for (auto succ_idx : it->second) {
-         while (succ_idx != min_common_postdom) {
-            if (min_common_postdom < succ_idx) {
-               min_common_postdom = is_linear
-                                       ? ctx.dom_info[min_common_postdom].linear_imm_postdom
-                                       : ctx.dom_info[min_common_postdom].logical_imm_postdom;
-            } else {
-               succ_idx = is_linear ? ctx.dom_info[succ_idx].linear_imm_postdom
-                                    : ctx.dom_info[succ_idx].logical_imm_postdom;
+      /* Reloading linear VGPRs clobbers SCC, so only do it in p_return. */
+      if (is_linear_vgpr) {
+         min_common_postdom = ctx.program->blocks.size() - 1;
+      } else {
+         for (auto succ_idx : it->second) {
+            while (succ_idx != min_common_postdom) {
+               if (min_common_postdom < succ_idx) {
+                  min_common_postdom = is_linear
+                                          ? ctx.dom_info[min_common_postdom].linear_imm_postdom
+                                          : ctx.dom_info[min_common_postdom].logical_imm_postdom;
+               } else {
+                  succ_idx = is_linear ? ctx.dom_info[succ_idx].linear_imm_postdom
+                                       : ctx.dom_info[succ_idx].logical_imm_postdom;
+               }
             }
          }
-      }
 
-      while (std::find_if(ctx.program->blocks[min_common_postdom].instructions.rbegin(),
-                          ctx.program->blocks[min_common_postdom].instructions.rend(),
-                          can_reload_at_instr) ==
-             ctx.program->blocks[min_common_postdom].instructions.rend())
-         min_common_postdom = is_linear ? ctx.dom_info[min_common_postdom].linear_imm_postdom
-                                        : ctx.dom_info[min_common_postdom].logical_imm_postdom;
+         while (std::find_if(ctx.program->blocks[min_common_postdom].instructions.rbegin(),
+                             ctx.program->blocks[min_common_postdom].instructions.rend(),
+                             can_reload_at_instr) ==
+                ctx.program->blocks[min_common_postdom].instructions.rend())
+            min_common_postdom = is_linear ? ctx.dom_info[min_common_postdom].linear_imm_postdom
+                                           : ctx.dom_info[min_common_postdom].logical_imm_postdom;
+      }
 
       if (is_linear_vgpr) {
          lvgpr_block_reloads[min_common_postdom].emplace_back(

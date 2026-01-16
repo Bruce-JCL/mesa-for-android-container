@@ -30,7 +30,6 @@
 
 struct util_format_description;
 
-bool pan_nir_lower_zs_store(nir_shader *nir);
 bool pan_nir_lower_store_component(nir_shader *shader);
 
 bool pan_nir_lower_vertex_id(nir_shader *shader);
@@ -47,6 +46,8 @@ bool pan_nir_lower_xfb(nir_shader *nir);
 
 bool pan_nir_lower_image_index(nir_shader *shader,
                                unsigned vs_img_attrib_offset);
+bool pan_nir_lower_texel_buffer_fetch_index(nir_shader *shader,
+                                            unsigned attrib_offset);
 
 void pan_nir_lower_texture_early(nir_shader *nir, unsigned gpu_id);
 void pan_nir_lower_texture_late(nir_shader *nir, unsigned gpu_id);
@@ -59,6 +60,8 @@ bool pan_nir_lower_framebuffer(nir_shader *shader,
                                uint8_t raw_fmt_mask,
                                unsigned blend_shader_nr_samples,
                                bool broken_ld_special);
+
+bool pan_nir_lower_fs_outputs(nir_shader *shader, bool skip_atest);
 
 uint32_t pan_nir_collect_noperspective_varyings_fs(nir_shader *s);
 

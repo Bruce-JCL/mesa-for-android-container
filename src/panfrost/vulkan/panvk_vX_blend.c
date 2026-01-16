@@ -90,20 +90,10 @@ get_blend_shader(struct panvk_device *dev,
       .gpu_id = pdev->kmod.dev->props.gpu_id,
       .gpu_variant = pdev->kmod.dev->props.gpu_variant,
       .is_blend = true,
-      .blend = {
-         .nr_samples = key.info.nr_samples,
-         .bifrost_blend_desc =
-            GENX(pan_blend_get_internal_desc)(key.info.format, key.info.rt, 0,
-                                              false),
-      },
    };
 
    pan_preprocess_nir(nir, inputs.gpu_id);
    pan_postprocess_nir(nir, inputs.gpu_id);
-
-   enum pipe_format rt_formats[8] = {0};
-   rt_formats[rt] = key.info.format;
-   NIR_PASS(_, nir, GENX(pan_inline_rt_conversion), rt_formats);
 
    VkResult result =
       panvk_per_arch(create_internal_shader)(dev, nir, &inputs, &shader);
@@ -216,26 +206,6 @@ emit_blend_desc(const struct pan_shader_info *fs_info, uint64_t fs_code,
    }
 }
 
-static uint16_t
-get_ff_blend_constant(const struct pan_blend_state *state, unsigned rt_idx,
-                      unsigned const_idx)
-{
-   const struct pan_blend_rt_state *rt = &state->rts[rt_idx];
-
-   /* On Bifrost, the blend constant is expressed with a UNORM of the
-    * size of the target format. The value is then shifted such that
-    * used bits are in the MSB.
-    */
-   const struct util_format_description *format_desc =
-      util_format_description(rt->format);
-   unsigned chan_size = 0;
-   for (unsigned c = 0; c < format_desc->nr_channels; c++)
-      chan_size = MAX2(format_desc->channel[c].size, chan_size);
-   float factor = ((1 << chan_size) - 1) << (16 - chan_size);
-
-   return (uint16_t)(state->constants[const_idx] * factor);
-}
-
 static bool
 blend_needs_shader(const struct pan_blend_state *state, unsigned rt_idx,
                    unsigned *ff_blend_constant)
@@ -260,6 +230,10 @@ blend_needs_shader(const struct pan_blend_state *state, unsigned rt_idx,
    if (!GENX(pan_blendable_format_from_pipe_format)(rt->format)->internal)
       return true;
 
+   bool supports_2src = pan_blend_supports_2src(PAN_ARCH);
+   if (!pan_blend_can_fixed_function(rt->equation, supports_2src))
+      return true;
+
    unsigned constant_mask = pan_blend_constant_mask(rt->equation);
 
    /* v6 doesn't support blend constants in FF blend equations. */
@@ -275,16 +249,13 @@ blend_needs_shader(const struct pan_blend_state *state, unsigned rt_idx,
     */
    unsigned blend_const = ~0;
    if (constant_mask) {
-      blend_const =
-         get_ff_blend_constant(state, rt_idx, ffs(constant_mask) - 1);
+      const float blend_const_f =
+         pan_blend_get_constant(constant_mask, state->constants);
+      blend_const = pan_pack_blend_constant(rt->format, blend_const_f);
 
       if (*ff_blend_constant != ~0 && blend_const != *ff_blend_constant)
          return true;
    }
-
-   bool supports_2src = pan_blend_supports_2src(PAN_ARCH);
-   if (!pan_blend_can_fixed_function(rt->equation, supports_2src))
-      return true;
 
    /* Update the fixed function blend constant, if we use it. */
    if (blend_const != ~0)
@@ -371,16 +342,18 @@ panvk_per_arch(blend_emit_descs)(struct panvk_cmd_buffer *cmdbuf,
       rt->format = vk_format_to_pipe_format(color_attachment_formats[i]);
 
       /* Disable blending for LOGICOP_NOOP unless the format is float/srgb */
+      bool is_float = util_format_is_float(rt->format);
       if (bs.logicop_enable && bs.logicop_func == PIPE_LOGICOP_NOOP &&
-          !(util_format_is_float(rt->format) ||
-            util_format_is_srgb(rt->format))) {
+          !(is_float || util_format_is_srgb(rt->format))) {
          rt->equation.color_mask = 0;
          continue;
       }
 
       rt->nr_samples = color_attachment_samples[i];
       rt->equation.blend_enable = cb->attachments[i].blend_enable;
+      rt->equation.is_float = is_float;
       rt->equation.color_mask = cb->attachments[i].write_mask;
+
       rt->equation.rgb_func =
          vk_blend_op_to_pipe(cb->attachments[i].color_blend_op);
       rt->equation.rgb_src_factor =
@@ -394,18 +367,10 @@ panvk_per_arch(blend_emit_descs)(struct panvk_cmd_buffer *cmdbuf,
       rt->equation.alpha_dst_factor =
          vk_blend_factor_to_pipe(cb->attachments[i].dst_alpha_blend_factor);
 
-      bool dest_has_alpha = util_format_has_alpha(rt->format);
-      if (!dest_has_alpha) {
-         rt->equation.rgb_src_factor =
-            util_blend_dst_alpha_to_one(rt->equation.rgb_src_factor);
-         rt->equation.rgb_dst_factor =
-            util_blend_dst_alpha_to_one(rt->equation.rgb_dst_factor);
-
-         rt->equation.alpha_src_factor =
-            util_blend_dst_alpha_to_one(rt->equation.alpha_src_factor);
-         rt->equation.alpha_dst_factor =
-            util_blend_dst_alpha_to_one(rt->equation.alpha_dst_factor);
-      }
+      /* We have the format and the constants so we can optimize the blend
+       * equation before we decide if we actually need a blend shader.
+       */
+      pan_blend_optimize_equation(&rt->equation, rt->format, bs.constants);
 
       blend_info->any_dest_read |= pan_blend_reads_dest(rt->equation);
 

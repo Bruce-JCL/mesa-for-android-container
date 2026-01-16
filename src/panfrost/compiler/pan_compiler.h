@@ -36,6 +36,8 @@
 
 struct pan_shader_info;
 
+bool pan_will_dump_shaders(unsigned arch);
+
 const nir_shader_compiler_options *
 pan_get_nir_shader_compiler_options(unsigned arch);
 
@@ -119,10 +121,6 @@ struct pan_compile_inputs {
    uint64_t (*get_conv_desc)(enum pipe_format fmt, unsigned rt,
                              unsigned force_size, bool dithered);
    bool is_blend, is_blit;
-   struct {
-      unsigned nr_samples;
-      uint64_t bifrost_blend_desc;
-   } blend;
    bool no_idvs;
    uint32_t view_mask;
 
@@ -154,9 +152,6 @@ struct pan_compile_inputs {
    } fau_consts;
 
    union {
-      struct {
-         uint32_t rt_conv[8];
-      } bifrost;
       struct {
          /* Use LD_VAR_BUF[_IMM] instead of LD_VAR[_IMM] to load varyings. */
          bool use_ld_var_buf;
@@ -337,6 +332,7 @@ struct pan_shader_info {
    unsigned attributes_read_count;
    unsigned attribute_count;
    unsigned attributes_read;
+   uint64_t images_used;
 
    struct {
       unsigned input_count;
@@ -376,11 +372,6 @@ void pan_shader_compile(nir_shader *nir, struct pan_compile_inputs *inputs,
 uint16_t pan_to_bytemask(unsigned bytes, unsigned mask);
 
 /* NIR passes to do some backend-specific lowering */
-
-#define PAN_WRITEOUT_C 1
-#define PAN_WRITEOUT_Z 2
-#define PAN_WRITEOUT_S 4
-#define PAN_WRITEOUT_2 8
 
 /*
  * Helper returning the subgroup size. Generally, this is equal to the number of

@@ -26,6 +26,7 @@
 #include <vector>
 
 typedef struct nir_shader nir_shader;
+typedef struct nir_parameter nir_parameter;
 
 namespace aco {
 
@@ -1522,6 +1523,7 @@ struct Instruction {
 
    constexpr bool isVMEM() const noexcept { return isMTBUF() || isMUBUF() || isMIMG(); }
 
+   bool hasPrecoloredGPRs() const noexcept;
    bool accessesLDS() const noexcept;
    bool isTrans() const noexcept;
 };
@@ -1919,6 +1921,13 @@ struct Pseudo_call_instruction : public Instruction {
 };
 
 inline bool
+Instruction::hasPrecoloredGPRs() const noexcept
+{
+   return isCall() || opcode == aco_opcode::p_startpgm || opcode == aco_opcode::p_return ||
+          opcode == aco_opcode::p_end_with_regs || opcode == aco_opcode::p_jump_to_epilog;
+}
+
+inline bool
 Instruction::accessesLDS() const noexcept
 {
    return (isDS() && !ds().gds) || isLDSDIR() || isVINTRP();
@@ -2275,6 +2284,7 @@ public:
    std::vector<RegClass> temp_rc = {s1};
    RegisterDemand max_reg_demand = RegisterDemand();
    RegisterDemand max_call_spills = RegisterDemand();
+   RegisterDemand fixed_reg_demand = RegisterDemand();
    ac_shader_config* config;
    struct aco_shader_info info;
    enum amd_gfx_level gfx_level;
@@ -2326,9 +2336,9 @@ public:
 
    bool is_callee = false;
    bool has_call = false;
-   bool bypass_reg_preservation = false;
    ABI callee_abi = {};
    RegisterDemand callee_param_demand = RegisterDemand();
+   unsigned scratch_arg_size = 0;
 
    struct {
       monotonic_buffer_resource memory;
@@ -2401,7 +2411,8 @@ void select_trap_handler_shader(Program* program, ac_shader_config* config,
 void select_rt_prolog(Program* program, ac_shader_config* config,
                       const struct aco_compiler_options* options,
                       const struct aco_shader_info* info, const struct ac_shader_args* in_args,
-                      const struct ac_shader_args* out_args);
+                      const struct ac_arg* descriptors, unsigned raygen_param_count,
+                      nir_parameter* raygen_params);
 void select_vs_prolog(Program* program, const struct aco_vs_prolog_info* pinfo,
                       ac_shader_config* config, const struct aco_compiler_options* options,
                       const struct aco_shader_info* info, const struct ac_shader_args* args);
