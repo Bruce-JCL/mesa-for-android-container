@@ -1084,7 +1084,6 @@ typedef struct {
    bi_block *break_block;
    bi_block *continue_block;
    bi_block **indexed_nir_blocks;
-   bool emitted_atest;
 
    /* During NIR->BIR, the coverage bitmap. If this is NULL, the default
     * coverage bitmap should be source from preloaded register r60. This is
@@ -1163,7 +1162,7 @@ enum bir_fau {
    BIR_FAU_WLS_PTR = 17,
    BIR_FAU_PROGRAM_COUNTER = 18,
 
-   /* Avalon only */
+   /* 5th Gen only */
    BIR_FAU_SHADER_OUTPUT = (1 << 9),
 
    BIR_FAU_UNIFORM = (1 << 7),

@@ -66,7 +66,9 @@
 #include "vk_dispatch_table.h"
 #include "util/perf/cpu_trace.h"
 
+#if HAVE_RENDERDOC_INTEGRATION
 #include "renderdoc_app.h"
+#endif
 
 /* the descriptor binding id for fbfetch/input attachment */
 #define ZINK_FBFETCH_BINDING 5
@@ -1235,6 +1237,7 @@ struct zink_resource_object {
    bool render_target;
    bool is_buffer;
    bool exportable;
+   bool exportable_dmabuf;
 
    /* TODO: this should be a union */
    int handle;
@@ -1487,12 +1490,14 @@ struct zink_screen {
 
    unsigned screen_id;
 
+#if HAVE_RENDERDOC_INTEGRATION
    RENDERDOC_API_1_0_0 *renderdoc_api;
    unsigned renderdoc_capture_start;
    unsigned renderdoc_capture_end;
    unsigned renderdoc_frame;
    bool renderdoc_capturing;
    bool renderdoc_capture_all;
+#endif
 
    struct vk_uncompacted_dispatch_table vk;
 
@@ -1816,6 +1821,7 @@ struct zink_context {
    VkExtent2D swapchain_size;
    bool awaiting_resolve; //from tc info
    bool in_rp; //renderpass is currently active
+   bool rp_draw; //renderpass has draws
    bool rp_changed; //force renderpass restart
    bool rp_layout_changed; //renderpass changed, maybe restart
    bool rp_loadop_changed; //renderpass changed, don't restart

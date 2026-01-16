@@ -38,10 +38,6 @@
 
 #include "gallivm/lp_bld_debug.h"
 
-#define SPIR_V_MAGIC_NUMBER 0x07230203
-
-#define MAX_DYNAMIC_STATES 72
-
 typedef void (*cso_destroy_func)(struct pipe_context*, void*);
 
 static void
@@ -1177,7 +1173,7 @@ create_shader_object(struct lvp_device *device, const VkShaderCreateInfoEXT *pCr
       if (memcmp(uuid, data, VK_UUID_SIZE))
          return VK_NULL_HANDLE;
       size_t size = pCreateInfo->codeSize - SHA1_DIGEST_LENGTH - VK_UUID_SIZE;
-      unsigned char sha1[20];
+      unsigned char sha1[SHA1_DIGEST_LENGTH];
 
       struct mesa_sha1 sctx;
       _mesa_sha1_init(&sctx);

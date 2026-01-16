@@ -55,7 +55,7 @@ static int
 tu_device_get_cache_uuid(struct tu_physical_device *device, void *uuid)
 {
    struct mesa_sha1 ctx;
-   unsigned char sha1[20];
+   unsigned char sha1[SHA1_DIGEST_LENGTH];
    /* Note: IR3_SHADER_DEBUG also affects compilation, but it's not
     * initialized until after compiler creation so we have to add it to the
     * shader hash instead, since the compiler is only created with the logical
@@ -910,12 +910,17 @@ tu_get_physical_device_properties_1_2(struct tu_physical_device *pdevice,
    p->roundingModeIndependence =
       VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
 
-   p->shaderDenormFlushToZeroFloat16         = true;
-   p->shaderDenormPreserveFloat16            = false;
+   if (pdevice->info->chip >= A8XX) {
+      p->shaderDenormFlushToZeroFloat16      = false;
+      p->shaderDenormPreserveFloat16         = true;
+   } else {
+      p->shaderDenormFlushToZeroFloat16      = true;
+      p->shaderDenormPreserveFloat16         = false;
+   }
+
    p->shaderRoundingModeRTEFloat16           = true;
    p->shaderRoundingModeRTZFloat16           = false;
    p->shaderSignedZeroInfNanPreserveFloat16  = true;
-
    p->shaderDenormFlushToZeroFloat32         = true;
 
    /* FP32 denorm preserve has to be emulated via soft-float. Normal
@@ -1451,7 +1456,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
 
    {
       struct mesa_sha1 sha1_ctx;
-      uint8_t sha1[20];
+      uint8_t sha1[SHA1_DIGEST_LENGTH];
 
       _mesa_sha1_init(&sha1_ctx);
 
@@ -1578,7 +1583,8 @@ tu_physical_device_init(struct tu_physical_device *device,
 
    switch (fd_dev_gen(&device->dev_id)) {
    case 6:
-   case 7: {
+   case 7:
+   case 8: {
       device->dev_info = info;
       device->info = &device->dev_info;
 
@@ -2045,6 +2051,7 @@ tu_GetPhysicalDeviceFragmentShadingRatesKHR(
    uint32_t *pFragmentShadingRateCount,
    VkPhysicalDeviceFragmentShadingRateKHR *pFragmentShadingRates)
 {
+   VK_FROM_HANDLE(tu_physical_device, physical_device, physicalDevice);
    VK_OUTARRAY_MAKE_TYPED(VkPhysicalDeviceFragmentShadingRateKHR, out,
                           pFragmentShadingRates, pFragmentShadingRateCount);
 
@@ -2062,6 +2069,9 @@ tu_GetPhysicalDeviceFragmentShadingRatesKHR(
 
    append_rate(4, 4, VK_SAMPLE_COUNT_1_BIT);
    append_rate(4, 2, VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT);
+   /* Apparently hw didn't actually have this rate in a7xx: */
+   if (physical_device->info->chip >= A8XX)
+      append_rate(2, 4, VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT);
    append_rate(2, 2, VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT);
    append_rate(2, 1, VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT);
    append_rate(1, 2, VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT);
@@ -2208,12 +2218,17 @@ tu_copy_buffer(struct u_trace_context *utctx, void *cmdstream,
                uint64_t size_B)
 {
    struct tu_cs *cs = (struct tu_cs *) cmdstream;
-   struct tu_suballoc_bo *bo_from = (struct tu_suballoc_bo *) ts_from;
+   uint64_t src_iova = from_offset_B;
+   if (ts_from) {
+      struct tu_suballoc_bo *bo_from = (struct tu_suballoc_bo *) ts_from;
+      src_iova = bo_from->iova + from_offset_B;
+   }
+
    struct tu_suballoc_bo *bo_to = (struct tu_suballoc_bo *) ts_to;
 
    tu_cs_emit_pkt7(cs, CP_MEMCPY, 5);
    tu_cs_emit(cs, size_B / sizeof(uint32_t));
-   tu_cs_emit_qw(cs, bo_from->iova + from_offset_B);
+   tu_cs_emit_qw(cs, src_iova);
    tu_cs_emit_qw(cs, bo_to->iova + to_offset_B);
 }
 
@@ -2226,7 +2241,8 @@ tu_trace_capture_data(struct u_trace *ut,
                         uint64_t src_offset_B,
                         uint32_t size_B)
 {
-   if (src_buffer)
+   assert(src_buffer == NULL);
+   if (src_offset_B)
       tu_copy_buffer(ut->utctx, cs, src_buffer, src_offset_B, dst_buffer,
                      dst_offset_B, size_B);
 }
@@ -2679,6 +2695,12 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    case 7:
       vk_device_dispatch_table_from_entrypoints(
          &dispatch_table, &tu_device_entrypoints_a7xx, false);
+   case 8:
+      /* gen8 TODO: */
+      tu_env.debug |= TU_DEBUG_NOLRZ;     /* WRITE iova faults from UCHE */
+      tu_env.debug |= TU_DEBUG_FLUSHALL;  /* dEQP-VK.draw.\*from_compute\* */
+      vk_device_dispatch_table_from_entrypoints(
+         &dispatch_table, &tu_device_entrypoints_a8xx, false);
    }
 
    vk_device_dispatch_table_from_entrypoints(
@@ -2947,8 +2969,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
             goto fail_prepare_perfcntrs_pass_cs;
          }
 
-         /* TODO: a8xx */
-         tu_cs_emit_regs(&sub_cs, CP_SCRATCH_REG(A6XX, PERF_CNTRS_REG, 1 << i));
+         tu_cs_emit_regs(&sub_cs, TU_CALLX(device, tu_scratch_reg)(PERF_CNTRS_REG, 1 << i));
          tu_cs_emit_pkt7(&sub_cs, CP_WAIT_FOR_ME, 0);
 
          device->perfcntrs_pass_cs_entries[i] =
