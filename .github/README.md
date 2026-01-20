@@ -7,19 +7,19 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 A [Mesa](https://gitlab.freedesktop.org/mesa/mesa) build for containers on Android (Proot, Chroot, LXC, etc.), to support hardware acceleration with Adreno GPU.  
 
 ## Features
-  - The Freedreno driver in Mesa 26.0.0 and later versions supports Adreno 840 GPU.  
+  - The Freedreno and Turnip driver in Mesa 26.0.0 and later versions supports Adreno 830/840 GPU.  
   - Mesa drivers compiled in arm64 chroot containers across multiple popular Linux distributions offer better compatibility and can be used in Proot, chroot, and LXC containers hosted on Android.  
-  - For some Adreno 6xx/7xx GPUs, the Freedreno driver can be used for OpenGL, OpenGL ES, and Vulkan, eliminating the need for Zink for graphics API call translation and significantly improving GPU utilization.  
+  - For some Adreno 6xx/7xx/8xx GPUs, the Freedreno driver can be used for OpenGL, OpenGL ES, and Vulkan, eliminating the need for Zink for graphics API call translation and significantly improving GPU utilization.  
   - Only drivers relevant to the vast majority of Android devices are compiled to reduce the package size.  
 ## Compatibility
 
-|          GPU           |    OpenGL    |  OpenGL ES   |     Vulkan      |
-| :--------------------: | :----------: | :----------: | :-------------: |
-|     **Adreno 660**     | ✔️ Supported | ✔️ Supported |  ✔️ Supported   |
-| **Adreno 730/740/750** | ✔️ Supported | ✔️ Supported |  ✔️ Supported   |
-|     **Adreno 840**     | ✔️ Supported | ✔️ Supported | ❌ Not supported |
+|          GPU           |    OpenGL    |  OpenGL ES   |    Vulkan    |
+| :--------------------: | :----------: | :----------: | :----------: |
+|     **Adreno 660**     | ✔️ Supported | ✔️ Supported | ✔️ Supported |
+| **Adreno 730/740/750** | ✔️ Supported | ✔️ Supported | ✔️ Supported |
+|   **Adreno 830/840**   | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 ## Installation
-This project's Releases provide two types of installation packages: one installable via the Linux distribution's package manager, and another that must be installed by direct extraction. The first type is recommended; however, if you need the latest Mesa features (such as Adreno 840 support), use the second type.  
+This project's Releases provide two types of installation packages: one installable via the Linux distribution's package manager, and another that must be installed by direct extraction. The first type is recommended; however, if you need the latest Mesa features (such as **Adreno 830/840 support**), use the second type.  
 If the Turnip driver from the standard release (whose release title doesn't have the `turnip-` prefix) fails to work properly, you can use the **unpatched Turnip driver** (whose release title does have the `turnip-` prefix) by directly installing it over the standard one.  
 ### Using the Package Manager
 Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download all corresponding packages for a specific release, then follow the installation instructions provided in the release notes. Below are the latest releases for some popular Linux distributions:  
@@ -29,14 +29,19 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 |       Debian       |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 |       Ubuntu       | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |       Fedora       |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|     Arch Linux     |              [26.0.0-1.1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.0.0-devel-20251209)              |              [turnip-26.0.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.0.0-devel-20251215)              |
+|     Arch Linux     |              [26.0.0-2.1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.0.0-devel-20260116)              |              [turnip-26.0.0-3](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.0.0-devel-20260116)              |
 ### Direct Extraction  
 ℹ️ **Note**: The `.tar.gz` installation packages in Releases can only overwrite the existing Mesa drivers. To uninstall, you must manually delete the extracted files. These packages are intended for testing purposes only.  
 
-1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download a `.tar.gz` installation package. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution.  
+1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download the `.tar.gz` installation packages. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution. For **Adreno 7xx/8xx**, it is generally recommended to first extract the standard installation package (which includes Freedreno), followed by the unpatched Turnip installation package. The latest releases for both are as follows:  
+
+|                                             Standard Installation Package                                             |                                             Unpatched Turnip Installation Package                                              |
+| :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
+| [26.0.0-devel-20260116](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.0.0-devel-20260116) | [turnip-26.0.0-devel-20260116](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.0.0-devel-20260116) |
 2.  Extract the installation package directly to the root directory.  
 ```bash
-sudo tar -zxvf mesa-for-android-container_26.0.0-devel-20251209_debian_trixie_arm64.tar.gz -C /
+sudo tar -zxvf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
+sudo tar -zxvf turnip_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
 ```
 3.  Refresh the dynamic linker cache.  
 ```bash
@@ -46,7 +51,7 @@ sudo ldconfig
 Uninstallation can be performed by referring to the following commands:  
 ```bash
 # Copy the file list output by this command
-tar tf mesa-for-android-container_26.0.0-devel-20251209_debian_trixie_arm64.tar.gz | grep -v '/$' | tr '\n' ' ' ; echo
+tar tf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz | grep -v '/$' | tr '\n' ' ' ; echo
 cd /
 # Replace <file-list> with the actual file list
 sudo rm <file-list>
@@ -150,7 +155,7 @@ ninja -C build/ install
 ```
 8.  If you need to package the built Mesa drivers for installation on other devices with the same distribution, refer to the following commands:  
 ```bash
-export MESA_RELEASE_NAME_SUFFIX=26.0.0-devel-20251209_debian_trixie_arm64
+export MESA_RELEASE_NAME_SUFFIX=26.0.0-devel-xxxxxxxx_debian_trixie_arm64
 sudo mkdir /tmp/mesa-install-tmp
 sudo DESTDIR=/tmp/mesa-install-tmp meson install -C build/
 sudo tar -zcvf mesa-for-android-container_${MESA_RELEASE_NAME_SUFFIX}.tar.gz -C /tmp/mesa-install-tmp .
@@ -161,13 +166,17 @@ sudo rm -rf /tmp/mesa-install-tmp
 ## Benchmarks
 Detailed test results: [benchmark-result](docs/common/benchmark-result.md)  
 
-|      Device       |   Model    |                SoC                |    GPU     | glmark2 | glmark2-es2 |      vkmark |
-| :---------------: | :--------: | :-------------------------------: | :--------: | ------: | ----------: | ----------: |
-|   Redmi K40 Pro   | M2012K11G  |      Qualcomm Snapdragon 888      | Adreno 660 |     842 |         771 |        1170 |
-| Xiaomi Pad 6 Pro  | 23046RP50C |   Qualcomm Snapdragon 8+ Gen 1    | Adreno 730 |    1169 |        1143 |         263 |
-| Xiaomi 17 Pro Max | 2509FPN0BC | Qualcomm Snapdragon 8 Elite Gen 5 | Adreno 840 |    2947 |        2901 | Not working |
+|      Device       |   Model    |                SoC                |    GPU     | glmark2 | glmark2-es2 |     vkmark |
+| :---------------: | :--------: | :-------------------------------: | :--------: | ------: | ----------: | ---------: |
+|   Redmi K40 Pro   | M2012K11G  |      Qualcomm Snapdragon 888      | Adreno 660 |     842 |         771 |       1170 |
+| Xiaomi Pad 6 Pro  | 23046RP50C |   Qualcomm Snapdragon 8+ Gen 1    | Adreno 730 |    1169 |        1143 |        263 |
+|   REDMI K80 Pro   | 24122RKC7C |    Qualcomm Snapdragon 8 Elite    | Adreno 830 |    3081 |        3083 |        308 |
+| Xiaomi 17 Pro Max | 2509FPN0BC | Qualcomm Snapdragon 8 Elite Gen 5 | Adreno 840 |    2947 |        2901 | Not tested |
+|    OnePlus 15     |   PLK110   | Qualcomm Snapdragon 8 Elite Gen 5 | Adreno 840 |    3574 |        3621 | Not tested |
+
+**PS:** The Xiaomi 17 Pro Max was connected to a power source during benchmarking, which caused performance throttling; the actual score would be higher under normal conditions.  
 ## Acknowledgements
   - [Lucas Fryzek](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/21570): Author of the KGSL backend code for the Mesa Freedreno driver.  
   - [xMeM](https://github.com/xMeM/termux-packages/commit/401982b8d9eaef70669762bfff2a963341c65e52): For porting the Freedreno driver's KGSL backend to Termux:X11.  
   - [Robert Kirkman](https://github.com/robertkirkman/termux-packages/commit/06a959eeddf153cebd0d3ea1a6c2eb2921b5f786): For integrating and improving xMeM's patches.  
-  - [Rob Clark](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/38450): For adding initial Freedreno support for Adreno Gen8 architecture (including Adreno 840).  
+  - [Rob Clark](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/38450): For adding Freedreno (including Turnip) support for Adreno Gen8 architecture (including Adreno 840).  
