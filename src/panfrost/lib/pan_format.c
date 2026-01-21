@@ -1,24 +1,6 @@
 /*
  * Copyright (C) 2019 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "pan_format.h"
@@ -48,6 +30,11 @@
 #define MALI_BLEND_AU_R5G5B5A1    (MALI_RGB5_A1_AU << 12)  | MALI_RGBA_SWIZZLE
 #define MALI_BLEND_PU_R5G5B5A1    (MALI_RGB5_A1_PU << 12)  | MALI_RGBA_SWIZZLE
 
+#define MALI_BLEND_R16F        (MALI_R16F << 12)           | MALI_RGBA_SWIZZLE
+#define MALI_BLEND_RG16F       (MALI_RG16F << 12)          | MALI_RGBA_SWIZZLE
+#define MALI_BLEND_RGBA16F     (MALI_RGBA16F << 12)        | MALI_RGBA_SWIZZLE
+#define MALI_BLEND_RG11F_B10F  (MALI_R11F_G11F_B10F << 12) | MALI_RGBA_SWIZZLE
+
 #if PAN_ARCH <= 5
 #define BFMT2(pipe, internal, writeback, srgb)                                 \
    [PIPE_FORMAT_##pipe] = {                                                    \
@@ -73,6 +60,18 @@
 #define BFMT_SRGB(pipe, writeback)                                             \
    BFMT2(pipe##_UNORM, R8G8B8A8, writeback, 0),                                \
       BFMT2(pipe##_SRGB, R8G8B8A8, writeback, 1)
+
+#if PAN_ARCH >= 9
+#define BFMT_FLOAT(pipe, internal_and_writeback)                               \
+   [PIPE_FORMAT_##pipe] = {                                                    \
+      MALI_COLOR_BUFFER_INTERNAL_FORMAT_##internal_and_writeback,              \
+      MALI_FLOAT_COLOR_FORMAT_##internal_and_writeback,                        \
+      {                                                                        \
+         MALI_BLEND_##internal_and_writeback,                                  \
+         MALI_BLEND_##internal_and_writeback,                                  \
+      },                                                                       \
+   }
+#endif
 
 const struct pan_blendable_format
    GENX(pan_blendable_formats)[PIPE_FORMAT_COUNT] = {
@@ -110,6 +109,13 @@ const struct pan_blendable_format
       BFMT(B5G5R5A1_UNORM, R5G5B5A1),
       BFMT(R5G5B5A1_UNORM, R5G5B5A1),
       BFMT(B5G5R5X1_UNORM, R5G5B5A1),
+
+#if PAN_ARCH >= 9
+      BFMT_FLOAT(R16_FLOAT, R16F),
+      BFMT_FLOAT(R16G16_FLOAT, RG16F),
+      BFMT_FLOAT(R16G16B16A16_FLOAT, RGBA16F),
+      BFMT_FLOAT(R11G11B10_FLOAT, RG11F_B10F),
+#endif
 };
 
 /* Convenience */

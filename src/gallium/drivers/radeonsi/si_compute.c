@@ -44,7 +44,7 @@ static void si_create_compute_state_async(void *job, void *gdata, int thread_ind
    program->shader.is_monolithic = true;
    program->shader.wave_size = si_determine_wave_size(sscreen, &program->shader);
 
-   unsigned char ir_sha1_cache_key[20];
+   unsigned char ir_sha1_cache_key[SHA1_DIGEST_LENGTH];
    si_get_ir_cache_key(sel, false, false, shader->wave_size, ir_sha1_cache_key);
 
    /* Try to load the shader from the shader cache. */
@@ -838,10 +838,8 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
 
    bool cs_regalloc_hang = sscreen->info.has_cs_regalloc_hang_bug &&
                            info->block[0] * info->block[1] * info->block[2] > 256;
-   if (cs_regalloc_hang) {
-      sctx->barrier_flags |= SI_BARRIER_SYNC_PS | SI_BARRIER_SYNC_CS;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
-   }
+   if (cs_regalloc_hang)
+      si_set_barrier_flags(sctx, SI_BARRIER_SYNC_PS | SI_BARRIER_SYNC_CS);
 
    si_check_dirty_buffers_textures(sctx);
 
@@ -875,8 +873,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
       /* Indirect buffers are read through L2 on GFX9-GFX11, but not other hw. */
       if ((sctx->gfx_level <= GFX8 || sscreen->info.cp_sdma_ge_use_system_memory_scope) &&
           si_resource(info->indirect)->L2_cache_dirty) {
-         sctx->barrier_flags |= SI_BARRIER_WB_L2 | SI_BARRIER_PFP_SYNC_ME;
-         si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
+         si_set_barrier_flags(sctx, SI_BARRIER_WB_L2 | SI_BARRIER_PFP_SYNC_ME);
          si_resource(info->indirect)->L2_cache_dirty = false;
       }
    }
@@ -933,7 +930,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    }
 
    /* Registers that are not read from memory should be set before this: */
-   si_emit_barrier_direct(sctx);
+   si_emit_barrier_direct(sctx, 0);
 
    if (sctx->is_gfx_queue && si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
       sctx->atoms.s.render_cond.emit(sctx, -1);
@@ -974,10 +971,8 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    if (unlikely(sctx->perfetto_enabled))
       trace_si_end_compute(&sctx->trace, info->grid[0], info->grid[1], info->grid[2]);
 
-   if (cs_regalloc_hang) {
-      sctx->barrier_flags |= SI_BARRIER_SYNC_CS;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
-   }
+   if (cs_regalloc_hang)
+      si_set_barrier_flags(sctx, SI_BARRIER_SYNC_CS);
 }
 
 void si_destroy_compute(struct si_compute *program)

@@ -13,6 +13,7 @@
 #include "nir.h"
 
 #include <array>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -20,11 +21,20 @@ namespace aco {
 
 struct parameter_info {
    bool discardable;
+   bool needs_explicit_preservation;
    bool is_reg;
    union {
       Definition def;
       unsigned scratch_offset;
    };
+};
+
+struct param_assignment_hints {
+   param_assignment_hints() { BITSET_ZERO(registers_to_avoid); }
+
+   std::vector<std::optional<parameter_info>> param_affinities;
+   std::optional<parameter_info> stack_pointer_affinity;
+   BITSET_DECLARE(registers_to_avoid, 512);
 };
 
 struct call_info {
@@ -284,12 +294,23 @@ void create_fs_dual_src_export_gfx11(isel_context* ctx, const struct aco_export_
                                      const struct aco_export_mrt* mrt1);
 Temp lanecount_to_mask(isel_context* ctx, Temp count, unsigned bit_offset);
 void build_end_with_regs(isel_context* ctx, std::vector<Operand>& regs);
-Instruction* add_startpgm(struct isel_context* ctx);
+Instruction* add_startpgm(struct isel_context* ctx, bool is_callee = false);
 void finish_program(isel_context* ctx);
 
-struct callee_info get_callee_info(amd_gfx_level gfx_level, const ABI& abi, unsigned param_count,
-                                   const nir_parameter* parameters, Program* program,
-                                   RegisterDemand reg_limit);
+ABI nir_abi_to_aco(unsigned nir_abi_mask);
+
+param_assignment_hints get_ahit_isec_param_hints(const struct callee_info& traversal_info);
+
+struct callee_info get_callee_info(amd_gfx_level gfx_level, unsigned wave_size, const ABI& abi,
+                                   unsigned param_count, const nir_parameter* parameters,
+                                   Program* program, RegisterDemand reg_limit,
+                                   const param_assignment_hints& param_hints = {});
+void load_scratch_param(isel_context* ctx, Builder& bld, const parameter_info& param,
+                        Temp stack_ptr, unsigned scratch_param_size, Temp dst);
+void store_scratch_param(isel_context* ctx, Builder& bld, const parameter_info& param,
+                         Temp stack_ptr, unsigned scratch_param_size, Temp data);
+
+void emit_reload_preserved(isel_context* ctx);
 
 #define isel_err(...) _isel_err(ctx, __FILE__, __LINE__, __VA_ARGS__)
 

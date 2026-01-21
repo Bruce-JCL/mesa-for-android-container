@@ -1,25 +1,6 @@
 /*
  * Copyright (C) 2025 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef __PAN_COMPILER_H__
@@ -35,6 +16,8 @@
 #include "util/shader_stats.h"
 
 struct pan_shader_info;
+
+bool pan_will_dump_shaders(unsigned arch);
 
 const nir_shader_compiler_options *
 pan_get_nir_shader_compiler_options(unsigned arch);
@@ -113,16 +96,7 @@ unsigned pan_lookup_pushed_ubo(struct pan_ubo_push *push, unsigned ubo,
 struct pan_compile_inputs {
    unsigned gpu_id;
    uint32_t gpu_variant;
-   /* Used on Bifrost and Valhall for pixel_local_storage load/store to convert
-    * the format to a descriptor.
-    */
-   uint64_t (*get_conv_desc)(enum pipe_format fmt, unsigned rt,
-                             unsigned force_size, bool dithered);
    bool is_blend, is_blit;
-   struct {
-      unsigned nr_samples;
-      uint64_t bifrost_blend_desc;
-   } blend;
    bool no_idvs;
    uint32_t view_mask;
 
@@ -154,9 +128,6 @@ struct pan_compile_inputs {
    } fau_consts;
 
    union {
-      struct {
-         uint32_t rt_conv[8];
-      } bifrost;
       struct {
          /* Use LD_VAR_BUF[_IMM] instead of LD_VAR[_IMM] to load varyings. */
          bool use_ld_var_buf;
@@ -337,6 +308,7 @@ struct pan_shader_info {
    unsigned attributes_read_count;
    unsigned attribute_count;
    unsigned attributes_read;
+   uint64_t images_used;
 
    struct {
       unsigned input_count;
@@ -376,11 +348,6 @@ void pan_shader_compile(nir_shader *nir, struct pan_compile_inputs *inputs,
 uint16_t pan_to_bytemask(unsigned bytes, unsigned mask);
 
 /* NIR passes to do some backend-specific lowering */
-
-#define PAN_WRITEOUT_C 1
-#define PAN_WRITEOUT_Z 2
-#define PAN_WRITEOUT_S 4
-#define PAN_WRITEOUT_2 8
 
 /*
  * Helper returning the subgroup size. Generally, this is equal to the number of

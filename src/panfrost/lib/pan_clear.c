@@ -1,26 +1,7 @@
 /*
  * Copyright (C) 2019-2021 Collabora, Ltd.
  * Copyright (C) 2019 Alyssa Rosenzweig
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "genxml/gen_macros.h"
@@ -125,7 +106,8 @@ pan_pack_color(const struct pan_blendable_format *blendable_formats,
    enum mali_color_buffer_internal_format internal =
       blendable_formats[format].internal;
 
-   if (internal == MALI_COLOR_BUFFER_INTERNAL_FORMAT_RAW_VALUE) {
+   if (util_format_is_float(format) ||
+       internal == MALI_COLOR_BUFFER_INTERNAL_FORMAT_RAW_VALUE) {
       pan_pack_raw(packed, color, format);
       return;
    }

@@ -103,6 +103,7 @@ hk_get_device_extensions(const struct hk_instance *instance,
 #endif
       .KHR_push_descriptor = true,
       .KHR_relaxed_block_layout = true,
+      .KHR_robustness2 = true,
       .KHR_sampler_mirror_clamp_to_edge = true,
       .KHR_sampler_ycbcr_conversion = true,
       .KHR_separate_depth_stencil_layouts = true,
@@ -589,7 +590,7 @@ hk_get_device_features(
       .provokingVertexLast = true,
       .transformFeedbackPreservesProvokingVertex = true,
 
-      /* VK_EXT_robustness2 */
+      /* VK_KHR_robustness2 */
       .robustBufferAccess2 = true,
       .robustImageAccess2 = true,
       .nullDescriptor = true,
@@ -978,7 +979,7 @@ hk_get_device_properties(const struct agx_device *dev,
       .provokingVertexModePerPipeline = true,
       .transformFeedbackPreservesTriangleFanProvokingVertex = true,
 
-      /* VK_EXT_robustness2 */
+      /* VK_KHR_robustness2 */
       .robustStorageBufferAccessSizeAlignment = HK_SSBO_BOUNDS_CHECK_ALIGNMENT,
       .robustUniformBufferAccessSizeAlignment = HK_MIN_UBO_ALIGNMENT,
 
@@ -1067,7 +1068,7 @@ hk_get_device_properties(const struct agx_device *dev,
 
    {
       struct mesa_sha1 sha1_ctx;
-      uint8_t sha1[20];
+      uint8_t sha1[SHA1_DIGEST_LENGTH];
 
       _mesa_sha1_init(&sha1_ctx);
       /* Make sure we don't match with other vendors */
@@ -1108,7 +1109,7 @@ hk_physical_device_init_pipeline_cache(struct hk_physical_device *pdev)
 
    assert(len == sizeof(renderer) - 2);
 
-   char timestamp[41];
+   char timestamp[SHA1_DIGEST_STRING_LENGTH];
    _mesa_sha1_format(timestamp, instance->driver_build_sha);
 
    const uint64_t driver_flags = hk_physical_device_compiler_flags(pdev);

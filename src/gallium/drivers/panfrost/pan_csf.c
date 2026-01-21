@@ -1,24 +1,6 @@
 /*
  * Copyright (C) 2023 Collabora Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "decode.h"
@@ -1168,9 +1150,9 @@ csf_emit_draw_state(struct panfrost_batch *batch,
    cs_move64_to(b, cs_sr_reg64(b, IDVS, SCISSOR_BOX), *sbd);
 
 #if PAN_ARCH >= 12
-   uint64_t *avalon_viewport = (uint64_t *)batch->avalon_viewport;
-   cs_move64_to(b, cs_sr_reg64(b, IDVS, VIEWPORT_HIGH), avalon_viewport[0]);
-   cs_move64_to(b, cs_sr_reg64(b, IDVS, VIEWPORT_LOW), avalon_viewport[1]);
+   uint64_t *fifthgen_viewport = (uint64_t *)batch->fifthgen_viewport;
+   cs_move64_to(b, cs_sr_reg64(b, IDVS, VIEWPORT_HIGH), fifthgen_viewport[0]);
+   cs_move64_to(b, cs_sr_reg64(b, IDVS, VIEWPORT_LOW), fifthgen_viewport[1]);
 #else
    cs_move32_to(b, cs_sr_reg32(b, IDVS, LOW_DEPTH_CLAMP),
                 fui(batch->minimum_z));

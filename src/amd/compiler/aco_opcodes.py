@@ -1029,6 +1029,8 @@ VOP1 = {
    ("v_cvt_i32_f32",              dst(U32), src(F32), op(0x08)),
    ("v_cvt_f16_f32",              dst(F16), src(F32), op(0x0a)),
    ("p_v_cvt_f16_f32_rtne",       dst(F16), src(F32), op(-1)),
+   ("p_v_cvt_f16_f32_rtpi",       dst(F16), src(F32), op(-1)),
+   ("p_v_cvt_f16_f32_rtni",       dst(F16), src(F32), op(-1)),
    ("v_cvt_f32_f16",              dst(F32), src(F16), op(0x0b)),
    ("v_cvt_rpi_i32_f32",          dst(U32), src(F32), op(0x0c)), #v_cvt_nearest_i32_f32 in GFX11
    ("v_cvt_flr_i32_f32",          dst(U32), src(F32), op(0x0d)),#v_cvt_floor_i32_f32 in GFX11
@@ -1226,6 +1228,8 @@ VOPP = {
    ("v_fma_mix_f32",    dst(F32), src(F32, F32, F32), op(gfx9=0x20)), # v_mad_mix_f32 in VEGA ISA, v_fma_mix_f32 in RDNA ISA
    ("v_fma_mixlo_f16",  dst(F16), src(F32, F32, F32), op(gfx9=0x21)), # v_mad_mixlo_f16 in VEGA ISA, v_fma_mixlo_f16 in RDNA ISA
    ("v_fma_mixhi_f16",  dst(F16), src(F32, F32, F32), op(gfx9=0x22)), # v_mad_mixhi_f16 in VEGA ISA, v_fma_mixhi_f16 in RDNA ISA
+   ("p_v_fma_mixlo_f16_rtz", dst(F16), src(F32, F32, F32), op(-1)), # v_fma_mixlo_f16 with fp16 rtz rounding
+   ("p_v_fma_mixhi_f16_rtz", dst(F16), src(F32, F32, F32), op(-1)), # v_fma_mixhi_f16 with fp16 rtz rounding
    ("v_dot2_i32_i16",      dst(U32), src(PkU16, PkU16, U32), op(gfx9=0x26, gfx10=0x14, gfx11=-1)),
    ("v_dot2_u32_u16",      dst(U32), src(PkU16, PkU16, U32), op(gfx9=0x27, gfx10=0x15, gfx11=-1)),
    ("v_dot4_i32_iu8",      dst(U32), src(PkU16, PkU16, U32), op(gfx11=0x16)),

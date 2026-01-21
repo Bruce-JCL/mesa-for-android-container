@@ -135,8 +135,9 @@ static uint32_t setup_pck_info(VkFormat vk_format)
       break;
    }
 
+   /* Invalidate the format bits, but clear the rest so they can still be set. */
    if (pck_format == ~0)
-      return pck_format;
+      pck_format = 0b11111;
 
    uint32_t pck_info = pck_format;
    if (split)
@@ -148,12 +149,15 @@ static uint32_t setup_pck_info(VkFormat vk_format)
    if (roundzero)
       pck_info |= BITFIELD_BIT(7);
 
+   if (util_format_is_unorm(format))
+      pck_info |= BITFIELD_BIT(8);
+
    return pck_info;
 }
 
-VkResult PVR_PER_ARCH(pack_tex_state)(struct pvr_device *device,
-                                      const struct pvr_texture_state_info *info,
-                                      struct pvr_image_descriptor *state)
+VkResult pvr_arch_pack_tex_state(struct pvr_device *device,
+                                 const struct pvr_texture_state_info *info,
+                                 struct pvr_image_descriptor *state)
 {
    const struct pvr_device_info *dev_info = &device->pdevice->dev_info;
    enum pvr_memlayout mem_layout;
@@ -226,7 +230,7 @@ VkResult PVR_PER_ARCH(pack_tex_state)(struct pvr_device *device,
        * to avoid this.
        */
       word0.texformat =
-         pvr_get_tex_format_aspect(info->format, info->aspect_mask);
+         pvr_arch_get_tex_format_aspect(info->format, info->aspect_mask);
       word0.smpcnt = util_logbase2(info->sample_count);
       word0.swiz0 =
          pvr_get_hw_swizzle(VK_COMPONENT_SWIZZLE_R, info->swizzle[0]);

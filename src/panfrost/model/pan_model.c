@@ -1,24 +1,6 @@
 /*
  * Copyright (C) 2019 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "pan_model.h"
@@ -54,7 +36,7 @@
    MODEL(gpu_prod_id << 16, ARCH_MAJOR | ARCH_MINOR | PRODUCT_MAJOR,           \
          gpu_variant, shortname, counters, ##__VA_ARGS__)
 
-#define AVALON_MODEL(gpu_prod_id, gpu_variant, shortname, counters, ...)       \
+#define FIFTHGEN_MODEL(gpu_prod_id, gpu_variant, shortname, counters, ...)     \
    MODEL(gpu_prod_id << 16, ARCH_MAJOR | ARCH_MINOR | PRODUCT_MAJOR,           \
          gpu_variant, shortname, counters, ##__VA_ARGS__)
 
@@ -116,9 +98,9 @@ const struct pan_model pan_model_list[] = {
    VALHALL_MODEL(0xac04, 4, "G310v5",   "TVAx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(32768, 16384),
                                               MODEL_RATES(4, 8,  64)),
 
-   AVALON_MODEL( 0xc800, 4, "G720",   "TTIx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(65536, 32768),
+   FIFTHGEN_MODEL(0xc800, 4, "G720",  "TTIx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(65536, 32768),
                                               MODEL_RATES(4, 8, 128)),
-   AVALON_MODEL( 0xd800, 4, "G725",   "TKRx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(65536, 65536),
+   FIFTHGEN_MODEL(0xd800, 4, "G725",  "TKRx", MODEL_ANISO(ALL),  MODEL_TB_SIZES(65536, 65536),
                                               MODEL_RATES(4, 8, 128)),
 };
 /* clang-format on */
@@ -132,7 +114,7 @@ const struct pan_model pan_model_list[] = {
 #undef MIDGARD_MODEL
 #undef BIFROST_MODEL
 #undef VALHALL_MODEL
-#undef AVALON_MODEL
+#undef FIFTHGEN_MODEL
 #undef MODEL
 
 #undef MODEL_ANISO

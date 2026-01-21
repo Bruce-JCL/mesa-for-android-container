@@ -1,25 +1,7 @@
 /*
  * Copyright (C) 2022 Collabora Ltd.
  * Copyright (C) 2025 Arm Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #pragma once
@@ -37,7 +19,7 @@
 extern "C" {
 #endif
 
-/* Before Avalon, RUN_IDVS could use a selector but as we only hardcode the same
+/* Before 5th Gen, RUN_IDVS could use a selector but as we only hardcode the same
  * configuration, we match v12+ naming here */
 
 #if PAN_ARCH <= 11
@@ -1731,6 +1713,13 @@ cs_move_reg32(struct cs_builder *b, struct cs_index dest, struct cs_index src)
 #endif
 }
 
+static inline void
+cs_move_reg64(struct cs_builder *b, struct cs_index dest, struct cs_index src)
+{
+   cs_move_reg32(b, cs_extract32(b, dest, 0), cs_extract32(b, src, 0));
+   cs_move_reg32(b, cs_extract32(b, dest, 1), cs_extract32(b, src, 1));
+}
+
 #if PAN_ARCH >= 11
 static inline void
 cs_and32(struct cs_builder *b, struct cs_index dest, struct cs_index src0,
@@ -2509,6 +2498,69 @@ cs_trace_run_fragment(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
 
    cs_store(b, cs_reg_tuple(b, 40, 7), tracebuf_addr, BITFIELD_MASK(7),
             cs_trace_field_offset(run_fragment, sr));
+   cs_flush_stores(b);
+}
+
+#if PAN_ARCH >= 13
+#define CS_RUN_FULLSCREEN_SR_MASK \
+   (BITFIELD64_RANGE(40, 4) | BITFIELD64_RANGE(56, 4) | BITFIELD64_RANGE(61, 3))
+#define CS_RUN_FULLSCREEN_SR_COUNT 11
+#elif PAN_ARCH >= 11
+#define CS_RUN_FULLSCREEN_SR_MASK \
+   (BITFIELD64_RANGE(40, 4) | BITFIELD64_BIT(56) | BITFIELD64_RANGE(61, 3))
+#define CS_RUN_FULLSCREEN_SR_COUNT 8
+#else
+#define CS_RUN_FULLSCREEN_SR_MASK \
+   (BITFIELD64_RANGE(40, 4) | BITFIELD64_BIT(56))
+#define CS_RUN_FULLSCREEN_SR_COUNT 5
+#endif
+
+struct cs_run_fullscreen_trace {
+   uint64_t ip;
+   uint64_t dcd;
+   uint32_t sr[CS_RUN_FULLSCREEN_SR_COUNT];
+} __attribute__((aligned(64)));
+
+static inline void
+cs_trace_run_fullscreen(struct cs_builder *b, const struct cs_tracing_ctx *ctx,
+                        struct cs_index scratch_regs, uint32_t flags_override,
+                        struct cs_index dcd)
+{
+   if (likely(!ctx->enabled)) {
+      cs_run_fullscreen(b, flags_override, dcd);
+      return;
+   }
+
+   struct cs_index tracebuf_addr = cs_reg64(b, scratch_regs.reg);
+   struct cs_index data = cs_reg64(b, scratch_regs.reg + 2);
+
+   cs_trace_preamble(b, ctx, scratch_regs,
+                     sizeof(struct cs_run_fullscreen_trace));
+
+   /* cs_run_xx() must immediately follow cs_load_ip_to() otherwise the IP
+    * won't point to the right instruction. */
+   cs_load_ip_to(b, data);
+   cs_run_fullscreen(b, flags_override, dcd);
+   cs_store64(b, data, tracebuf_addr,
+              cs_trace_field_offset(run_fullscreen, ip));
+
+   cs_store64(b, dcd, tracebuf_addr,
+              cs_trace_field_offset(run_fullscreen, dcd));
+
+   ASSERTED unsigned sr_count = 0;
+   unsigned sr_offset = cs_trace_field_offset(run_fullscreen, sr);
+   for (unsigned i = 0; i < 64; i += 16) {
+      unsigned mask = (CS_RUN_FULLSCREEN_SR_MASK >> i) & BITFIELD_MASK(16);
+      if (!mask)
+         continue;
+
+      cs_store(b, cs_reg_tuple(b, i, util_last_bit(mask)),
+               tracebuf_addr, mask, sr_offset);
+      sr_offset += util_bitcount(mask) * sizeof(uint32_t);
+      sr_count += util_bitcount(mask);
+   }
+   assert(sr_count == CS_RUN_FULLSCREEN_SR_COUNT);
+
    cs_flush_stores(b);
 }
 

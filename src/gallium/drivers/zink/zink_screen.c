@@ -304,12 +304,12 @@ disk_cache_init(struct zink_screen *screen)
    struct mesa_blake3 ctx;
    _mesa_blake3_init(&ctx);
 
-#ifdef HAVE_BUILD_ID
+#if HAVE_BUILD_ID
    /* Hash in the zink driver build. */
    const struct build_id_note *note =
        build_id_find_nhdr_for_addr(disk_cache_init);
    unsigned build_id_len = build_id_length(note);
-   assert(note && build_id_len == 20); /* blake3 */
+   assert(note && build_id_len == BUILD_ID_EXPECTED_HASH_LENGTH);
    _mesa_blake3_update(&ctx, build_id_data(note), build_id_len);
 #endif
 
@@ -345,8 +345,8 @@ disk_cache_init(struct zink_screen *screen)
    blake3_hash blake3;
    _mesa_blake3_final(&ctx, blake3);
 
-   char cache_id[20 * 2 + 1];
-   mesa_bytes_to_hex(cache_id, blake3, 20);
+   char cache_id[SHA1_DIGEST_STRING_LENGTH];
+   mesa_bytes_to_hex(cache_id, blake3, SHA1_DIGEST_LENGTH);
 
    screen->disk_cache = disk_cache_create("zink", cache_id, 0);
 
@@ -1545,8 +1545,10 @@ zink_destroy_screen(struct pipe_screen *pscreen)
       }
    }
 
+#if HAVE_RENDERDOC_INTEGRATION
    if (screen->renderdoc_capture_all && p_atomic_dec_zero(&num_screens))
       screen->renderdoc_api->EndFrameCapture(RENDERDOC_DEVICEPOINTER_FROM_VKINSTANCE(screen->instance), NULL);
+#endif
 
    hash_table_foreach(&screen->dts, entry)
       zink_kopper_deinit_displaytarget(screen, entry->data);
@@ -2326,7 +2328,7 @@ populate_format_props(struct zink_screen *screen)
 static void
 setup_renderdoc(struct zink_screen *screen)
 {
-#ifndef _WIN32
+#if HAVE_RENDERDOC_INTEGRATION
    const char *capture_id = debug_get_option("ZINK_RENDERDOC", NULL);
    if (!capture_id)
       return;
@@ -2839,7 +2841,6 @@ check_base_requirements(struct zink_screen *screen)
       screen->info.have_EXT_scalar_block_layout = true;
    }
    if (!screen->info.feats.features.logicOp ||
-       !screen->info.feats.features.fillModeNonSolid ||
        !screen->info.feats.features.shaderClipDistance ||
        !(screen->info.feats12.scalarBlockLayout ||
          screen->info.have_EXT_scalar_block_layout) ||
@@ -2853,7 +2854,6 @@ check_base_requirements(struct zink_screen *screen)
       if (!screen->info.X) \
          fprintf(stderr, "%s ", #X)
       CHECK_OR_PRINT(feats.features.logicOp);
-      CHECK_OR_PRINT(feats.features.fillModeNonSolid);
       CHECK_OR_PRINT(feats.features.shaderClipDistance);
       if (!screen->info.feats12.scalarBlockLayout && !screen->info.have_EXT_scalar_block_layout)
          fprintf(stderr, "scalarBlockLayout OR EXT_scalar_block_layout ");
@@ -2885,6 +2885,7 @@ init_driver_workarounds(struct zink_screen *screen)
    /* enable implicit sync for all non-mesa drivers */
    screen->driver_workarounds.implicit_sync = !zink_driver_is_venus(screen);
    switch (zink_driverid(screen)) {
+   case VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA:
    case VK_DRIVER_ID_MESA_RADV:
    case VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA:
    case VK_DRIVER_ID_MESA_LLVMPIPE:
@@ -3081,6 +3082,7 @@ init_driver_workarounds(struct zink_screen *screen)
 
    /* these drivers can successfully do INVALID <-> LINEAR dri3 modifier swap */
    switch (zink_driverid(screen)) {
+   case VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA:
    case VK_DRIVER_ID_MESA_TURNIP:
    case VK_DRIVER_ID_MESA_NVK:
    case VK_DRIVER_ID_MESA_LLVMPIPE:

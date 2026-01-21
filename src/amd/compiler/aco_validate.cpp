@@ -404,6 +404,8 @@ validate_ir(Program* program)
                check(!valu.opsel[3], "Unexpected opsel for sub-dword definition", instr.get());
          } else if (instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
                     instr->opcode == aco_opcode::v_fma_mixhi_f16 ||
+                    instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz ||
+                    instr->opcode == aco_opcode::p_v_fma_mixhi_f16_rtz ||
                     instr->opcode == aco_opcode::v_fma_mix_f32) {
             check(instr->definitions[0].regClass() ==
                      (instr->opcode == aco_opcode::v_fma_mix_f32 ? v1 : v2b),
@@ -438,7 +440,10 @@ validate_ir(Program* program)
                   ((instr->isMUBUF() || instr->isMTBUF()) && i == 1) ||
                   (instr->isScratch() && i == 0) || (instr->isDS() && i == 0) ||
                   (instr->opcode == aco_opcode::p_init_scratch && i == 0) ||
-                  (instr_disables_wqm(instr.get()) && i + 2 >= instr->operands.size());
+                  (instr_disables_wqm(instr.get()) && i + 2 >= instr->operands.size()) ||
+                  ((instr->opcode == aco_opcode::p_return ||
+                    instr->opcode == aco_opcode::p_reload_preserved) &&
+                   i == 0);
                check(can_be_undef, "Undefs can only be used in certain operands", instr.get());
             } else {
                check(instr->operands[i].isFixed() || instr->operands[i].isTemp() ||
@@ -917,7 +922,8 @@ validate_ir(Program* program)
                         "MIMG operands[3+] (VADDR) must be VGPR", instr.get());
                   if (non_mask_ops > 4) {
                      if (program->gfx_level < GFX11) {
-                        check(instr->operands[i].regClass() == v1,
+                        check(instr->operands[i].regClass() == v1 ||
+                                 instr->operands[i].regClass() == v1.as_linear(),
                               "GFX10 MIMG VADDR must be v1 if NSA is used", instr.get());
                      } else {
                         unsigned num_scalar = program->gfx_level >= GFX12 ? (non_mask_ops - 4) : 4;
@@ -926,7 +932,8 @@ validate_ir(Program* program)
                             instr->opcode != aco_opcode::image_bvh_dual_intersect_ray &&
                             instr->opcode != aco_opcode::image_bvh8_intersect_ray &&
                             i < 3 + num_scalar) {
-                           check(instr->operands[i].regClass() == v1,
+                           check(instr->operands[i].regClass() == v1 ||
+                                 instr->operands[i].regClass() == v1.as_linear(),
                                  "first 4 GFX11 MIMG VADDR must be v1 if NSA is used", instr.get());
                         }
                      }
@@ -986,7 +993,9 @@ validate_ir(Program* program)
             break;
          }
          case Format::LDSDIR: {
-            check(instr->definitions.size() == 1 && instr->definitions[0].regClass() == v1,
+            check(instr->definitions.size() == 1 &&
+                     (instr->definitions[0].regClass() == v1 ||
+                      instr->definitions[0].regClass() == v1.as_linear()),
                   "LDSDIR must have an v1 definition", instr.get());
             check(instr->operands.size() == 1, "LDSDIR must have an operand", instr.get());
             if (!instr->operands.empty()) {
@@ -1341,6 +1350,8 @@ validate_subdword_operand(amd_gfx_level gfx_level, const aco_ptr<Instruction>& i
    if (instr->isVOP3P()) {
       bool fma_mix = instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
                      instr->opcode == aco_opcode::v_fma_mixhi_f16 ||
+                     instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz ||
+                     instr->opcode == aco_opcode::p_v_fma_mixhi_f16_rtz ||
                      instr->opcode == aco_opcode::v_fma_mix_f32;
       return instr->valu().opsel_lo[index] == (byte >> 1) &&
              instr->valu().opsel_hi[index] == (fma_mix || (byte >> 1));
@@ -1404,6 +1415,7 @@ validate_subdword_definition(amd_gfx_level gfx_level, const aco_ptr<Instruction>
    switch (instr->opcode) {
    case aco_opcode::v_interp_p2_hi_f16:
    case aco_opcode::v_fma_mixhi_f16:
+   case aco_opcode::p_v_fma_mixhi_f16_rtz:
    case aco_opcode::buffer_load_ubyte_d16_hi:
    case aco_opcode::buffer_load_sbyte_d16_hi:
    case aco_opcode::buffer_load_short_d16_hi:
@@ -1538,14 +1550,58 @@ validate_instr_defs(Program* program, std::array<unsigned, 2048>& regs,
    return err;
 }
 
+bool
+validate_call(Program* program, std::array<unsigned, 2048>& regs,
+              const std::vector<Assignment>& assignments, const Location& loc,
+              aco_ptr<Instruction>& instr)
+{
+   bool err = false;
+
+   RegisterDemand limit = get_addr_regs_from_waves(program, program->min_waves);
+   BITSET_DECLARE(preserved_regs, 512);
+   instr->call().abi.preservedRegisters(preserved_regs, limit);
+
+   /* TODO: This is a hack. I think the return address should not be precolored to a preserved
+    * register. */
+   BITSET_CLEAR(preserved_regs, instr->definitions[0].physReg().reg());
+   BITSET_CLEAR(preserved_regs, instr->definitions[0].physReg().reg() + 1);
+
+   for (unsigned i = 0; i < regs.size(); i++) {
+      unsigned temp = regs[i];
+      bool is_preserved = BITSET_TEST(preserved_regs, i / 4);
+      if (!temp || is_preserved)
+         continue;
+
+      bool can_use_clobbered =
+         program->temp_rc[temp].is_linear_vgpr() ||
+         std::any_of(
+            instr->operands.begin(), instr->operands.end(), [&](const Operand& op)
+            { return op.tempId() == temp && (op.isKillBeforeDef() || !op.isClobbered()); });
+      if (!can_use_clobbered) {
+         err |= ra_fail(program, loc, assignments[temp].defloc,
+                        "Assignment of %%%d in clobbered register at call instruction", temp);
+      }
+   }
+
+   for (Definition def : instr->definitions) {
+      for (unsigned i = 0; i < def.bytes(); i++) {
+         bool is_preserved = BITSET_TEST(preserved_regs, (def.physReg().reg_b + i) / 4);
+         if (is_preserved) {
+            err |= ra_fail(program, loc, Location(),
+                           "Assignment of %%%d in callee-preserved register of call instruction",
+                           def.tempId());
+         }
+      }
+   }
+
+   return err;
+}
+
 } /* end namespace */
 
 bool
 validate_ra(Program* program)
 {
-   if (!(debug_flags & DEBUG_VALIDATE_RA))
-      return false;
-
    bool err = false;
    aco::live_var_analysis(program);
    std::vector<std::vector<Temp>> phi_sgpr_ops(program->blocks.size());
@@ -1676,6 +1732,9 @@ validate_ra(Program* program)
                   regs[reg.reg_b + i] = 0;
             }
          }
+
+         if (instr->isCall())
+            err |= validate_call(program, regs, assignments, loc, instr);
 
          if (instr->opcode != aco_opcode::p_phi && instr->opcode != aco_opcode::p_linear_phi) {
             for (const Operand& op : instr->operands) {

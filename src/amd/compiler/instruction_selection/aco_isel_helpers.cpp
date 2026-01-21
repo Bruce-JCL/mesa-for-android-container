@@ -45,14 +45,8 @@ append_logical_end(isel_context* ctx, bool append_reload_preserved)
 {
    Builder bld(ctx->program, ctx->block);
 
-   if (append_reload_preserved && ctx->program->is_callee) {
-      Operand stack_ptr_op;
-      if (ctx->program->gfx_level >= GFX9)
-         stack_ptr_op = Operand(ctx->callee_info.stack_ptr.def.getTemp());
-      else
-         stack_ptr_op = Operand(load_scratch_resource(ctx->program, bld, -1u, false));
-      bld.pseudo(aco_opcode::p_reload_preserved, bld.def(bld.lm), bld.def(s1, scc), stack_ptr_op);
-   }
+   if (append_reload_preserved && ctx->program->is_callee && ctx->block->loop_nest_depth == 0)
+      emit_reload_preserved(ctx);
 
    bld.pseudo(aco_opcode::p_logical_end);
 }
@@ -676,8 +670,10 @@ build_end_with_regs(isel_context* ctx, std::vector<Operand>& regs)
 }
 
 Instruction*
-add_startpgm(struct isel_context* ctx)
+add_startpgm(struct isel_context* ctx, bool is_callee)
 {
+   ctx->program->scratch_arg_size += ctx->callee_info.scratch_param_size;
+
    unsigned def_count = 0;
    for (unsigned i = 0; i < ctx->args->arg_count; i++) {
       if (ctx->args->args[i].skip)
@@ -687,6 +683,15 @@ add_startpgm(struct isel_context* ctx)
          def_count += ctx->args->args[i].size;
       else
          def_count++;
+   }
+
+   if (is_callee) {
+      /* We do not support shader args in callees. */
+      assert(def_count == 0);
+      def_count += ctx->callee_info.reg_param_count;
+      /* Add system parameters separately - they aren't counted by reg_param_count */
+      assert(ctx->callee_info.stack_ptr.is_reg && ctx->callee_info.return_address.is_reg);
+      def_count += 2;
    }
 
    Instruction* startpgm = create_instruction(aco_opcode::p_startpgm, Format::PSEUDO, 0, def_count);
@@ -718,6 +723,22 @@ add_startpgm(struct isel_context* ctx)
             assert(file == AC_ARG_VGPR);
             ctx->program->args_pending_vmem.push_back(def);
          }
+      }
+   }
+
+   if (is_callee) {
+      unsigned def_idx = 0;
+      if (ctx->program->gfx_level >= GFX9)
+         ctx->program->stack_ptr = ctx->callee_info.stack_ptr.def.getTemp();
+      else
+         ctx->program->static_scratch_rsrc = ctx->callee_info.stack_ptr.def.getTemp();
+      startpgm->definitions[def_idx++] = ctx->callee_info.stack_ptr.def;
+      startpgm->definitions[def_idx++] = ctx->callee_info.return_address.def;
+
+      for (auto& info : ctx->callee_info.param_infos) {
+         if (!info.is_reg)
+            continue;
+         startpgm->definitions[def_idx++] = info.def;
       }
    }
 
@@ -802,11 +823,23 @@ finish_program(isel_context* ctx)
    }
 }
 
+ABI
+nir_abi_to_aco(unsigned function_attributes)
+{
+   switch (function_attributes & ACO_NIR_FUNCTION_ATTRIB_ABI_MASK) {
+   case ACO_NIR_CALL_ABI_RT_RECURSIVE: return rtRaygenABI;
+   case ACO_NIR_CALL_ABI_TRAVERSAL: return rtTraversalABI;
+   case ACO_NIR_CALL_ABI_AHIT_ISEC: return rtAnyHitABI;
+   default: UNREACHABLE("invalid abi");
+   }
+}
+
 struct param_assignment_info {
    uint16_t required_alignment;
    uint16_t provided_alignment;
    RegClass rc;
    parameter_info* dst_info;
+   const parameter_info* affinity;
    bool is_return_param;
    /* If true, this parameter shouldn't count toward the callee info's reg_param_count because it
     * receives special handling (e.g. the call return address being a definition instead of an
@@ -820,7 +853,7 @@ struct param_assignment_info {
 };
 
 std::optional<PhysReg>
-find_reg(BITSET_WORD* regs, RegClass rc)
+find_reg(BITSET_WORD* regs, RegClass rc, const BITSET_WORD* avoid)
 {
    uint16_t start = 0;
    uint16_t size = 128;
@@ -831,7 +864,7 @@ find_reg(BITSET_WORD* regs, RegClass rc)
 
    uint16_t contiguous_size = 0;
    for (uint16_t i = 0; i < size; ++i) {
-      if (!BITSET_TEST(regs, start + i)) {
+      if (!BITSET_TEST(regs, start + i) || (avoid && BITSET_TEST(avoid, start + i))) {
          contiguous_size = 0;
          continue;
       }
@@ -842,8 +875,62 @@ find_reg(BITSET_WORD* regs, RegClass rc)
 }
 
 void
+param_hint_avoid(param_assignment_hints& hints, const parameter_info& param_info)
+{
+   if (!param_info.is_reg)
+      return;
+   BITSET_SET_COUNT(hints.registers_to_avoid, param_info.def.physReg(), param_info.def.size());
+}
+
+void
+param_hint_map(param_assignment_hints& hints, const struct callee_info& traversal_info,
+               unsigned dst_param_idx, unsigned src_param_idx)
+{
+   auto& param_info = traversal_info.param_infos[src_param_idx + ACO_NIR_CALL_SYSTEM_ARG_COUNT];
+   if (!param_info.is_reg)
+      return;
+   hints.param_affinities[dst_param_idx + ACO_NIR_CALL_SYSTEM_ARG_COUNT] = param_info;
+}
+
+param_assignment_hints
+get_ahit_isec_param_hints(const struct callee_info& traversal_info)
+{
+   param_assignment_hints hints;
+   hints.stack_pointer_affinity = traversal_info.stack_ptr;
+   hints.param_affinities.resize(AHIT_ISEC_ARG_HIT_ATTRIB_PAYLOAD_BASE, {});
+
+   for (auto& info : traversal_info.param_infos)
+      param_hint_avoid(hints, info);
+   param_hint_avoid(hints, traversal_info.stack_ptr);
+
+   param_hint_map(hints, traversal_info, RT_ARG_LAUNCH_ID, RT_ARG_LAUNCH_ID);
+   param_hint_map(hints, traversal_info, RT_ARG_LAUNCH_SIZE, RT_ARG_LAUNCH_SIZE);
+   param_hint_map(hints, traversal_info, RT_ARG_DESCRIPTORS, RT_ARG_DESCRIPTORS);
+   param_hint_map(hints, traversal_info, RT_ARG_DYNAMIC_DESCRIPTORS, RT_ARG_DYNAMIC_DESCRIPTORS);
+   param_hint_map(hints, traversal_info, RT_ARG_PUSH_CONSTANTS, RT_ARG_PUSH_CONSTANTS);
+   param_hint_map(hints, traversal_info, RT_ARG_SBT_DESCRIPTORS, RT_ARG_SBT_DESCRIPTORS);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_SHADER_RECORD_PTR,
+                  TRAVERSAL_ARG_SHADER_RECORD_PTR);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_CULL_MASK_AND_FLAGS,
+                  TRAVERSAL_ARG_CULL_MASK_AND_FLAGS);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_RAY_ORIGIN, TRAVERSAL_ARG_RAY_ORIGIN);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_RAY_TMIN, TRAVERSAL_ARG_RAY_TMIN);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_RAY_DIRECTION, TRAVERSAL_ARG_RAY_DIRECTION);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_CANDIDATE_RAY_TMAX, TRAVERSAL_ARG_RAY_TMAX);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_PRIMITIVE_ADDR,
+                  TRAVERSAL_ARG_PRIMITIVE_ADDR);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_PRIMITIVE_ID, TRAVERSAL_ARG_PRIMITIVE_ID);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_INSTANCE_ADDR, TRAVERSAL_ARG_INSTANCE_ADDR);
+   param_hint_map(hints, traversal_info, AHIT_ISEC_ARG_GEOMETRY_ID_AND_FLAGS,
+                  TRAVERSAL_ARG_GEOMETRY_ID_AND_FLAGS);
+
+   return hints;
+}
+
+void
 find_param_regs(Program* program, const ABI& abi, callee_info& info,
-                std::vector<struct param_assignment_info>& params, RegisterDemand reg_limit)
+                std::vector<struct param_assignment_info>& params,
+                const BITSET_DECLARE(regs_to_avoid, 512), RegisterDemand reg_limit)
 {
    unsigned scratch_param_bytes = 0;
    RegisterDemand param_demand = RegisterDemand();
@@ -887,7 +974,32 @@ find_param_regs(Program* program, const ABI& abi, callee_info& info,
       else
          regs = clobbered_regs;
 
-      auto next_reg = find_reg(regs, rc);
+      std::optional<PhysReg> next_reg;
+
+      if (params.back().affinity) {
+         bool use_affinity = true;
+         if (params.back().affinity->is_reg) {
+            const Definition& def = params.back().affinity->def;
+            for (auto reg = def.physReg(); reg < def.physReg().advance(def.bytes());
+                 reg = reg.advance(4)) {
+               if (!BITSET_TEST(regs, reg)) {
+                  use_affinity = false;
+                  break;
+               }
+            }
+            if (use_affinity)
+               next_reg = def.physReg();
+         } else {
+            /* TODO: scratch parameters could benefit from affinities as well */
+            use_affinity = false;
+         }
+      }
+
+      if (!next_reg)
+         next_reg = find_reg(regs, rc, regs_to_avoid);
+      if (!next_reg)
+         next_reg = find_reg(regs, rc, NULL);
+
       /* Force parameter into scratch if it exceeds the ABI's maximum parameter demand */
       if (abi.max_param_demand != RegisterDemand() &&
           (param_demand + Temp(0, rc)).exceeds(abi.max_param_demand))
@@ -922,6 +1034,8 @@ find_param_regs(Program* program, const ABI& abi, callee_info& info,
 
             param_demand += Temp(0, it2->rc);
 
+            it2->dst_info->needs_explicit_preservation =
+               regs == clobbered_regs && !it2->dst_info->discardable;
             it2->dst_info->def.setPrecolored(*next_reg);
             for (unsigned i = 0; i < it2->rc.size(); ++i)
                BITSET_CLEAR(regs, next_reg->reg() + i);
@@ -937,6 +1051,8 @@ find_param_regs(Program* program, const ABI& abi, callee_info& info,
             next_reg = next_reg->advance(required_padding * 4);
       }
       if (next_reg) {
+         params.back().dst_info->needs_explicit_preservation =
+            regs == clobbered_regs && !params.back().dst_info->discardable;
          param_demand += Temp(0, params.back().rc);
          params.back().dst_info->def.setPrecolored(*next_reg);
          BITSET_CLEAR_COUNT(regs, next_reg->reg(), params.back().rc.size());
@@ -960,8 +1076,9 @@ find_param_regs(Program* program, const ABI& abi, callee_info& info,
 }
 
 struct callee_info
-get_callee_info(amd_gfx_level gfx_level, const ABI& abi, unsigned param_count,
-                const nir_parameter* parameters, Program* program, RegisterDemand reg_limit)
+get_callee_info(amd_gfx_level gfx_level, unsigned wave_size, const ABI& abi, unsigned param_count,
+                const nir_parameter* parameters, Program* program, RegisterDemand reg_limit,
+                const param_assignment_hints& param_hints)
 {
    struct callee_info info = {};
    info.param_infos.reserve(param_count);
@@ -1002,6 +1119,9 @@ get_callee_info(amd_gfx_level gfx_level, const ABI& abi, unsigned param_count,
       stack_ptr_info.is_return_param = false;
       stack_ptr_info.is_system_param = true;
       stack_ptr_info.force_reg = true;
+      if (param_hints.stack_pointer_affinity)
+         stack_ptr_info.affinity = &(*param_hints.stack_pointer_affinity);
+
       assignment_infos.push_back(stack_ptr_info);
    } else {
       Temp scratch_rsrc = program ? program->allocateTmp(s4) : Temp();
@@ -1019,6 +1139,9 @@ get_callee_info(amd_gfx_level gfx_level, const ABI& abi, unsigned param_count,
       rsrc_info.is_return_param = false;
       rsrc_info.is_system_param = true;
       rsrc_info.force_reg = true;
+      if (param_hints.stack_pointer_affinity)
+         rsrc_info.affinity = &(*param_hints.stack_pointer_affinity);
+
       assignment_infos.push_back(rsrc_info);
    }
 
@@ -1027,9 +1150,13 @@ get_callee_info(amd_gfx_level gfx_level, const ABI& abi, unsigned param_count,
    for (unsigned i = 0; i < param_count; ++i) {
       RegType type = parameters[i].is_uniform ? RegType::sgpr : RegType::vgpr;
       unsigned byte_size = align(parameters[i].bit_size, 32) / 8 * parameters[i].num_components;
+      if (parameters[i].bit_size == 1) {
+         type = RegType::sgpr;
+         byte_size = wave_size / 8;
+      }
       RegClass rc = RegClass(type, byte_size / 4);
 
-      Temp dst = program ? program->allocateTmp(rc) : Temp();
+      Temp dst = program ? program->allocateTmp(rc) : Temp(0, rc);
       Definition def = Definition(dst);
 
       parameter_info param_info = {};
@@ -1062,15 +1189,45 @@ get_callee_info(amd_gfx_level gfx_level, const ABI& abi, unsigned param_count,
        * accessible through a temp.
        */
       assignment_info.force_reg = i <= 1;
+      if (param_hints.param_affinities.size() > i && param_hints.param_affinities[i])
+         assignment_info.affinity = &*param_hints.param_affinities[i];
       assignment_infos.push_back(assignment_info);
    }
 
    for (unsigned i = 0; i < param_count; ++i)
       assignment_infos[info_base + i].dst_info = &info.param_infos[i];
 
-   find_param_regs(program, abi, info, assignment_infos, reg_limit);
+   find_param_regs(program, abi, info, assignment_infos, param_hints.registers_to_avoid, reg_limit);
+
+   /* The call target parameters are special - they are marked as discardable to allow us
+    * to overwrite the parameter values within each callee for the divergent dispatch logic.
+    * However, we still need to explicitly write back the new values to the ABI-assigned registers
+    * when jumping to the next divergent callee/returning. Therefore, mark them as needing explicit
+    * preservation.
+    */
+   info.param_infos[ACO_NIR_CALL_SYSTEM_ARG_DIVERGENT_PC].needs_explicit_preservation = true;
+   info.param_infos[ACO_NIR_CALL_SYSTEM_ARG_UNIFORM_PC].needs_explicit_preservation = true;
+
+   /* Explicitly preserve the stack pointer. spill_preserved() can ensure correctness on its own,
+    * but it only can spill the initial stack pointer value to a linear VGPR, the inactive lanes of
+    * which would in turn need to be spilled to scratch. Explicitly preserving the stack pointer's
+    * value is more efficient.
+    */
+   info.stack_ptr.needs_explicit_preservation = true;
 
    return info;
+}
+
+void
+emit_reload_preserved(isel_context* ctx)
+{
+   Builder bld(ctx->program, ctx->block);
+   Operand stack_ptr_op;
+   if (ctx->program->gfx_level >= GFX9)
+      stack_ptr_op = Operand(ctx->program->stack_ptr);
+   else
+      stack_ptr_op = Operand(load_scratch_resource(ctx->program, bld, -1u, false));
+   bld.pseudo(aco_opcode::p_reload_preserved, bld.def(bld.lm), Operand(), stack_ptr_op);
 }
 
 } // namespace aco

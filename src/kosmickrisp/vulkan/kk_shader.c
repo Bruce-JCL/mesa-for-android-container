@@ -71,11 +71,22 @@ kk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
    return &options;
 }
 
+/* TODO_KOSMICKRISP Once we support robustness2, update these values. */
+static const struct vk_pipeline_robustness_state rs_all_supported = {
+   .uniform_buffers =
+      VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS,
+   .storage_buffers =
+      VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS,
+   .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_ROBUST_IMAGE_ACCESS_2_EXT,
+};
+
 static struct spirv_to_nir_options
 kk_get_spirv_options(struct vk_physical_device *vk_pdev,
                      UNUSED mesa_shader_stage stage,
                      const struct vk_pipeline_robustness_state *rs)
 {
+   if (KK_DEBUG(FORCE_ROBUSTNESS))
+      rs = &rs_all_supported;
    return (struct spirv_to_nir_options){
       .environment = NIR_SPIRV_VULKAN,
       .ssbo_addr_format = kk_buffer_addr_format(rs->storage_buffers),
@@ -332,13 +343,15 @@ kk_lower_fs_blend(nir_shader *nir,
       .logicop_func = vk_logic_op_to_pipe(state->cb->logic_op),
    };
 
-   static_assert(ARRAY_SIZE(opts.format) == 8, "max RTs out of sync");
+   static_assert(ARRAY_SIZE(opts.rt) == 8, "max RTs out of sync");
 
-   for (unsigned i = 0; i < ARRAY_SIZE(opts.format); ++i) {
-      opts.format[i] =
+   for (unsigned i = 0; i < ARRAY_SIZE(opts.rt); ++i) {
+      enum pipe_format format =
          vk_format_to_pipe_format(state->rp->color_attachment_formats[i]);
       if (state->cb->attachments[i].blend_enable) {
          opts.rt[i] = (nir_lower_blend_rt){
+            .format = format,
+
             .rgb.src_factor = vk_blend_factor_to_pipe(
                state->cb->attachments[i].src_color_blend_factor),
             .rgb.dst_factor = vk_blend_factor_to_pipe(
@@ -357,6 +370,8 @@ kk_lower_fs_blend(nir_shader *nir,
          };
       } else {
          opts.rt[i] = (nir_lower_blend_rt){
+            .format = format,
+
             .rgb.src_factor = PIPE_BLENDFACTOR_ONE,
             .rgb.dst_factor = PIPE_BLENDFACTOR_ZERO,
             .rgb.func = PIPE_BLEND_ADD,
@@ -435,6 +450,9 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir,
              struct vk_descriptor_set_layout *const *set_layouts,
              const struct vk_graphics_pipeline_state *state)
 {
+   if (KK_DEBUG(FORCE_ROBUSTNESS))
+      rs = &rs_all_supported;
+
    /* Massage IO related variables to please Metal */
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_, nir, kk_nir_lower_vs_multiview, state->rp->view_mask);

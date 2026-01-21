@@ -3003,7 +3003,7 @@ Converter::visit(nir_alu_instr *insn)
 
    if (!oldPos) {
       oldPos = this->bb->getEntry();
-      oldPos->precise = insn->exact;
+      oldPos->precise = nir_alu_instr_is_exact(insn);
    }
 
    if (unlikely(!oldPos))
@@ -3011,7 +3011,7 @@ Converter::visit(nir_alu_instr *insn)
 
    while (oldPos->next) {
       oldPos = oldPos->next;
-      oldPos->precise = insn->exact;
+      oldPos->precise = nir_alu_instr_is_exact(insn);
    }
 
    return true;
@@ -3503,6 +3503,7 @@ Converter::run()
       NIR_PASS(_, nir, nv_nir_move_stores_to_end);
 
    NIR_PASS(_, nir, nir_opt_algebraic_late);
+   NIR_PASS(_, nir, nir_opt_dce);
 
    NIR_PASS(_, nir, nir_lower_bool_to_int32);
    NIR_PASS(_, nir, nir_lower_bit_size, Converter::lowerBitSizeCB, this);
