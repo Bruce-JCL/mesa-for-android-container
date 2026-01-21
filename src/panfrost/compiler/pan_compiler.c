@@ -1,25 +1,6 @@
 /*
  * Copyright (C) 2025 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "pan_compiler.h"
@@ -32,6 +13,15 @@
 #include "midgard/midgard_compile.h"
 
 #include "panfrost/model/pan_model.h"
+
+bool
+pan_will_dump_shaders(unsigned arch)
+{
+   if (arch >= 6)
+      return bifrost_will_dump_shaders();
+   else
+      return midgard_will_dump_shaders();
+}
 
 const nir_shader_compiler_options *
 pan_get_nir_shader_compiler_options(unsigned arch)
@@ -103,7 +93,8 @@ pan_nir_lower_texture_late(nir_shader *nir, unsigned gpu_id)
 {
    /* This must be called after any lowering of resource indices
     * (panfrost_nir_lower_res_indices / panvk_per_arch(nir_lower_descriptors))
-    */
+    * and lowering of attribute indices (pan_nir_lower_image_index /
+    * pan_nir_lower_texel_buffer_fetch_index)  */
    if (pan_arch(gpu_id) >= 6)
       bifrost_lower_texture_late_nir(nir, gpu_id);
 }
@@ -163,20 +154,10 @@ pan_lookup_pushed_ubo(struct pan_ubo_push *push, unsigned ubo, unsigned offs)
 }
 
 void
-pan_shader_compile(nir_shader *s, struct pan_compile_inputs *inputs,
-                   struct util_dynarray *binary, struct pan_shader_info *info)
+pan_shader_update_info(struct pan_shader_info *info, nir_shader *s,
+                       const struct pan_compile_inputs *inputs)
 {
    unsigned arch = pan_arch(inputs->gpu_id);
-
-   memset(info, 0, sizeof(*info));
-
-   NIR_PASS(_, s, nir_inline_sysval, nir_intrinsic_load_printf_buffer_size,
-            PAN_PRINTF_BUFFER_SIZE - 8);
-
-   if (arch >= 6)
-      bifrost_compile_shader_nir(s, inputs, binary, info);
-   else
-      midgard_compile_shader_nir(s, inputs, binary, info);
 
    info->stage = s->info.stage;
    info->contains_barrier =
@@ -282,7 +263,11 @@ pan_shader_compile(nir_shader *s, struct pan_compile_inputs *inputs,
    }
 
    info->outputs_written = s->info.outputs_written;
+   info->images_used =
+      s->info.images_used[0] | ((uint64_t)s->info.images_used[1]) << 32;
    info->attribute_count += BITSET_LAST_BIT(s->info.images_used);
+   if (arch >= 6 && arch < 9)
+      info->attribute_count += BITSET_LAST_BIT(s->info.texture_buffers);
    info->writes_global = s->info.writes_memory;
    info->ubo_count = s->info.num_ubos;
 
@@ -302,6 +287,26 @@ pan_shader_compile(nir_shader *s, struct pan_compile_inputs *inputs,
          assert(!nir_is_denorm_preserve(execution_mode, 32));
          info->ftz_fp32 = true;
       }
+   }
+}
+
+void
+pan_shader_compile(nir_shader *s, struct pan_compile_inputs *inputs,
+                   struct util_dynarray *binary, struct pan_shader_info *info)
+{
+   unsigned arch = pan_arch(inputs->gpu_id);
+
+   memset(info, 0, sizeof(*info));
+
+   NIR_PASS(_, s, nir_inline_sysval, nir_intrinsic_load_printf_buffer_size,
+            PAN_PRINTF_BUFFER_SIZE - 8);
+
+   if (arch >= 6) {
+      bifrost_compile_shader_nir(s, inputs, binary, info);
+      /* pan_shader_update_info done in the compile */
+   } else {
+      midgard_compile_shader_nir(s, inputs, binary, info);
+      pan_shader_update_info(info, s, inputs);
    }
 }
 

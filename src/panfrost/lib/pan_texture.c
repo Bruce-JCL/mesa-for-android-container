@@ -4,26 +4,7 @@
  * Copyright (C) 2018-2019 Alyssa Rosenzweig
  * Copyright (C) 2019-2020 Collabora, Ltd.
  * Copyright (C) 2024 Arm Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "pan_texture.h"
@@ -1350,6 +1331,30 @@ GENX(pan_buffer_texture_emit)(const struct pan_buffer_view *bview,
    }
 }
 
+#elif PAN_ARCH >= 6
+
+void
+GENX(pan_buffer_texture_emit)(const struct pan_buffer_view *bview,
+                              struct mali_attribute_buffer_packed *out_buf,
+                              struct mali_attribute_packed *out_attrib)
+{
+   unsigned stride = util_format_get_blocksize(bview->format);
+   uint32_t hw_fmt = GENX(pan_format_from_pipe_format)(bview->format)->hw;
+
+   pan_pack(out_buf, ATTRIBUTE_BUFFER, cfg) {
+      cfg.type = MALI_ATTRIBUTE_TYPE_1D;
+      cfg.pointer = bview->base;
+      cfg.stride = stride;
+      cfg.size = bview->width_el * stride;
+   }
+
+   pan_pack(out_attrib, ATTRIBUTE, cfg) {
+      cfg.format = hw_fmt;
+      cfg.offset = bview->offset;
+      cfg.offset_enable = bview->offset != 0;
+   }
+}
+
 #else
 
 void
@@ -1377,12 +1382,6 @@ GENX(pan_buffer_texture_emit)(const struct pan_buffer_view *bview,
       cfg.texel_ordering = MALI_TEXTURE_LAYOUT_LINEAR;
       cfg.levels = 1;
       cfg.array_size = 1;
-
-#if PAN_ARCH >= 6
-      cfg.surfaces = payload->gpu;
-      cfg.minimum_lod = 0;
-      cfg.maximum_lod = 0;
-#endif
    }
 }
 

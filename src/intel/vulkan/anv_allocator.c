@@ -1161,7 +1161,7 @@ anv_state_reserved_array_pool_init(struct anv_state_reserved_array_pool *pool,
    if (pool->states == NULL)
       return vk_error(&device->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   BITSET_SET_RANGE(pool->states, 0, pool->count - 1);
+   BITSET_SET_COUNT(pool->states, 0, pool->count);
    simple_mtx_init(&pool->mutex, mtx_plain);
 
    pool->state = anv_state_pool_alloc(pool->pool, pool->stride * count, alignment);
@@ -1292,7 +1292,7 @@ anv_bo_pool_alloc(struct anv_bo_pool *pool, uint32_t size,
    struct anv_bo *bo =
       util_sparse_array_free_list_pop_elem(&pool->free_list[bucket]);
    if (bo != NULL) {
-      VG(VALGRIND_MEMPOOL_ALLOC(pool, bo->map, size));
+      VG(VALGRIND_MEMPOOL_ALLOC(pool, bo->map, bo->size));
       *bo_out = bo;
       return VK_SUCCESS;
    }
@@ -1308,7 +1308,7 @@ anv_bo_pool_alloc(struct anv_bo_pool *pool, uint32_t size,
 
    /* We want it to look like it came from this pool */
    VG(VALGRIND_FREELIKE_BLOCK(bo->map, 0));
-   VG(VALGRIND_MEMPOOL_ALLOC(pool, bo->map, size));
+   VG(VALGRIND_MEMPOOL_ALLOC(pool, bo->map, bo->size));
 
    *bo_out = bo;
 

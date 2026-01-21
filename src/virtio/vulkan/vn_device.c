@@ -27,6 +27,21 @@ vn_queue_fini(struct vn_queue *queue)
 {
    VkDevice dev_handle = vk_device_to_handle(queue->base.vk.base.device);
 
+   if (queue->async_present.initialized) {
+      mtx_lock(&queue->async_present.mutex);
+      queue->async_present.join = true;
+      cnd_signal(&queue->async_present.cond);
+      mtx_unlock(&queue->async_present.mutex);
+
+      thrd_join(queue->async_present.thread, NULL);
+
+      simple_mtx_destroy(&queue->async_present.queue_mutex);
+      mtx_destroy(&queue->async_present.mutex);
+      cnd_destroy(&queue->async_present.cond);
+
+      vn_DestroyFence(dev_handle, queue->async_present.fence, NULL);
+   }
+
    if (queue->wait_fence != VK_NULL_HANDLE) {
       vn_DestroyFence(dev_handle, queue->wait_fence, NULL);
    }
@@ -424,7 +439,7 @@ vn_device_update_shader_cache_id(struct vn_device *dev)
    /* The entry header is what contains the cache id / timestamp so we
     * need to create a fake entry.
     */
-   uint8_t key[20];
+   uint8_t key[SHA1_DIGEST_LENGTH];
    char data[] = "Fake Shader";
 
    disk_cache_compute_key(cache, data, sizeof(data), key);
@@ -432,6 +447,22 @@ vn_device_update_shader_cache_id(struct vn_device *dev)
 
    disk_cache_destroy(cache);
 #endif
+}
+
+static VkResult
+vn_get_timestamp(struct vk_device *device, uint64_t *timestamp)
+{
+   VkDevice dev_handle = vk_device_to_handle(device);
+   struct vn_device *dev = vn_device_from_handle(dev_handle);
+   UNUSED uint64_t device_max_deviation;
+
+   const VkCalibratedTimestampInfoKHR ts_info = {
+      .sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR,
+      .timeDomain = VK_TIME_DOMAIN_DEVICE_KHR,
+   };
+   return vn_call_vkGetCalibratedTimestampsKHR(dev->primary_ring, dev_handle,
+                                               1, &ts_info, timestamp,
+                                               &device_max_deviation);
 }
 
 static VkResult
@@ -447,6 +478,7 @@ vn_device_init(struct vn_device *dev,
    VkDeviceCreateInfo local_create_info;
    VkResult result;
 
+   dev->base.vk.get_timestamp = vn_get_timestamp;
    dev->instance = instance;
    dev->physical_device = physical_dev;
    dev->device_mask = 1;
@@ -517,6 +549,9 @@ vn_device_init(struct vn_device *dev,
 
    dev->has_sync2 = physical_dev->renderer_version >= VK_API_VERSION_1_3 ||
                     dev->base.vk.enabled_extensions.KHR_synchronization2;
+
+   simple_mtx_init(&dev->mutex, mtx_plain);
+   list_inithead(&dev->chains);
 
    return VK_SUCCESS;
 
@@ -604,6 +639,9 @@ vn_DestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator)
    if (!dev)
       return;
 
+   assert(list_is_empty(&dev->chains));
+   simple_mtx_destroy(&dev->mutex);
+
    vn_image_reqs_cache_fini(dev);
    vn_buffer_reqs_cache_fini(dev);
 
@@ -654,64 +692,4 @@ vn_GetDeviceGroupPeerMemoryFeatures(
    vn_call_vkGetDeviceGroupPeerMemoryFeatures(
       dev->primary_ring, device, heapIndex, localDeviceIndex,
       remoteDeviceIndex, pPeerMemoryFeatures);
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
-vn_GetCalibratedTimestampsKHR(
-   VkDevice device,
-   uint32_t timestampCount,
-   const VkCalibratedTimestampInfoKHR *pTimestampInfos,
-   uint64_t *pTimestamps,
-   uint64_t *pMaxDeviation)
-{
-   struct vn_device *dev = vn_device_from_handle(device);
-   uint64_t begin, end, max_clock_period = 0;
-   VkResult ret;
-   int domain;
-
-#ifdef CLOCK_MONOTONIC_RAW
-   begin = vk_clock_gettime(CLOCK_MONOTONIC_RAW);
-#else
-   begin = vk_clock_gettime(CLOCK_MONOTONIC);
-#endif
-
-   for (domain = 0; domain < timestampCount; domain++) {
-      switch (pTimestampInfos[domain].timeDomain) {
-      case VK_TIME_DOMAIN_DEVICE_KHR: {
-         uint64_t device_max_deviation = 0;
-
-         ret = vn_call_vkGetCalibratedTimestampsKHR(
-            dev->primary_ring, device, 1, &pTimestampInfos[domain],
-            &pTimestamps[domain], &device_max_deviation);
-
-         if (ret != VK_SUCCESS)
-            return vn_error(dev->instance, ret);
-
-         max_clock_period = MAX2(max_clock_period, device_max_deviation);
-         break;
-      }
-      case VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR:
-         pTimestamps[domain] = vk_clock_gettime(CLOCK_MONOTONIC);
-         max_clock_period = MAX2(max_clock_period, 1);
-         break;
-#ifdef CLOCK_MONOTONIC_RAW
-      case VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR:
-         pTimestamps[domain] = begin;
-         break;
-#endif
-      default:
-         pTimestamps[domain] = 0;
-         break;
-      }
-   }
-
-#ifdef CLOCK_MONOTONIC_RAW
-   end = vk_clock_gettime(CLOCK_MONOTONIC_RAW);
-#else
-   end = vk_clock_gettime(CLOCK_MONOTONIC);
-#endif
-
-   *pMaxDeviation = vk_time_max_deviation(begin, end, max_clock_period);
-
-   return VK_SUCCESS;
 }

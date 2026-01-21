@@ -43,11 +43,15 @@ xsi:schemaLocation="https://gitlab.freedesktop.org/freedreno/ rules-fd.xsd">
 	<doc>Texture memobj dwords</doc>
 	<reg32 offset="0" name="0">
 		<bitfield name="BASE_LO" low="6" high="31" shr="6"/>
+		<doc>for type TEX_BUFFER</doc>
+		<bitfield name="INSTANCE_DESC_BASE_LO" low="0" high="31"/>
 	</reg32>
 	<reg32 offset="1" name="1">
 		<bitfield name="BASE_HI" low="0" high="16"/>
 		<bitfield name="TYPE" low="17" high="19" type="a6xx_tex_type"/>
 		<bitfield name="DEPTH" low="20" high="31" type="uint"/>
+		<doc> for type TEX_BUFFER, probably for D3D structured UAVs, normally set to 1 </doc>
+		<bitfield name="STRUCTSIZETEXELS" low="20" high="31" type="uint"/>
 	</reg32>
 	<reg32 offset="2" name="2">
 		<bitfield name="WIDTH" low="0" high="14" type="uint"/>
@@ -108,7 +112,7 @@ xsi:schemaLocation="https://gitlab.freedesktop.org/freedreno/ rules-fd.xsd">
 		<bitfield name="MIN_LOD_CLAMP" low="19" high="30" type="ufixed" radix="8"/>
 		<!-- For multiplanar, this overlaps other fields: -->
 		<bitfield name="BASE_V_HI" low="0" high="16"/>
-		<bitfield name="UV_PITCH" low="17" high="26"/> <!-- PLANE_PITCH -->
+		<bitfield name="UV_PITCH" shr="6" low="17" high="26"/> <!-- PLANE_PITCH -->
 	</reg32>
 	<reg32 offset="10" name="10"/>
 	<reg32 offset="11" name="11"/>

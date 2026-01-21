@@ -229,7 +229,6 @@ with_llvm = with_llvm \
   .enable_if(with_gallium_i915, error_message : 'i915 Gallium driver requires LLVM for vertex shaders') \
   .enable_if(with_gallium_llvmpipe, error_message : 'LLVMPipe Gallium driver requires LLVM') \
   .enable_if(with_gallium_r300 and draw_with_llvm, error_message : 'R300 Gallium driver requires LLVM for vertex shaders on IGP parts') \
-  .enable_if(with_gallium_r600 and amd_with_llvm, error_message : 'R600 Gallium driver configured to require LLVM') \
   .enable_if(with_gallium_radeonsi and amd_with_llvm, error_message : 'RadeonSI Gallium driver configured to require LLVM')
 
 # compatibility for "swrast" as an internal-ish driver name
@@ -414,7 +413,7 @@ endif
 
 _codecs = get_option('video-codecs')
 patent_codecs = ['vc1dec', 'h264dec', 'h264enc', 'h265dec', 'h265enc']
-free_codecs = ['av1dec', 'av1enc', 'vp9dec']
+free_codecs = ['av1dec', 'av1enc', 'vp9dec', 'mpeg12dec', 'jpegdec']
 all_codecs = patent_codecs + free_codecs
 
 if _codecs.contains('all')
@@ -451,6 +450,27 @@ with_platform_wayland = _platforms.contains('wayland')
 with_platform_haiku = _platforms.contains('haiku')
 with_platform_windows = _platforms.contains('windows')
 with_platform_macos = _platforms.contains('macos')
+
+with_gfxstream_emulated_android = with_gfxstream_vk and with_platform_android and host_machine.system() == 'linux'
+if with_gfxstream_emulated_android
+  # When building the android_stub with a non-Bionic sysroot/target, we to have
+  # define macros that are typically in <sys/cdefs.h> when using a Bionic
+  # sysroot
+  pre_args += '-D__INTRODUCED_IN(api_level)='
+
+  # We don't want to build Vulkan common code when running the emulated
+  # gfxstream Android platform.  This causes issues when building in
+  # tandem with host Lavapipe.
+  #
+  # TODO(gfxstream-devs@): Modifying the user-provided platform can be removed
+  # when Cuttlefish moves it's host library builds off Soong, and on to Github.
+  # For now, add basic sanity checks before modifying user arguments.
+  if _platforms.contains('android') and _platforms.length() != 1
+    error('You cannot enable platform "android" at the same time as another platform')
+  endif
+  _platforms = []
+  with_platform_android = false
+endif
 
 with_glx = get_option('glx')
 if with_glx == 'auto'
@@ -788,9 +808,7 @@ if with_gallium_rusticl or with_nouveau_vk or with_tools.contains('etnaviv') or 
   rustc = meson.get_compiler('rust')
   rust = import('rust')
 
-  # Keep this in sync with the MINIMUM_SUPPORTED_RUST_VERSION in
-  # .gitlab-ci/container/build-rust.sh and the `rustup default` line in
-  # .gitlab-ci/meson/build.sh
+  # Keep this in sync with the `msrv` in clippy.toml
   if rustc.version().version_compare('< 1.82')
     error('Mesa requires Rust 1.82.0 or newer')
   endif
@@ -822,6 +840,19 @@ if with_gallium_rusticl or with_nouveau_vk or with_tools.contains('etnaviv') or 
     bindgen_output_args += ['--raw-line', '#![allow(unnecessary_transmutes)]']
   endif
 
+  rust_global_args = [
+    # We want to be able to write `else { if {} }` when it makes more sense than
+    # collapsing it into `else if {}`.
+    '-Aclippy::collapsible_else_if',
+
+    # "Needless lifetimes" might be needless but they're harmless and we
+    # prefer being explicit, so allow them.
+    '-Aclippy::needless_lifetimes',
+
+    # Being explicit has value, allow it.
+    '-Aclippy::question_mark',
+  ]
+
   rust_2024_lint_args = [
     '-Dboxed_slice_into_iter',
     '-Ddeprecated_safe_2024',
@@ -850,7 +881,7 @@ else
 endif
 
 with_driver_using_cl = [
-  with_gallium_iris, with_intel_vk,
+  with_gallium_iris, with_gallium_crocus, with_intel_vk, with_intel_hasvk,
   with_gallium_asahi, with_asahi_vk, with_tools.contains('asahi'),
   with_gallium_panfrost, with_panfrost_vk,
   with_nouveau_vk, with_imagination_vk,
@@ -915,8 +946,9 @@ endif
 pre_args += '-DGLAPI_EXPORT_PROTO_ENTRY_POINTS=@0@'.format(with_glapi_export_proto_entry_points.to_int())
 
 with_android_stub = get_option('android-stub')
-if with_android_stub and not with_platform_android
-  error('`-D android-stub=true` makes no sense without `-D platforms=android`')
+need_android_stub = with_platform_android or with_gfxstream_emulated_android
+if with_android_stub and not need_android_stub
+  error('`-D android-stub=true` makes no sense without `-D platforms=android` or emulated Android')
 endif
 
 with_libbacktrace = get_option('android-libbacktrace') \
@@ -946,6 +978,10 @@ if with_platform_android
     endif
     if get_option('platform-sdk-version') >= 35
       dep_android_ui = dependency('ui', required : false)
+    endif
+    dep_hwvulkan_headers = dependency('android-hwvulkan-headers', required : false)
+    if dep_hwvulkan_headers.found() and with_any_vk
+      dep_android += dep_hwvulkan_headers
     endif
   endif
   pre_args += '-DANDROID_API_LEVEL=' + get_option('platform-sdk-version').to_string()
@@ -1427,7 +1463,8 @@ if not ['linux'].contains(host_machine.system())
 endif
 
 foreach h : ['xlocale.h', 'linux/futex.h', 'endian.h', 'dlfcn.h', 'sys/shm.h',
-             'cet.h', 'pthread_np.h', 'sys/inotify.h', 'linux/udmabuf.h']
+             'cet.h', 'pthread_np.h', 'poll.h', 'sys/inotify.h',
+             'linux/udmabuf.h']
   if cc.check_header(h)
     pre_args += '-DHAVE_@0@'.format(h.to_upper().underscorify())
   endif
@@ -1770,11 +1807,8 @@ endif
 
 llvm_modules = ['bitwriter', 'engine', 'mcdisassembler', 'mcjit', 'core', 'executionengine', 'scalaropts', 'transformutils', 'instcombine']
 llvm_optional_modules = ['coroutines']
-if with_amd_vk or with_gallium_radeonsi or with_gallium_r600
+if with_amd_vk or with_gallium_radeonsi
   llvm_modules += ['amdgpu', 'bitreader', 'ipo']
-  if with_gallium_r600
-    llvm_modules += 'asmparser'
-  endif
 endif
 if with_clc
   llvm_modules += ['coverage', 'target', 'linker', 'irreader', 'option', 'libdriver', 'lto']
@@ -2221,6 +2255,13 @@ if get_option('android-libperfetto').enabled()
   pre_args += '-DANDROID_LIBPERFETTO'
 endif
 
+# Platforms where RenderDoc integration actually works
+renderdoc_integration_supported = [
+  'linux',
+  'android',
+].contains(host_machine.system())
+pre_args += '-DHAVE_RENDERDOC_INTEGRATION=@0@'.format(renderdoc_integration_supported)
+
 with_teflon = get_option('teflon')
 if with_teflon and with_tests
   dep_flatbuffers = dependency('flatbuffers')
@@ -2301,7 +2342,9 @@ elif host_machine.system() == 'windows' and cc.get_argument_syntax() != 'msvc'
 else
   prog_nm = find_program('nm')
   with_symbols_check = prog_nm.found() and with_tests
-  symbols_check_args = ['--nm', prog_nm.full_path()]
+  if with_symbols_check
+    symbols_check_args = ['--nm', prog_nm.full_path()]
+  endif
 endif
 
 # This quirk needs to be applied to sources with functions defined in assembly

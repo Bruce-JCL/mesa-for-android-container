@@ -347,7 +347,7 @@ lower_vulkan_resource_index(struct tu_device *dev, nir_builder *b,
           * with fast linking means after the shader is compiled. We have to
           * get it from the const file instead.
           */
-         base = nir_imm_int(b, binding_layout->dynamic_offset_offset / (4 * A6XX_TEX_CONST_DWORDS));
+         base = nir_imm_int(b, binding_layout->dynamic_offset_offset / (4 * FDL6_TEX_CONST_DWORDS));
          nir_def *dynamic_offset_start;
          if (compiler->load_shader_consts_via_preamble) {
             dynamic_offset_start =
@@ -360,14 +360,14 @@ lower_vulkan_resource_index(struct tu_device *dev, nir_builder *b,
          base = nir_iadd(b, base, dynamic_offset_start);
       } else {
          base = nir_imm_int(b, (offset +
-            binding_layout->dynamic_offset_offset) / (4 * A6XX_TEX_CONST_DWORDS));
+            binding_layout->dynamic_offset_offset) / (4 * FDL6_TEX_CONST_DWORDS));
       }
       assert(dev->physical_device->reserved_set_idx >= 0);
       set = dev->physical_device->reserved_set_idx;
    } else
-      base = nir_imm_int(b, binding_layout->offset / (4 * A6XX_TEX_CONST_DWORDS));
+      base = nir_imm_int(b, binding_layout->offset / (4 * FDL6_TEX_CONST_DWORDS));
 
-   unsigned stride = binding_layout->size / (4 * A6XX_TEX_CONST_DWORDS);
+   unsigned stride = binding_layout->size / (4 * FDL6_TEX_CONST_DWORDS);
    assert(util_is_power_of_two_nonzero(stride));
    nir_def *shift = nir_imm_int(b, util_logbase2(stride));
 
@@ -573,9 +573,9 @@ build_bindless(struct tu_device *dev, nir_builder *b,
       offset = 1;
    }
    desc_offset =
-      nir_imm_int(b, (bind_layout->offset / (4 * A6XX_TEX_CONST_DWORDS)) +
+      nir_imm_int(b, (bind_layout->offset / (4 * FDL6_TEX_CONST_DWORDS)) +
                   offset);
-   descriptor_stride = bind_layout->size / (4 * A6XX_TEX_CONST_DWORDS);
+   descriptor_stride = bind_layout->size / (4 * FDL6_TEX_CONST_DWORDS);
 
    if (deref->deref_type != nir_deref_type_var) {
       assert(deref->deref_type == nir_deref_type_array);
@@ -1017,7 +1017,7 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
       /* Disable pushing constants for this stage if none were loaded in the
        * shader.  If all stages don't load their declared push constants, as
        * is often the case under zink, then we could additionally skip
-       * emitting REG_A7XX_SP_SHARED_CONSTANT_GFX entirely.
+       * emitting SP_SHARED_CONSTANT_GFX entirely.
        */
       if (!shader_uses_push_consts(shader))
          const_state->push_consts = (struct tu_push_constant_range) {};
@@ -1502,6 +1502,7 @@ tu_xs_get_additional_cs_size_dwords(const struct ir3_shader_variant *xs)
    return size;
 }
 
+template <chip CHIP>
 void
 tu6_emit_xs(struct tu_crb &crb,
             struct tu_device *device,
@@ -1541,7 +1542,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_VS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_VS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_VS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1560,7 +1561,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_HS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_HS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_HS_VGS_CNTL(A7XX, 0));
 
       break;
@@ -1580,7 +1581,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_DS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_DS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_DS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1599,7 +1600,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_GS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_GS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_GS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1615,6 +1616,12 @@ tu6_emit_xs(struct tu_crb &crb,
             .inoutregoverlap = true, .pixlodenable = xs->need_pixlod,
             .earlypreamble = xs->early_preamble,
             .mergedregs = xs->mergedregs, ));
+      if (CHIP >= A8XX) {
+         crb.add(RB_PS_CNTL(CHIP,
+            .pixlodenable = xs->need_pixlod,
+            .lodpixmask = xs->need_full_quad,
+         ));
+      }
       crb.add(A6XX_SP_PS_INSTR_SIZE(xs->instrlen));
       crb.add(A6XX_SP_PS_PROGRAM_COUNTER_OFFSET(0));
       crb.add(A6XX_SP_PS_BASE(.qword = binary_iova));
@@ -1625,7 +1632,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_PS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_PS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_PS_VGS_CNTL(A7XX, 0));
 
       break;
@@ -1650,7 +1657,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_CS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_CS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_CS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1658,6 +1665,7 @@ tu6_emit_xs(struct tu_crb &crb,
       UNREACHABLE("bad shader stage");
    }
 }
+TU_GENX(tu6_emit_xs);
 
 void
 tu6_emit_xs_constants(
@@ -1781,8 +1789,8 @@ tu6_emit_cs_config(struct tu_cs *cs,
 
       crb.add(SP_UPDATE_CNTL(CHIP, .cs_state = true, .cs_uav = true,
                              .cs_shared_const = shared_consts_enable));
-      tu6_emit_xs_config<CHIP>(crb, MESA_SHADER_COMPUTE, v);
-      tu6_emit_xs(crb, cs->device, MESA_SHADER_COMPUTE, v, pvtmem, binary_iova);
+      tu6_emit_xs_config<CHIP>(crb, { .cs = v });
+      tu6_emit_xs<CHIP>(crb, cs->device, MESA_SHADER_COMPUTE, v, pvtmem, binary_iova);
    }
    tu6_emit_xs_constants(cs, MESA_SHADER_COMPUTE, v, binary_iova);
 
@@ -1863,6 +1871,7 @@ tu6_emit_cs_config(struct tu_cs *cs,
 
 #define TU6_EMIT_VFD_DEST_MAX_DWORDS (MAX_VERTEX_ATTRIBS + 2)
 
+template <chip CHIP>
 static void
 tu6_emit_vfd_dest(struct tu_cs *cs,
                   const struct ir3_shader_variant *vs)
@@ -1887,6 +1896,25 @@ tu6_emit_vfd_dest(struct tu_cs *cs,
                    A6XX_VFD_CNTL_0(
                      .fetch_cnt = attr_count, /* decode_cnt for binning pass ? */
                      .decode_cnt = attr_count));
+
+   if (CHIP >= A8XX) {
+      const uint32_t vertexid_regid =
+            ir3_find_sysval_regid(vs, SYSTEM_VALUE_VERTEX_ID);
+      const uint32_t instanceid_regid =
+            ir3_find_sysval_regid(vs, SYSTEM_VALUE_INSTANCE_ID);
+      const uint32_t viewid_regid =
+            ir3_find_sysval_regid(vs, SYSTEM_VALUE_VIEW_INDEX);
+
+      unsigned sideband_count =
+         (vertexid_regid != INVALID_REG) +
+         (instanceid_regid != INVALID_REG) +
+         (viewid_regid != INVALID_REG);
+
+      tu_cs_emit_regs(cs, PC_VS_INPUT_CNTL(CHIP,
+         .instr_cnt = attr_count,
+         .sideband_cnt = sideband_count,
+      ));
+   }
 
    if (attr_count)
       tu_cs_emit_pkt4(cs, REG_A6XX_VFD_DEST_CNTL_INSTR(0), attr_count);
@@ -1990,6 +2018,11 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
       SP_REG_PROG_ID_3(CHIP, .linelengthregid = 0xfc,
                          .foveationqualityregid = shading_rate_regid), );
 
+   if (CHIP >= A8XX) {
+      tu_cs_emit_regs(cs, RB_LB_PARAM_LIMIT(CHIP,
+         cs->device->physical_device->info->props.prim_alloc_threshold));
+   }
+
    if (CHIP >= A7XX) {
       uint32_t sysval_regs = 0;
       for (unsigned i = 0; i < ARRAY_SIZE(ij_regid); i++) {
@@ -2031,50 +2064,54 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
          need_size = true;
    }
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_GRAS_CL_INTERP_CNTL, 1);
-   tu_cs_emit(cs,
-         CONDREG(ij_regid[IJ_PERSP_PIXEL], A6XX_GRAS_CL_INTERP_CNTL_IJ_PERSP_PIXEL) |
-         CONDREG(ij_regid[IJ_PERSP_CENTROID], A6XX_GRAS_CL_INTERP_CNTL_IJ_PERSP_CENTROID) |
-         CONDREG(ij_regid[IJ_PERSP_SAMPLE], A6XX_GRAS_CL_INTERP_CNTL_IJ_PERSP_SAMPLE) |
-         CONDREG(ij_regid[IJ_LINEAR_PIXEL], A6XX_GRAS_CL_INTERP_CNTL_IJ_LINEAR_PIXEL) |
-         CONDREG(ij_regid[IJ_LINEAR_CENTROID], A6XX_GRAS_CL_INTERP_CNTL_IJ_LINEAR_CENTROID) |
-         CONDREG(ij_regid[IJ_LINEAR_SAMPLE], A6XX_GRAS_CL_INTERP_CNTL_IJ_LINEAR_SAMPLE) |
-         COND(need_size, A6XX_GRAS_CL_INTERP_CNTL_IJ_LINEAR_PIXEL) |
-         COND(need_size_persamp, A6XX_GRAS_CL_INTERP_CNTL_IJ_LINEAR_SAMPLE) |
-         COND(fs->fragcoord_compmask != 0, A6XX_GRAS_CL_INTERP_CNTL_COORD_MASK(fs->fragcoord_compmask)));
+   tu_cs_emit_regs(cs,
+      GRAS_CL_INTERP_CNTL(CHIP,
+         .ij_persp_pixel        = VALIDREG(ij_regid[IJ_PERSP_PIXEL]),
+         .ij_persp_centroid     = VALIDREG(ij_regid[IJ_PERSP_CENTROID]),
+         .ij_persp_sample       = VALIDREG(ij_regid[IJ_PERSP_SAMPLE]),
+         .ij_linear_pixel       = VALIDREG(ij_regid[IJ_LINEAR_PIXEL]) || need_size,
+         .ij_linear_centroid    = VALIDREG(ij_regid[IJ_LINEAR_CENTROID]),
+         .ij_linear_sample      = VALIDREG(ij_regid[IJ_LINEAR_SAMPLE]) || need_size_persamp,
+         .coord_mask            = fs->fragcoord_compmask,
+      )
+   );
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_RB_INTERP_CNTL, 2);
-   tu_cs_emit(cs,
-         CONDREG(ij_regid[IJ_PERSP_PIXEL], A6XX_RB_INTERP_CNTL_IJ_PERSP_PIXEL) |
-         CONDREG(ij_regid[IJ_PERSP_CENTROID], A6XX_RB_INTERP_CNTL_IJ_PERSP_CENTROID) |
-         CONDREG(ij_regid[IJ_PERSP_SAMPLE], A6XX_RB_INTERP_CNTL_IJ_PERSP_SAMPLE) |
-         CONDREG(ij_regid[IJ_LINEAR_PIXEL], A6XX_RB_INTERP_CNTL_IJ_LINEAR_PIXEL) |
-         CONDREG(ij_regid[IJ_LINEAR_CENTROID], A6XX_RB_INTERP_CNTL_IJ_LINEAR_CENTROID) |
-         CONDREG(ij_regid[IJ_LINEAR_SAMPLE], A6XX_RB_INTERP_CNTL_IJ_LINEAR_SAMPLE) |
-         COND(need_size, A6XX_RB_INTERP_CNTL_IJ_LINEAR_PIXEL) |
-         COND(enable_varyings, A6XX_RB_INTERP_CNTL_INTERP_EN) |
-         COND(need_size_persamp, A6XX_RB_INTERP_CNTL_IJ_LINEAR_SAMPLE) |
-         COND(fs->fragcoord_compmask != 0,
-                           A6XX_RB_INTERP_CNTL_COORD_MASK(fs->fragcoord_compmask)));
-   tu_cs_emit(cs,
-         A6XX_RB_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE(
-            sample_shading ? FRAGCOORD_SAMPLE : FRAGCOORD_CENTER) |
-         CONDREG(smask_in_regid, A6XX_RB_PS_INPUT_CNTL_SAMPLEMASK) |
-         CONDREG(samp_id_regid, A6XX_RB_PS_INPUT_CNTL_SAMPLEID) |
-         CONDREG(ij_regid[IJ_PERSP_CENTER_RHW], A6XX_RB_PS_INPUT_CNTL_CENTERRHW) |
-         COND(fs->frag_face, A6XX_RB_PS_INPUT_CNTL_FACENESS) |
-         CONDREG(shading_rate_regid, A6XX_RB_PS_INPUT_CNTL_FOVEATION));
+   tu_cs_emit_regs(cs,
+      A6XX_RB_INTERP_CNTL(
+         .ij_persp_pixel        = VALIDREG(ij_regid[IJ_PERSP_PIXEL]),
+         .ij_persp_centroid     = VALIDREG(ij_regid[IJ_PERSP_CENTROID]),
+         .ij_persp_sample       = VALIDREG(ij_regid[IJ_PERSP_SAMPLE]),
+         .ij_linear_pixel       = VALIDREG(ij_regid[IJ_LINEAR_PIXEL]) || need_size,
+         .ij_linear_centroid    = VALIDREG(ij_regid[IJ_LINEAR_CENTROID]),
+         .ij_linear_sample      = VALIDREG(ij_regid[IJ_LINEAR_SAMPLE]) || need_size_persamp,
+         .coord_mask            = fs->fragcoord_compmask,
+         .interp_en             = enable_varyings,
+      ),
+      A6XX_RB_PS_INPUT_CNTL(
+         .samplemask            = VALIDREG(smask_in_regid),
+         .postdepthcoverage     = fs->post_depth_coverage,
+         .faceness              = fs->frag_face,
+         .sampleid              = VALIDREG(samp_id_regid),
+         .fragcoordsamplemode   = sample_shading ? FRAGCOORD_SAMPLE : FRAGCOORD_CENTER,
+         .centerrhw             = VALIDREG(ij_regid[IJ_PERSP_CENTER_RHW]),
+         .foveation             = VALIDREG(shading_rate_regid),
+      ),
+   );
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_RB_PS_SAMPLEFREQ_CNTL, 1);
-   tu_cs_emit(cs, COND(sample_shading, A6XX_RB_PS_SAMPLEFREQ_CNTL_PER_SAMP_MODE));
+   tu_cs_emit_regs(cs,
+      A6XX_RB_PS_SAMPLEFREQ_CNTL(sample_shading)
+   );
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_GRAS_LRZ_PS_INPUT_CNTL, 1);
-   tu_cs_emit(cs, CONDREG(samp_id_regid, A6XX_GRAS_LRZ_PS_INPUT_CNTL_SAMPLEID) |
-              A6XX_GRAS_LRZ_PS_INPUT_CNTL_FRAGCOORDSAMPLEMODE(
-                 sample_shading ? FRAGCOORD_SAMPLE : FRAGCOORD_CENTER));
+   tu_cs_emit_regs(cs,
+      GRAS_LRZ_PS_INPUT_CNTL(CHIP,
+         .sampleid              = VALIDREG(samp_id_regid),
+         .fragcoordsamplemode   = sample_shading ? FRAGCOORD_SAMPLE : FRAGCOORD_CENTER,
+      )
+   );
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_GRAS_LRZ_PS_SAMPLEFREQ_CNTL, 1);
-   tu_cs_emit(cs, COND(sample_shading, A6XX_GRAS_LRZ_PS_SAMPLEFREQ_CNTL_PER_SAMP_MODE));
+   tu_cs_emit_regs(cs,
+      A6XX_GRAS_LRZ_PS_SAMPLEFREQ_CNTL(sample_shading)
+   );
 
    uint32_t varmask[4] = { 0 };
 
@@ -2156,7 +2193,8 @@ tu6_emit_fs_outputs(struct tu_cs *cs,
     */
    uint32_t fs_render_components = 0;
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_SP_PS_OUTPUT_REG(0), output_reg_count);
+   if (output_reg_count > 0)
+      tu_cs_emit_pkt4(cs, REG_A6XX_SP_PS_OUTPUT_REG(0), output_reg_count);
    for (uint32_t i = 0; i < output_reg_count; i++) {
       tu_cs_emit(cs, A6XX_SP_PS_OUTPUT_REG_REGID(fragdata_regid[i]) |
                      (COND(fragdata_regid[i] & HALF_REG_ID,
@@ -2200,11 +2238,11 @@ tu6_emit_vs(struct tu_cs *cs,
    bool multi_pos_output = vs->multi_pos_output;
 
    uint32_t multiview_views = util_logbase2(view_mask) + 1;
-   uint32_t multiview_cntl = view_mask ?
-      A6XX_PC_STEREO_RENDERING_CNTL_ENABLE |
-      A6XX_PC_STEREO_RENDERING_CNTL_VIEWS(multiview_views) |
-      COND(!multi_pos_output, A6XX_PC_STEREO_RENDERING_CNTL_DISABLEMULTIPOS)
-      : 0;
+   struct fd_reg_pair multiview_cntl = PC_STEREO_RENDERING_CNTL(CHIP,
+      .enable = view_mask,
+      .disablemultipos = !multi_pos_output,
+      .views = multiview_views,
+   );
 
    /* Copy what the blob does here. This will emit an extra 0x3f
     * CP_EVENT_WRITE when multiview is disabled. I'm not exactly sure what
@@ -2213,30 +2251,34 @@ tu6_emit_vs(struct tu_cs *cs,
    if (cs->device->physical_device->info->props.has_cp_reg_write) {
       tu_cs_emit_pkt7(cs, CP_REG_WRITE, 3);
       tu_cs_emit(cs, CP_REG_WRITE_0_TRACKER(UNK_EVENT_WRITE));
-      tu_cs_emit(cs, REG_A6XX_PC_STEREO_RENDERING_CNTL);
+      tu_cs_emit(cs, multiview_cntl.reg);
    } else {
-      tu_cs_emit_pkt4(cs, REG_A6XX_PC_STEREO_RENDERING_CNTL, 1);
+      tu_cs_emit_pkt4(cs, multiview_cntl.reg, 1);
    }
-   tu_cs_emit(cs, multiview_cntl);
+   tu_cs_emit(cs, multiview_cntl.value);
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_VFD_STEREO_RENDERING_CNTL, 1);
-   tu_cs_emit(cs, multiview_cntl);
+   tu_cs_emit_regs(cs, A6XX_VFD_STEREO_RENDERING_CNTL(
+      .enable = view_mask,
+      .disablemultipos = !multi_pos_output,
+      .views = multiview_views,
+   ));
 
-   if (multiview_cntl &&
+   if (view_mask &&
        cs->device->physical_device->info->props.supports_multiview_mask) {
-      tu_cs_emit_pkt4(cs, REG_A6XX_PC_STEREO_RENDERING_VIEWMASK, 1);
-      tu_cs_emit(cs, view_mask);
+      tu_cs_emit_regs(cs, PC_STEREO_RENDERING_VIEWMASK(CHIP, view_mask));
    }
 
    if (CHIP >= A7XX) {
-      tu_cs_emit_pkt4(cs, REG_A7XX_VPC_STEREO_RENDERING_CNTL, 1);
-      tu_cs_emit(cs, multiview_cntl);
+      tu_cs_emit_regs(cs, VPC_STEREO_RENDERING_CNTL(CHIP,
+         .enable = view_mask,
+         .disablemultipos = !multi_pos_output,
+         .views = multiview_views,
+      ));
 
-      tu_cs_emit_pkt4(cs, REG_A7XX_VPC_STEREO_RENDERING_VIEWMASK, 1);
-      tu_cs_emit(cs, view_mask);
+      tu_cs_emit_regs(cs, VPC_STEREO_RENDERING_VIEWMASK(CHIP, view_mask));
    }
 
-   tu6_emit_vfd_dest(cs, vs);
+   tu6_emit_vfd_dest<CHIP>(cs, vs);
 
    const uint32_t vertexid_regid =
          ir3_find_sysval_regid(vs, SYSTEM_VALUE_VERTEX_ID);
@@ -2276,8 +2318,7 @@ tu6_emit_hs(struct tu_cs *cs,
                   A6XX_VFD_CNTL_2_REGID_INVOCATIONID(hs_invocation_regid));
 
    if (hs) {
-      tu_cs_emit_pkt4(cs, REG_A6XX_PC_HS_PARAM_0, 1);
-      tu_cs_emit(cs, hs->tess.tcs_vertices_out);
+      tu_cs_emit_regs(cs, PC_HS_PARAM_0(CHIP, hs->tess.tcs_vertices_out));
    }
 }
 TU_GENX(tu6_emit_hs);
@@ -2396,7 +2437,7 @@ tu6_emit_variant(struct tu_cs *cs,
    }
 
    with_crb(cs) {
-      tu6_emit_xs(crb, cs->device, stage, xs, pvtmem_config, binary_iova);
+      tu6_emit_xs<CHIP>(crb, cs->device, stage, xs, pvtmem_config, binary_iova);
    }
 
    switch (stage) {
@@ -2524,7 +2565,7 @@ tu_upload_shader(struct tu_device *dev,
       size += TU6_EMIT_VFD_DEST_MAX_DWORDS;
 
    const unsigned xs_size = 128;
-   const unsigned vpc_size = 32 + (v->stream_output.num_outputs != 0 ? 256 : 0);
+   const unsigned vpc_size = 64 + (v->stream_output.num_outputs != 0 ? 256 : 0);
 
    for (auto& variant : {v, binning, safe_const, safe_const_binning}) {
       if (variant) {
@@ -3312,9 +3353,9 @@ tu_compile_shaders(struct tu_device *device,
 
       int64_t stage_start = os_time_get_nano();
 
-      unsigned char shader_sha1[21];
-      memcpy(shader_sha1, pipeline_sha1, 20);
-      shader_sha1[20] = (unsigned char) stage;
+      unsigned char shader_sha1[SHA1_DIGEST_LENGTH + 1];
+      memcpy(shader_sha1, pipeline_sha1, SHA1_DIGEST_LENGTH);
+      shader_sha1[SHA1_DIGEST_LENGTH] = (unsigned char) stage;
 
       result = tu_shader_create(device,
                                 &shaders[stage], nir[stage], &keys[stage],

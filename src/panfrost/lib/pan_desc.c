@@ -1,28 +1,6 @@
 /*
  * Copyright (C) 2021 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- * Authors:
- *   Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
- *   Boris Brezillon <boris.brezillon@collabora.com>
+ * SPDX-License-Identifier: MIT
  */
 
 #include "util/macros.h"
@@ -455,39 +433,26 @@ pan_bytes_per_pixel_tib(enum pipe_format format)
 {
    const struct pan_blendable_format *bf =
       GENX(pan_blendable_format_from_pipe_format)(format);
-
-   if (bf->internal) {
-      /* Blendable formats are always 32-bits in the tile buffer,
-       * extra bits are used as padding or to dither */
-      return 4;
-   } else {
-      /* Non-blendable formats are raw, rounded up to the nearest
-       * power-of-two size */
-      unsigned bytes = util_format_get_blocksize(format);
-      return util_next_power_of_two(bytes);
-   }
+   return pan_format_tib_size(format, bf->internal);
 }
 
 static unsigned
 pan_cbuf_bytes_per_pixel(const struct pan_fb_info *fb)
 {
-   /* dummy/non-existent render-targets use RGBA8 UNORM, e.g 4 bytes */
-   const unsigned dummy_rt_size = 4 * fb->nr_samples;
-
+   bool need_dummy = false;
    unsigned sum = 0;
 
-   if (!fb->rt_count) {
-      /* The HW needs at least one render-target */
-      return dummy_rt_size;
-   }
-
-   for (int cb = 0; cb < fb->rt_count; ++cb) {
-      unsigned rt_size = dummy_rt_size;
+   for (int cb = 0; cb < MAX2(fb->rt_count, 1); ++cb) {
       const struct pan_image_view *rt = fb->rts[cb].view;
       if (rt)
-         rt_size = pan_bytes_per_pixel_tib(rt->format) * rt->nr_samples;
+         sum += pan_bytes_per_pixel_tib(rt->format) * rt->nr_samples;
+      else
+         need_dummy = true;
+   }
 
-      sum += rt_size;
+   if (need_dummy) {
+      /* dummy/non-existent render-targets use RGBA8 UNORM, e.g 4 bytes */
+      sum = MAX2(sum, 4 * fb->nr_samples);
    }
 
    if (fb->pls_enabled) {

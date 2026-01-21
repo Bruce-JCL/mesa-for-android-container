@@ -1,27 +1,6 @@
 /*
  * Copyright (C) 2020 Collabora Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- * Authors (Collabora):
- *      Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
+ * SPDX-License-Identifier: MIT
  */
 
 #include "compiler.h"
@@ -108,8 +87,8 @@ bi_choose_scoreboard_slot(bi_instr *message)
    return 0;
 }
 
-static uint64_t
-bi_read_mask(bi_instr *I, bool staging_only)
+uint64_t
+bi_instr_read_mask(bi_instr *I, bool staging_only)
 {
    uint64_t mask = 0;
 
@@ -131,8 +110,8 @@ bi_read_mask(bi_instr *I, bool staging_only)
    return mask;
 }
 
-static uint64_t
-bi_write_mask(bi_instr *I)
+uint64_t
+bi_instr_write_mask(bi_instr *I)
 {
    uint64_t mask = 0;
 
@@ -177,10 +156,10 @@ bi_push_clause(struct bi_scoreboard_state *st, bi_clause *clause)
    if (!I)
       return;
 
-   st->read[slot] |= bi_read_mask(I, true);
+   st->read[slot] |= bi_instr_read_mask(I, true);
 
    if (bi_get_opcode_props(I)->sr_write)
-      st->write[slot] |= bi_write_mask(I);
+      st->write[slot] |= bi_instr_write_mask(I);
 }
 
 /* Adds a dependency on each slot writing any specified register */
@@ -220,8 +199,8 @@ bi_set_dependencies(bi_block *block, bi_clause *clause,
                     struct bi_scoreboard_state *st)
 {
    bi_foreach_instr_in_clause(block, clause, I) {
-      uint64_t read = bi_read_mask(I, false);
-      uint64_t written = bi_write_mask(I);
+      uint64_t read = bi_instr_read_mask(I, false);
+      uint64_t written = bi_instr_write_mask(I);
 
       /* Read-after-write; write-after-write */
       bi_depend_on_writers(clause, st, read | written);

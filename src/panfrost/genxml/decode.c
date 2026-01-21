@@ -2,25 +2,7 @@
  * Copyright (C) 2017-2019 Alyssa Rosenzweig
  * Copyright (C) 2017-2019 Connor Abbott
  * Copyright (C) 2019 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "decode.h"
@@ -247,7 +229,9 @@ GENX(pandecode_fbd)(struct pandecode_context *ctx, uint64_t gpu_va,
       pan_unpack(dcd, DRAW, draw);
       pandecode_log(ctx, "Pre frame 0 @%" PRIx64 " (mode=%d):\n",
                     params.frame_shader_dcds, params.pre_frame_0);
+      ctx->indent++;
       GENX(pandecode_dcd)(ctx, &draw, job_type_param, gpu_id);
+      ctx->indent--;
    }
 
    if (params.pre_frame_1 != MALI_PRE_POST_FRAME_SHADER_MODE_NEVER) {
@@ -256,7 +240,9 @@ GENX(pandecode_fbd)(struct pandecode_context *ctx, uint64_t gpu_va,
       pan_unpack(dcd, DRAW, draw);
       pandecode_log(ctx, "Pre frame 1 @%" PRIx64 ":\n",
                     params.frame_shader_dcds + (1 * dcd_size));
+      ctx->indent++;
       GENX(pandecode_dcd)(ctx, &draw, job_type_param, gpu_id);
+      ctx->indent--;
    }
 
    if (params.post_frame != MALI_PRE_POST_FRAME_SHADER_MODE_NEVER) {
@@ -264,7 +250,9 @@ GENX(pandecode_fbd)(struct pandecode_context *ctx, uint64_t gpu_va,
          ctx, dcd, params.frame_shader_dcds + (2 * dcd_size));
       pan_unpack(dcd, DRAW, draw);
       pandecode_log(ctx, "Post frame:\n");
+      ctx->indent++;
       GENX(pandecode_dcd)(ctx, &draw, job_type_param, gpu_id);
+      ctx->indent--;
    }
 #else
    DUMP_SECTION(ctx, FRAMEBUFFER, LOCAL_STORAGE, fb, "Local Storage:\n");

@@ -12,6 +12,7 @@
 #define RADV_SHADER_H
 
 #include "util/mesa-blake3.h"
+#include "util/sha1/sha1.h"
 #include "util/shader_stats.h"
 #include "util/u_math.h"
 #include "vulkan/vulkan.h"
@@ -33,6 +34,8 @@ struct radv_shader_args;
 struct radv_shader_args;
 struct radv_serialized_shader_arena_block;
 struct vk_pipeline_robustness_state;
+struct nir_parameter;
+typedef struct nir_parameter nir_parameter;
 
 #define RADV_GRAPHICS_STAGE_BITS                                                                                       \
    (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_TASK_BIT_EXT)
@@ -269,7 +272,7 @@ struct radv_shader_stage {
    const char *entrypoint;
    const VkSpecializationInfo *spec_info;
 
-   unsigned char shader_sha1[20];
+   unsigned char shader_sha1[SHA1_DIGEST_LENGTH];
 
    nir_shader *nir;
    nir_shader *gs_copy_shader;
@@ -422,6 +425,7 @@ struct radv_shader {
    uint32_t code_size;
    uint32_t exec_size;
    struct radv_shader_info info;
+   struct radv_shader_regs regs;
    uint32_t max_waves;
 
    blake3_hash hash;
@@ -547,7 +551,8 @@ void radv_free_shader_memory(struct radv_device *device, union radv_shader_arena
 
 struct radv_shader *radv_create_trap_handler_shader(struct radv_device *device);
 
-struct radv_shader *radv_create_rt_prolog(struct radv_device *device);
+struct radv_shader *radv_create_rt_prolog(struct radv_device *device, unsigned raygen_param_count,
+                                          nir_parameter *raygen_params);
 
 struct radv_shader_part *radv_shader_part_create(struct radv_device *device, struct radv_shader_part_binary *binary,
                                                  unsigned wave_size);
@@ -577,6 +582,8 @@ const char *radv_get_shader_name(const struct radv_shader_info *info, mesa_shade
 unsigned radv_compute_spi_ps_input(const struct radv_physical_device *pdev,
                                    const struct radv_graphics_state_key *gfx_state,
                                    const struct radv_shader_info *info);
+
+bool radv_is_traversal_shader(nir_shader *nir);
 
 bool radv_can_dump_shader(struct radv_device *device, nir_shader *nir);
 
@@ -649,33 +656,11 @@ bool radv_consider_culling(const struct radv_physical_device *pdev, struct nir_s
 
 void radv_get_nir_options(struct radv_physical_device *pdev);
 
-
-enum radv_rt_priority {
-   radv_rt_priority_raygen = 0,
-   radv_rt_priority_traversal = 1,
-   radv_rt_priority_hit_miss = 2,
-   radv_rt_priority_callable = 3,
-   radv_rt_priority_mask = 0x3,
+enum radv_rt_lowering_mode {
+   RADV_RT_LOWERING_MODE_MONOLITHIC,
+   RADV_RT_LOWERING_MODE_CPS,
+   RADV_RT_LOWERING_MODE_FUNCTION_CALLS,
 };
-
-static inline enum radv_rt_priority
-radv_get_rt_priority(mesa_shader_stage stage)
-{
-   switch (stage) {
-   case MESA_SHADER_RAYGEN:
-      return radv_rt_priority_raygen;
-   case MESA_SHADER_INTERSECTION:
-   case MESA_SHADER_ANY_HIT:
-      return radv_rt_priority_traversal;
-   case MESA_SHADER_CLOSEST_HIT:
-   case MESA_SHADER_MISS:
-      return radv_rt_priority_hit_miss;
-   case MESA_SHADER_CALLABLE:
-      return radv_rt_priority_callable;
-   default:
-      UNREACHABLE("Unimplemented RT shader stage.");
-   }
-}
 
 struct radv_shader_layout;
 enum radv_pipeline_type;
@@ -709,10 +694,10 @@ radv_shader_need_push_constants_upload(const struct radv_shader *shader)
    return loc->sgpr_idx != -1;
 }
 
-void radv_precompute_registers_hw_gs(struct radv_device *device, struct radv_shader_info *es_info, struct radv_shader_info *gs_info);
+void radv_precompute_registers_hw_gs(struct radv_device *device, const struct radv_shader_info *es_info,
+                                     struct radv_shader *shader);
 
-void radv_precompute_registers_hw_ngg(struct radv_device *device, const struct ac_shader_config *config,
-                                      struct radv_shader_info *info);
+void radv_precompute_registers_hw_ngg(struct radv_device *device, struct radv_shader *shader);
 
 void radv_set_stage_key_robustness(const struct vk_pipeline_robustness_state *rs, mesa_shader_stage stage,
                                    struct radv_shader_stage_key *key);

@@ -110,7 +110,7 @@ print_annotation(print_state *state, void *obj)
    const char *note = entry->data;
    _mesa_hash_table_remove(state->annotations, entry);
 
-   fprintf(fp, "%s\n\n", note);
+   fprintf(fp, " %s", note);
 }
 
 /* For 1 element, the size is intentionally omitted. */
@@ -489,7 +489,7 @@ print_alu_instr(nir_alu_instr *instr, print_state *state)
    print_def(&instr->def, state);
 
    fprintf(fp, " = %s", nir_op_infos[instr->op].name);
-   if (instr->exact)
+   if (nir_alu_instr_is_exact(instr))
       fprintf(fp, "!");
    if (instr->no_signed_wrap)
       fprintf(fp, ".nsw");
@@ -1002,8 +1002,9 @@ print_var_decl(nir_variable *var, print_state *state)
    if (var->pointer_initializer)
       fprintf(fp, " = &%s", get_var_name(var->pointer_initializer, state));
 
-   fprintf(fp, "\n");
    print_annotation(state, var);
+
+   fprintf(fp, "\n");
 }
 
 static void
@@ -1474,8 +1475,8 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
 
          case nir_intrinsic_load_output:
          case nir_intrinsic_load_per_vertex_output:
-         case nir_intrinsic_load_converted_output_pan:
-         case nir_intrinsic_load_readonly_output_pan:
+         case nir_intrinsic_load_tile_pan:
+         case nir_intrinsic_load_tile_res_pan:
          case nir_intrinsic_load_per_primitive_output:
          case nir_intrinsic_store_output:
          case nir_intrinsic_store_per_primitive_output:
@@ -2356,8 +2357,8 @@ print_block(nir_block *block, print_state *state, unsigned tabs)
 
    nir_foreach_instr(instr, block) {
       print_instr(instr, state, tabs);
-      fprintf(fp, "\n");
       print_annotation(state, instr);
+      fprintf(fp, "\n");
    }
 
    print_indentation(tabs, fp);
@@ -2890,21 +2891,6 @@ print_shader_info(const struct shader_info *info, FILE *fp)
       print_nz_bool(fp, "untyped_color_outputs", info->fs.untyped_color_outputs);
 
       print_nz_unsigned(fp, "depth_layout", info->fs.depth_layout);
-
-      if (info->fs.color0_interp != INTERP_MODE_NONE) {
-         fprintf(fp, "color0_interp: %s\n",
-                 glsl_interp_mode_name(info->fs.color0_interp));
-      }
-      print_nz_bool(fp, "color0_sample", info->fs.color0_sample);
-      print_nz_bool(fp, "color0_centroid", info->fs.color0_centroid);
-
-      if (info->fs.color1_interp != INTERP_MODE_NONE) {
-         fprintf(fp, "color1_interp: %s\n",
-                 glsl_interp_mode_name(info->fs.color1_interp));
-      }
-      print_nz_bool(fp, "color1_sample", info->fs.color1_sample);
-      print_nz_bool(fp, "color1_centroid", info->fs.color1_centroid);
-
       print_nz_x32(fp, "advanced_blend_modes", info->fs.advanced_blend_modes);
       break;
 

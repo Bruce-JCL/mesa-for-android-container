@@ -122,7 +122,10 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .EXT_vertex_attribute_divisor = true,
 
       /* Optional extensions */
-      .KHR_shader_maximal_reconvergence = true,
+      .KHR_calibrated_timestamps = true,
+      /* Temporarily disabled due to failing tests in
+       * dEQP-VK.reconvergence.maximal.compute.nesting* */
+      .KHR_shader_maximal_reconvergence = false,
       .KHR_shader_relaxed_extended_instruction = true,
       .KHR_shader_subgroup_uniform_control_flow = true,
 #ifdef KK_USE_WSI_PLATFORM
@@ -131,6 +134,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
 #endif
       .KHR_workgroup_memory_explicit_layout = true,
 
+      .EXT_calibrated_timestamps = true,
       .EXT_external_memory_metal = true,
       .EXT_load_store_op_none = true,
       .EXT_mutable_descriptor_type = true,
@@ -161,6 +165,7 @@ kk_get_device_features(
       .inheritedQueries = true,
       .logicOp = true,
       .multiViewport = true,
+      .occlusionQueryPrecise = true,
       .robustBufferAccess = true,
       .samplerAnisotropy = true,
       .shaderClipDistance = true,
@@ -239,6 +244,7 @@ kk_get_device_features(
       .bufferDeviceAddress = true,
       .computeFullSubgroups = true,
       .dynamicRendering = true,
+      .extendedDynamicState = true,
       .inlineUniformBlock = true,
       .maintenance4 = true,
       .pipelineCreationCacheControl = true,
@@ -265,7 +271,9 @@ kk_get_device_features(
       .shaderExpectAssume = true,
 
       /* VK_KHR_shader_maximal_reconvergence */
-      .shaderMaximalReconvergence = true,
+      /* Temporarily disabled due to failing tests in
+       * dEQP-VK.reconvergence.maximal.compute.nesting* */
+      .shaderMaximalReconvergence = false,
 
       /* VK_KHR_shader_relaxed_extended_instruction */
       .shaderRelaxedExtendedInstruction = true,
@@ -329,7 +337,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .maxImageDimension3D = kk_image_max_dimension(VK_IMAGE_TYPE_3D),
       .maxImageDimensionCube = 16384,
       .maxImageArrayLayers = 2048,
-      .maxTexelBufferElements = 256 * 1024 * 1024,
+      .maxTexelBufferElements = 16384 * 16384,
       .maxUniformBufferRange = 65536,
       .maxStorageBufferRange = UINT32_MAX,
       .maxPushConstantsSize = KK_MAX_PUSH_SIZE,
@@ -524,7 +532,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .maxSubgroupSize = 32,
       .maxComputeWorkgroupSubgroups = pdev->info.max_workgroup_invocations / 32,
       .requiredSubgroupSizeStages = 0,
-      .maxInlineUniformBlockSize = 1 << 16,
+      .maxInlineUniformBlockSize = KK_MAX_INLINE_UNIFORM_BLOCK_SIZE,
       .maxPerStageDescriptorInlineUniformBlocks = 32,
       .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks = 32,
       .maxDescriptorSetInlineUniformBlocks = 6 * 32,
@@ -1001,31 +1009,6 @@ kk_GetPhysicalDeviceQueueFamilyProperties2(
             (VkExtent3D){1, 1, 1};
       }
    }
-}
-
-static const VkTimeDomainKHR kk_time_domains[] = {
-   VK_TIME_DOMAIN_DEVICE_KHR,
-   VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR,
-#ifdef CLOCK_MONOTONIC_RAW
-   VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR,
-#endif
-};
-
-VKAPI_ATTR VkResult VKAPI_CALL
-kk_GetPhysicalDeviceCalibrateableTimeDomainsKHR(VkPhysicalDevice physicalDevice,
-                                                uint32_t *pTimeDomainCount,
-                                                VkTimeDomainKHR *pTimeDomains)
-{
-   VK_OUTARRAY_MAKE_TYPED(VkTimeDomainKHR, out, pTimeDomains, pTimeDomainCount);
-
-   for (int d = 0; d < ARRAY_SIZE(kk_time_domains); d++) {
-      vk_outarray_append_typed(VkTimeDomainKHR, &out, i)
-      {
-         *i = kk_time_domains[d];
-      }
-   }
-
-   return vk_outarray_status(&out);
 }
 
 VKAPI_ATTR void VKAPI_CALL

@@ -628,7 +628,7 @@ struct anv_address {
    bool protected;
 };
 
-#define ANV_NULL_ADDRESS ((struct anv_address) { NULL, 0 })
+#define ANV_NULL_ADDRESS ((struct anv_address) { 0 })
 
 static inline struct anv_address
 anv_address_from_u64(uint64_t addr_u64)
@@ -1172,9 +1172,9 @@ enum anv_pipeline_bind_mask {
 #define ANV_PIPELINE_BIND_MASK_SET(i) (ANV_PIPELINE_BIND_MASK_SET0 << i)
 
 struct anv_pipeline_bind_map {
-   unsigned char                                surface_sha1[20];
-   unsigned char                                sampler_sha1[20];
-   unsigned char                                push_sha1[20];
+   unsigned char                                surface_sha1[SHA1_DIGEST_LENGTH];
+   unsigned char                                sampler_sha1[SHA1_DIGEST_LENGTH];
+   unsigned char                                push_sha1[SHA1_DIGEST_LENGTH];
 
    /* enum anv_descriptor_set_layout_type */
    uint16_t layout_type;
@@ -1649,7 +1649,7 @@ struct anv_physical_device {
     struct anv_memregion                        vram_mappable;
     struct anv_memregion                        vram_non_mappable;
     struct anv_memregion                        sys;
-    uint8_t                                     driver_build_sha1[20];
+    uint8_t                                     driver_build_sha1[SHA1_DIGEST_LENGTH];
     uint8_t                                     shader_binary_uuid[VK_UUID_SIZE];
     uint8_t                                     pipeline_cache_uuid[VK_UUID_SIZE];
     uint8_t                                     driver_uuid[VK_UUID_SIZE];
@@ -1778,6 +1778,7 @@ struct anv_instance {
     bool                                        has_fake_sparse;
     bool                                        disable_fcv;
     bool                                        enable_buffer_comp;
+    bool                                        disable_xe2_drm_ccs_modifiers;
     bool                                        compression_control_enabled;
     bool                                        anv_fake_nonlocal_memory;
     bool                                        anv_upper_bound_descriptor_pool_sampler;
@@ -1875,14 +1876,14 @@ struct nir_shader *
 anv_device_search_for_nir(struct anv_device *device,
                           struct vk_pipeline_cache *cache,
                           const struct nir_shader_compiler_options *nir_options,
-                          unsigned char sha1_key[20],
+                          unsigned char sha1_key[SHA1_DIGEST_LENGTH],
                           void *mem_ctx);
 
 void
 anv_device_upload_nir(struct anv_device *device,
                       struct vk_pipeline_cache *cache,
                       const struct nir_shader *nir,
-                      unsigned char sha1_key[20]);
+                      unsigned char sha1_key[SHA1_DIGEST_LENGTH]);
 
 void
 anv_load_fp64_shader(struct anv_device *device);
@@ -2624,22 +2625,11 @@ struct anv_device {
 
     uint32_t                                    protected_session_id;
 
-    /** Shadow ray query BO
-     *
-     * The ray_query_bo only holds the current ray being traced. When using
-     * more than 1 ray query per thread, we cannot fit all the queries in
-     * there, so we need a another buffer to hold query data that is not
-     * currently being used by the HW for tracing, similar to a scratch space.
-     *
-     * The size of the shadow buffer depends on the number of queries per
-     * shader.
+    /** Pool of ray query buffers used to communicated with HW unit.
      *
      * We might need a buffer per queue family due to Wa_14022863161.
      */
-    struct anv_bo                              *ray_query_shadow_bos[2][16];
-    /** Ray query buffer used to communicated with HW unit.
-     */
-    struct anv_bo                              *ray_query_bo[2];
+    struct anv_bo                              *ray_query_bos[2][16];
 
     struct anv_shader_internal                 *rt_trampoline;
     struct anv_shader_internal                 *rt_trivial_return;
@@ -4061,7 +4051,7 @@ enum anv_query_bits {
  * there is no tile cache.
  */
 #define ANV_DEVINFO_HAS_COHERENT_L3_CS(devinfo) \
-   (intel_device_info_is_dg2(devinfo) || (devinfo)->ver >= 20)
+   (intel_device_info_is_dg2(devinfo))
 
 /* Things we need to flush before accessing query data using the command
  * streamer.
@@ -4246,7 +4236,20 @@ struct anv_push_constants {
     */
    uint32_t surfaces_base_offset;
 
-   /** Ray query globals (RT_DISPATCH_GLOBALS) */
+   /**
+    * Pointer to ray query stacks and their associated pairs of
+    * RT_DISPATCH_GLOBALS structures (see genX(setup_ray_query_globals))
+    *
+    * The pair of globals for each query object are stored counting up from
+    * this address in units of BRW_RT_DISPATCH_GLOBALS_ALIGN:
+    *
+    *    rq_globals = ray_query_globals + (rq * BRW_RT_DISPATCH_GLOBALS_ALIGN)
+    *
+    * The raytracing scratch area for each ray query is stored counting down
+    * from this address in units of brw_rt_ray_queries_stacks_stride(devinfo):
+    *
+    *    rq_stacks_addr = ray_query_globals - (rq * ray_queries_stacks_stride)
+    */
    uint64_t ray_query_globals;
 
    union {
@@ -4719,9 +4722,9 @@ struct anv_cmd_state {
    struct anv_state                             binding_tables[MESA_VULKAN_SHADER_STAGES];
    struct anv_state                             samplers[MESA_VULKAN_SHADER_STAGES];
 
-   unsigned char                                sampler_sha1s[MESA_VULKAN_SHADER_STAGES][20];
-   unsigned char                                surface_sha1s[MESA_VULKAN_SHADER_STAGES][20];
-   unsigned char                                push_sha1s[MESA_VULKAN_SHADER_STAGES][20];
+   unsigned char                                sampler_sha1s[MESA_VULKAN_SHADER_STAGES][SHA1_DIGEST_LENGTH];
+   unsigned char                                surface_sha1s[MESA_VULKAN_SHADER_STAGES][SHA1_DIGEST_LENGTH];
+   unsigned char                                push_sha1s[MESA_VULKAN_SHADER_STAGES][SHA1_DIGEST_LENGTH];
 
    /* The last auxiliary surface operation (or equivalent operation) provided
     * to genX(cmd_buffer_update_color_aux_op).
@@ -4748,9 +4751,14 @@ struct anv_cmd_state {
    unsigned                                     current_hash_scale;
 
    /**
-    * A buffer used for spill/fill of ray queries.
+    * Number of ray query buffers allocated.
     */
-   struct anv_bo *                              ray_query_shadow_bo;
+   uint32_t                                     num_ray_query_globals;
+
+   /**
+    * Current array of RT_DISPATCH_GLOBALS for ray queries.
+    */
+   struct anv_address                           ray_query_globals;
 
    /** Pointer to the last emitted COMPUTE_WALKER.
     *
@@ -5267,18 +5275,6 @@ struct anv_shader_internal {
 
    struct genisa_stats stats[3];
    uint32_t num_stats;
-
-   struct nir_xfb_info *xfb_info;
-
-   struct anv_push_descriptor_info push_desc_info;
-
-   struct anv_pipeline_bind_map bind_map;
-
-   /* Not saved in the pipeline cache.
-    *
-    * Array of pointers of length bind_map.embedded_sampler_count
-    */
-   struct anv_embedded_sampler **embedded_samplers;
 };
 
 static inline struct anv_shader_internal *
@@ -6822,8 +6818,6 @@ anv_add_pending_pipe_bits(struct anv_cmd_buffer* cmd_buffer,
 
 struct anv_performance_configuration_intel {
    struct vk_object_base      base;
-
-   struct intel_perf_registers *register_config;
 
    uint64_t                   config_id;
 };

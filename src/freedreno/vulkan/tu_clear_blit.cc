@@ -19,6 +19,7 @@
 #include "tu_buffer.h"
 #include "tu_cmd_buffer.h"
 #include "tu_cs.h"
+#include "tu_descriptor_set.h"
 #include "tu_formats.h"
 #include "tu_image.h"
 #include "tu_tracepoints.h"
@@ -374,11 +375,17 @@ r2d_src_buffer_unaligned(struct tu_cmd_buffer *cmd,
    enum a6xx_format color_format = fmt.fmt;
    fixup_src_format(&format, dst_format, &color_format);
 
-   uint32_t offset_texels = ((va & 0x3f) / util_format_get_blocksize(format));
-   va &= ~0x3f;
-   tu_cs_emit_regs(cs, TPL1_A2D_BLT_CNTL(CHIP, .raw_copy = false,
-                                         .start_offset_texels = offset_texels,
-                                         .type = A6XX_TEX_IMG_BUFFER));
+   uint32_t offset_texels = 0;
+   if (CHIP < A8XX) {
+      offset_texels = ((va & 0x3f) / util_format_get_blocksize(format));
+      va &= ~0x3f;
+   }
+
+   tu_cs_emit_regs(cs, TPL1_A2D_BLT_CNTL(CHIP,
+      .raw_copy = false,
+      .type = A6XX_TEX_IMG_BUFFER,
+      .start_offset_texels = offset_texels,
+   ));
 
    tu_cs_emit_regs(cs,
                    TPL1_A2D_SRC_TEXTURE_INFO(CHIP, .color_format = color_format,
@@ -484,25 +491,28 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_A2D_PIXEL_CNTL, 1);
    tu_cs_emit(cs, unknown_8c01);    // TODO: seem to be always 0 on A7XX
 
-   uint32_t blit_cntl = A6XX_RB_A2D_BLT_CNTL(
-         .rotate = (enum a6xx_rotation) blit_param,
-         .solid_color = clear,
-         .color_format = fmt,
-         .scissor = scissor,
-         .d24s8 = fmt == FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 && !clear,
-         .mask = 0xf,
-         .ifmt = util_format_is_srgb(dst_format) ? R2D_UNORM8_SRGB : ifmt,
-      ).value;
+   tu_cs_emit_regs(cs, A6XX_RB_A2D_BLT_CNTL(
+      .rotate = (enum a6xx_rotation) blit_param,
+      .solid_color = clear,
+      .color_format = fmt,
+      .scissor = scissor,
+      .d24s8 = fmt == FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 && !clear,
+      .mask = 0xf,
+      .ifmt = util_format_is_srgb(dst_format) ? R2D_UNORM8_SRGB : ifmt,
+   ));
 
-   tu_cs_emit_pkt4(cs, REG_A6XX_RB_A2D_BLT_CNTL, 1);
-   tu_cs_emit(cs, blit_cntl);
-
-   tu_cs_emit_pkt4(cs, REG_A6XX_GRAS_A2D_BLT_CNTL, 1);
-   tu_cs_emit(cs, blit_cntl);
+   tu_cs_emit_regs(cs, GRAS_A2D_BLT_CNTL(CHIP,
+      .rotate = (enum a6xx_rotation) blit_param,
+      .solid_color = clear,
+      .color_format = fmt,
+      .scissor = scissor,
+      .d24s8 = fmt == FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 && !clear,
+      .mask = 0xf,
+      .ifmt = util_format_is_srgb(dst_format) ? R2D_UNORM8_SRGB : ifmt,
+   ));
 
    if (CHIP > A6XX) {
       tu_cs_emit_regs(cs, TPL1_A2D_BLT_CNTL(CHIP, .raw_copy = false,
-                                                .start_offset_texels = 0,
                                                 .type = A6XX_TEX_2D));
    }
 
@@ -871,22 +881,18 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
          .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
          .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,));
 
-   tu_crb crb = cs->crb(2 * 5 + 2 * 11);
-   tu6_emit_xs_config<CHIP>(crb, MESA_SHADER_VERTEX, vs);
-   tu6_emit_xs_config<CHIP>(crb, MESA_SHADER_TESS_CTRL, NULL);
-   tu6_emit_xs_config<CHIP>(crb, MESA_SHADER_TESS_EVAL, NULL);
-   tu6_emit_xs_config<CHIP>(crb, MESA_SHADER_GEOMETRY, NULL);
-   tu6_emit_xs_config<CHIP>(crb, MESA_SHADER_FRAGMENT, fs);
-   struct tu_pvtmem_config pvtmem = {};
-   tu6_emit_xs(crb, cs->device, MESA_SHADER_VERTEX, vs, &pvtmem, vs_iova);
-   tu6_emit_xs(crb, cs->device, MESA_SHADER_FRAGMENT, fs, &pvtmem, fs_iova);
-   crb.flush();
+   with_crb (cs, 2 * 5 + 2 * 12) {
+      tu6_emit_xs_config<CHIP>(crb, { .vs = vs, .fs = fs });
+      struct tu_pvtmem_config pvtmem = {};
+      tu6_emit_xs<CHIP>(crb, cs->device, MESA_SHADER_VERTEX, vs, &pvtmem, vs_iova);
+      tu6_emit_xs<CHIP>(crb, cs->device, MESA_SHADER_FRAGMENT, fs, &pvtmem, fs_iova);
+   }
 
    tu6_emit_xs_constants(cs, MESA_SHADER_VERTEX, vs, vs_iova);
    tu6_emit_xs_constants(cs, MESA_SHADER_FRAGMENT, fs, fs_iova);
 
    tu_cs_emit_regs(cs, PC_CNTL(CHIP));
-   if (CHIP == A7XX) {
+   if (CHIP >= A7XX) {
       tu_cs_emit_regs(cs, VPC_PC_CNTL(CHIP));
    }
 
@@ -914,11 +920,16 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
                       .persp_division_disable = 1,));
    tu_cs_emit_regs(cs, GRAS_SU_CNTL(CHIP)); // XXX msaa enable?
 
+   if (CHIP >= A8XX) {
+      tu_cs_emit_regs(cs, GRAS_SU_STEREO_CNTL(CHIP));
+   }
+
    tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL(CHIP));
    if (CHIP == A6XX) {
       tu_cs_emit_regs(cs, VPC_UNKNOWN_9107(CHIP));
    } else {
-      tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL_V2(CHIP));
+      if (CHIP == A7XX)
+         tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL_V2(CHIP));
 
       tu_cs_emit_regs(cs, RB_RENDER_CNTL(CHIP,
             .raster_mode = TYPE_TILED,
@@ -1066,6 +1077,7 @@ r3d_clear_value(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum pipe_format fo
    tu6_emit_blit_consts_load(cmd, cs, CP_LOAD_STATE6_FRAG, SB6_FS_SHADER, 0, coords, 1);
 }
 
+template <chip CHIP>
 static void
 r3d_src_common(struct tu_cmd_buffer *cmd,
                struct tu_cs *cs,
@@ -1077,32 +1089,47 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
    struct tu_cs_memory texture = { };
    VkResult result = tu_cs_alloc(&cmd->sub_cs,
                                  2, /* allocate space for a sampler too */
-                                 A6XX_TEX_CONST_DWORDS, &texture);
+                                 FDL6_TEX_CONST_DWORDS, &texture);
    if (result != VK_SUCCESS) {
       vk_command_buffer_set_error(&cmd->vk, result);
       return;
    }
 
-   memcpy(texture.map, tex_const, A6XX_TEX_CONST_DWORDS * 4);
+   memcpy(texture.map, tex_const, FDL6_TEX_CONST_DWORDS * 4);
 
    /* patch addresses for layer offset */
-   *(uint64_t*) (texture.map + 4) += offset_base;
-   uint64_t ubwc_addr = (texture.map[7] | (uint64_t) texture.map[8] << 32) + offset_ubwc;
-   texture.map[7] = ubwc_addr;
-   texture.map[8] = ubwc_addr >> 32;
+   uint64_t addr = tu_desc_get_addr<CHIP>(texture.map);
+   tu_desc_set_addr<CHIP>(texture.map, addr + offset_base);
+   uint64_t ubwc_addr = tu_desc_get_ubwc<CHIP>(texture.map);
+   if (ubwc_addr)
+      tu_desc_set_ubwc<CHIP>(texture.map, ubwc_addr + offset_ubwc);
 
-   texture.map[A6XX_TEX_CONST_DWORDS + 0] =
-      A6XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(filter, false)) |
-      A6XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(filter, false)) |
-      A6XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
-      A6XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
-      A6XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE) |
-      0x60000; /* XXX used by blob, doesn't seem necessary */
-   texture.map[A6XX_TEX_CONST_DWORDS + 1] =
-      A6XX_TEX_SAMP_1_UNNORM_COORDS |
-      A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR;
-   texture.map[A6XX_TEX_CONST_DWORDS + 2] = 0;
-   texture.map[A6XX_TEX_CONST_DWORDS + 3] = 0;
+   if (CHIP >= A8XX) {
+      texture.map[FDL6_TEX_CONST_DWORDS + 0] =
+         A8XX_TEX_SAMP_0_MIPMAPING_DIS |
+         A8XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(filter, false)) |
+         A8XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(filter, false)) |
+         A8XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
+         A8XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
+         A8XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE);
+      texture.map[FDL6_TEX_CONST_DWORDS + 1] =
+         A8XX_TEX_SAMP_1_UNNORM_COORDS;
+      texture.map[FDL6_TEX_CONST_DWORDS + 2] = 0;
+      texture.map[FDL6_TEX_CONST_DWORDS + 3] = 0;
+   } else {
+      texture.map[FDL6_TEX_CONST_DWORDS + 0] =
+         A6XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(filter, false)) |
+         A6XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(filter, false)) |
+         A6XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
+         A6XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
+         A6XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE) |
+         0x60000; /* XXX used by blob, doesn't seem necessary */
+      texture.map[FDL6_TEX_CONST_DWORDS + 1] =
+         A6XX_TEX_SAMP_1_UNNORM_COORDS |
+         A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR;
+      texture.map[FDL6_TEX_CONST_DWORDS + 2] = 0;
+      texture.map[FDL6_TEX_CONST_DWORDS + 3] = 0;
+   }
 
    tu_cs_emit_pkt7(cs, CP_LOAD_STATE6_FRAG, 3);
    tu_cs_emit(cs, CP_LOAD_STATE6_0_DST_OFF(0) |
@@ -1110,9 +1137,9 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
                CP_LOAD_STATE6_0_STATE_SRC(SS6_INDIRECT) |
                CP_LOAD_STATE6_0_STATE_BLOCK(SB6_FS_TEX) |
                CP_LOAD_STATE6_0_NUM_UNIT(1));
-   tu_cs_emit_qw(cs, texture.iova + A6XX_TEX_CONST_DWORDS * 4);
+   tu_cs_emit_qw(cs, texture.iova + FDL6_TEX_CONST_DWORDS * 4);
 
-   tu_cs_emit_regs(cs, A6XX_SP_PS_SAMPLER_BASE(.qword = texture.iova + A6XX_TEX_CONST_DWORDS * 4));
+   tu_cs_emit_regs(cs, A6XX_SP_PS_SAMPLER_BASE(.qword = texture.iova + FDL6_TEX_CONST_DWORDS * 4));
 
    tu_cs_emit_pkt7(cs, CP_LOAD_STATE6_FRAG, 3);
    tu_cs_emit(cs, CP_LOAD_STATE6_0_DST_OFF(0) |
@@ -1126,6 +1153,7 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
    tu_cs_emit_regs(cs, A6XX_SP_PS_TSIZE(1));
 }
 
+template <chip CHIP>
 static void
 r3d_src(struct tu_cmd_buffer *cmd,
         struct tu_cs *cs,
@@ -1134,19 +1162,18 @@ r3d_src(struct tu_cmd_buffer *cmd,
         VkFilter filter,
         enum pipe_format dst_format)
 {
-   uint32_t desc[A6XX_TEX_CONST_DWORDS];
+   uint32_t desc[FDL6_TEX_CONST_DWORDS];
    memcpy(desc, iview->descriptor, sizeof(desc));
 
-   enum a6xx_format fmt =
-      (enum a6xx_format) pkt_field_get(A6XX_TEX_CONST_0_FMT, desc[0]);
+   enum a6xx_format fmt = tu_desc_get_format<CHIP>(desc);
    enum pipe_format src_format = iview->format;
    fixup_src_format(&src_format, dst_format, &fmt);
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_FMT, desc[0], fmt);
+   tu_desc_set_format<CHIP>(desc, fmt);
 
-   r3d_src_common(cmd, cs, desc,
-                  iview->layer_size * layer,
-                  iview->ubwc_layer_size * layer,
-                  filter);
+   r3d_src_common<CHIP>(cmd, cs, desc,
+                        iview->layer_size * layer,
+                        iview->ubwc_layer_size * layer,
+                        filter);
 }
 
 template <chip CHIP>
@@ -1158,33 +1185,32 @@ r3d_src_buffer(struct tu_cmd_buffer *cmd,
                uint32_t width, uint32_t height,
                enum pipe_format dst_format)
 {
-   uint32_t desc[A6XX_TEX_CONST_DWORDS];
+   uint32_t desc[FDL6_TEX_CONST_DWORDS] = {};
 
    struct tu_native_format fmt = blit_format_texture<CHIP>(format, TILE6_LINEAR, false, false);
    enum a6xx_format color_format = fmt.fmt;
    fixup_src_format(&format, dst_format, &color_format);
 
-   desc[0] =
-      COND(util_format_is_srgb(format), A6XX_TEX_CONST_0_SRGB) |
-      A6XX_TEX_CONST_0_FMT(color_format) |
-      A6XX_TEX_CONST_0_SWAP(fmt.swap) |
-      A6XX_TEX_CONST_0_SWIZ_X(A6XX_TEX_X) |
-      A6XX_TEX_CONST_0_SWIZ_Y(A6XX_TEX_Y) |
-      A6XX_TEX_CONST_0_SWIZ_Z(A6XX_TEX_Z) |
-      A6XX_TEX_CONST_0_SWIZ_W(A6XX_TEX_W);
-   desc[1] = A6XX_TEX_CONST_1_WIDTH(width) | A6XX_TEX_CONST_1_HEIGHT(height);
-   desc[2] =
-      A6XX_TEX_CONST_2_PITCH(pitch) |
-      A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D);
-   desc[3] = 0;
-   desc[4] = va;
-   desc[5] = va >> 32;
-   for (uint32_t i = 6; i < A6XX_TEX_CONST_DWORDS; i++)
-      desc[i] = 0;
+   /* TODO are sRGB buffers a thing? */
+   if (CHIP >= A8XX) {
+      desc[4] = COND(util_format_is_srgb(format), A8XX_TEX_MEMOBJ_4_SRGB);
+   } else {
+      desc[0] = COND(util_format_is_srgb(format), A6XX_TEX_CONST_0_SRGB);
+   }
 
-   r3d_src_common(cmd, cs, desc, 0, 0, VK_FILTER_NEAREST);
+   tu_desc_set_dim<CHIP>(desc, width, height);
+   tu_desc_set_tex_line_offset<CHIP>(desc, pitch);
+   tu_desc_set_addr<CHIP>(desc, va);
+   tu_desc_set_depth<CHIP>(desc, 0);
+   tu_desc_set_format<CHIP>(desc, color_format);
+   tu_desc_set_swap<CHIP>(desc, fmt.swap);
+   tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
+   tu_desc_set_type<CHIP>(desc, A6XX_TEX_2D);
+
+   r3d_src_common<CHIP>(cmd, cs, desc, 0, 0, VK_FILTER_NEAREST);
 }
 
+template <chip CHIP>
 static void
 r3d_src_depth(struct tu_cmd_buffer *cmd,
               struct tu_cs *cs,
@@ -1192,35 +1218,27 @@ r3d_src_depth(struct tu_cmd_buffer *cmd,
               uint32_t layer,
               VkFilter filter)
 {
-   uint32_t desc[A6XX_TEX_CONST_DWORDS];
+   uint32_t desc[FDL6_TEX_CONST_DWORDS];
 
    memcpy(desc, iview->view.descriptor, sizeof(desc));
    uint64_t va = iview->depth_base_addr;
 
-   desc[0] &= ~(A6XX_TEX_CONST_0_FMT__MASK |
-                A6XX_TEX_CONST_0_SWIZ_X__MASK | A6XX_TEX_CONST_0_SWIZ_Y__MASK |
-                A6XX_TEX_CONST_0_SWIZ_Z__MASK | A6XX_TEX_CONST_0_SWIZ_W__MASK |
-                A6XX_TEX_CONST_0_SWAP__MASK);
-   desc[0] |= A6XX_TEX_CONST_0_FMT(FMT6_32_FLOAT) |
-              A6XX_TEX_CONST_0_SWIZ_X(A6XX_TEX_X) |
-              A6XX_TEX_CONST_0_SWIZ_Y(A6XX_TEX_Y) |
-              A6XX_TEX_CONST_0_SWIZ_Z(A6XX_TEX_Z) |
-              A6XX_TEX_CONST_0_SWIZ_W(A6XX_TEX_W);
-   desc[2] =
-      A6XX_TEX_CONST_2_PITCH(iview->depth_pitch) |
-      A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D);
-   desc[3] =
-      pkt_field_set(A6XX_TEX_CONST_3_ARRAY_PITCH, iview->view.descriptor[3],
-                    iview->depth_layer_size);
-   desc[4] = va;
-   desc[5] = va >> 32;
+   tu_desc_set_min_line_offset<CHIP>(desc, 0);
+   tu_desc_set_tex_line_offset<CHIP>(desc, iview->depth_pitch);
+   tu_desc_set_array_slice_offset<CHIP>(desc, iview->depth_layer_size);
+   tu_desc_set_addr<CHIP>(desc, va);
+   tu_desc_set_depth<CHIP>(desc, 0);
+   tu_desc_set_format<CHIP>(desc, FMT6_32_FLOAT);
+   tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
+   tu_desc_set_type<CHIP>(desc, A6XX_TEX_2D);
 
-   r3d_src_common(cmd, cs, desc,
-                  iview->depth_layer_size * layer, 
-                  iview->view.ubwc_layer_size * layer,
-                  VK_FILTER_NEAREST);
+   r3d_src_common<CHIP>(cmd, cs, desc,
+                        iview->depth_layer_size * layer,
+                        iview->view.ubwc_layer_size * layer,
+                        VK_FILTER_NEAREST);
 }
 
+template <chip CHIP>
 static void
 r3d_src_stencil(struct tu_cmd_buffer *cmd,
                 struct tu_cs *cs,
@@ -1228,33 +1246,28 @@ r3d_src_stencil(struct tu_cmd_buffer *cmd,
                 uint32_t layer,
                 VkFilter filter)
 {
-   uint32_t desc[A6XX_TEX_CONST_DWORDS];
+   uint32_t desc[FDL6_TEX_CONST_DWORDS];
 
    memcpy(desc, iview->view.descriptor, sizeof(desc));
    uint64_t va = iview->stencil_base_addr;
 
-   desc[0] &= ~(A6XX_TEX_CONST_0_FMT__MASK |
-                A6XX_TEX_CONST_0_SWIZ_X__MASK | A6XX_TEX_CONST_0_SWIZ_Y__MASK |
-                A6XX_TEX_CONST_0_SWIZ_Z__MASK | A6XX_TEX_CONST_0_SWIZ_W__MASK |
-                A6XX_TEX_CONST_0_SWAP__MASK);
-   desc[0] |= A6XX_TEX_CONST_0_FMT(FMT6_8_UINT) |
-              A6XX_TEX_CONST_0_SWIZ_X(A6XX_TEX_X) |
-              A6XX_TEX_CONST_0_SWIZ_Y(A6XX_TEX_Y) |
-              A6XX_TEX_CONST_0_SWIZ_Z(A6XX_TEX_Z) |
-              A6XX_TEX_CONST_0_SWIZ_W(A6XX_TEX_W);
-   desc[2] =
-      A6XX_TEX_CONST_2_PITCH(iview->stencil_pitch) |
-      A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D);
-   desc[3] = A6XX_TEX_CONST_3_ARRAY_PITCH(iview->stencil_layer_size);
-   desc[4] = va;
-   desc[5] = va >> 32;
-   for (unsigned i = 6; i < A6XX_TEX_CONST_DWORDS; i++)
-      desc[i] = 0;
+   /* Separate stencil is linear even if depth is not: */
+   tu_desc_set_ubwc<CHIP>(desc, 0);
 
-   r3d_src_common(cmd, cs, desc, iview->stencil_layer_size * layer, 0,
-                  VK_FILTER_NEAREST);
+   tu_desc_set_min_line_offset<CHIP>(desc, 0);
+   tu_desc_set_tex_line_offset<CHIP>(desc, iview->stencil_pitch);
+   tu_desc_set_array_slice_offset<CHIP>(desc, iview->stencil_layer_size);
+   tu_desc_set_addr<CHIP>(desc, va);
+   tu_desc_set_depth<CHIP>(desc, 0);
+   tu_desc_set_format<CHIP>(desc, FMT6_8_UINT);
+   tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
+   tu_desc_set_type<CHIP>(desc, A6XX_TEX_2D);
+
+   r3d_src_common<CHIP>(cmd, cs, desc, iview->stencil_layer_size * layer, 0,
+                        VK_FILTER_NEAREST);
 }
 
+template <chip CHIP>
 static void
 r3d_src_load(struct tu_cmd_buffer *cmd,
              struct tu_cs *cs,
@@ -1262,7 +1275,7 @@ r3d_src_load(struct tu_cmd_buffer *cmd,
              uint32_t layer,
              bool override_swap)
 {
-   uint32_t desc[A6XX_TEX_CONST_DWORDS];
+   uint32_t desc[FDL6_TEX_CONST_DWORDS];
 
    memcpy(desc, iview->view.descriptor, sizeof(desc));
 
@@ -1277,44 +1290,41 @@ r3d_src_load(struct tu_cmd_buffer *cmd,
       else
          tex_format = FMT6_8_8_8_8_UNORM;
 
-      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_FMT, desc[0], tex_format);
+      tu_desc_set_format<CHIP>(desc, tex_format);
    }
 
    /* When loading/storing GMEM we always load the full image and don't do any
     * swizzling or swapping, that's done in the draw when reading/writing
     * GMEM, so we need to fixup the swizzle and swap.
     */
-   desc[0] &= ~(A6XX_TEX_CONST_0_SWIZ_X__MASK | A6XX_TEX_CONST_0_SWIZ_Y__MASK |
-                A6XX_TEX_CONST_0_SWIZ_Z__MASK | A6XX_TEX_CONST_0_SWIZ_W__MASK);
    if (override_swap)
-      desc[0] &= ~A6XX_TEX_CONST_0_SWAP__MASK;
-   desc[0] |= A6XX_TEX_CONST_0_SWIZ_X(A6XX_TEX_X) |
-              A6XX_TEX_CONST_0_SWIZ_Y(A6XX_TEX_Y) |
-              A6XX_TEX_CONST_0_SWIZ_Z(A6XX_TEX_Z) |
-              A6XX_TEX_CONST_0_SWIZ_W(A6XX_TEX_W);
+      tu_desc_set_swap<CHIP>(desc, WZYX);
+   tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
 
-   r3d_src_common(cmd, cs, desc,
-                  iview->view.layer_size * layer,
-                  iview->view.ubwc_layer_size * layer,
-                  VK_FILTER_NEAREST);
+   r3d_src_common<CHIP>(cmd, cs, desc,
+                        iview->view.layer_size * layer,
+                        iview->view.ubwc_layer_size * layer,
+                        VK_FILTER_NEAREST);
 }
 
+template <chip CHIP>
 static void
 r3d_src_gmem_load(struct tu_cmd_buffer *cmd,
                   struct tu_cs *cs,
                   const struct tu_image_view *iview,
                   uint32_t layer)
 {
-   r3d_src_load(cmd, cs, iview, layer, true);
+   r3d_src_load<CHIP>(cmd, cs, iview, layer, true);
 }
 
+template <chip CHIP>
 static void
 r3d_src_sysmem_load(struct tu_cmd_buffer *cmd,
                     struct tu_cs *cs,
                     const struct tu_image_view *iview,
                     uint32_t layer)
 {
-   r3d_src_load(cmd, cs, iview, layer, false);
+   r3d_src_load<CHIP>(cmd, cs, iview, layer, false);
 }
 
 template <chip CHIP>
@@ -1327,7 +1337,7 @@ r3d_src_gmem(struct tu_cmd_buffer *cmd,
              uint32_t gmem_offset,
              uint32_t cpp)
 {
-   uint32_t desc[A6XX_TEX_CONST_DWORDS];
+   uint32_t desc[FDL6_TEX_CONST_DWORDS];
    memcpy(desc, iview->view.descriptor, sizeof(desc));
 
    enum a6xx_format fmt =
@@ -1335,44 +1345,48 @@ r3d_src_gmem(struct tu_cmd_buffer *cmd,
                                 iview->view.is_mutable, true).fmt;
    fixup_src_format(&format, dst_format, &fmt);
 
-   /* patch the format so that depth/stencil get the right format and swizzle */
-   desc[0] &= ~(A6XX_TEX_CONST_0_FMT__MASK |
-                A6XX_TEX_CONST_0_SWIZ_X__MASK | A6XX_TEX_CONST_0_SWIZ_Y__MASK |
-                A6XX_TEX_CONST_0_SWIZ_Z__MASK | A6XX_TEX_CONST_0_SWIZ_W__MASK);
-   desc[0] |= A6XX_TEX_CONST_0_FMT(fmt) |
-               A6XX_TEX_CONST_0_SWIZ_X(A6XX_TEX_X) |
-               A6XX_TEX_CONST_0_SWIZ_Y(A6XX_TEX_Y) |
-               A6XX_TEX_CONST_0_SWIZ_Z(A6XX_TEX_Z) |
-               A6XX_TEX_CONST_0_SWIZ_W(A6XX_TEX_W);
-
    /* patched for gmem */
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_TILE_MODE, desc[0], TILE6_2);
+   tu_desc_set_tile_mode<CHIP>(desc, TILE6_2);
+
    if (!iview->view.is_mutable)
-      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWAP, desc[0], WZYX);
+      tu_desc_set_swap<CHIP>(desc, WZYX);
 
    /* If FDM offset is used, the last row and column extend beyond the
     * framebuffer but are shifted over when storing. Expand the width and
     * height to account for that.
     */
    if (tu_enable_fdm_offset(cmd)) {
-      uint32_t width = pkt_field_get(A6XX_TEX_CONST_1_WIDTH, desc[1]);
-      uint32_t height = pkt_field_get(A6XX_TEX_CONST_1_HEIGHT, desc[1]);
+      uint32_t width, height;
+
+      tu_desc_get_dim<CHIP>(desc, &width, &height);
       width += cmd->state.tiling->tile0.width;
       height += cmd->state.tiling->tile0.height;
-      desc[1] = pkt_field_set(A6XX_TEX_CONST_1_WIDTH, desc[1], width);
-      desc[1] = pkt_field_set(A6XX_TEX_CONST_1_HEIGHT, desc[1], height);
+      tu_desc_set_dim<CHIP>(desc, width, height);
    }
 
-   desc[2] =
-      A6XX_TEX_CONST_2_TYPE(A6XX_TEX_2D) |
-      A6XX_TEX_CONST_2_PITCH(cmd->state.tiling->tile0.width * cpp);
-   desc[3] = 0;
-   desc[4] = cmd->device->physical_device->gmem_base + gmem_offset;
-   desc[5] = A6XX_TEX_CONST_5_DEPTH(1);
-   for (unsigned i = 6; i < A6XX_TEX_CONST_DWORDS; i++)
-      desc[i] = 0;
+   tu_desc_set_tile_all<CHIP>(desc, false);
+   tu_desc_set_ubwc<CHIP>(desc, 0);
+   tu_desc_set_min_line_offset<CHIP>(desc, 0);
+   tu_desc_set_tex_line_offset<CHIP>(desc, cmd->state.tiling->tile0.width * cpp);
+   tu_desc_set_array_slice_offset<CHIP>(desc, 0);
+   tu_desc_set_depth<CHIP>(desc, 1);
 
-   r3d_src_common(cmd, cs, desc, 0, 0, VK_FILTER_NEAREST);
+   uint64_t va = gmem_offset;
+   if (CHIP < A8XX) {
+      /* For gen8, address is simply gmem_offset if tile_mode is gmem
+       * tiling (TILE6_2)
+       */
+      va += cmd->device->physical_device->gmem_base;
+   }
+
+   tu_desc_set_addr<CHIP>(desc, va);
+
+   /* patch the format so that depth/stencil get the right format and swizzle */
+   tu_desc_set_format<CHIP>(desc, fmt);
+   tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
+   tu_desc_set_type<CHIP>(desc, A6XX_TEX_2D);
+
+   r3d_src_common<CHIP>(cmd, cs, desc, 0, 0, VK_FILTER_NEAREST);
 }
 
 template <chip CHIP>
@@ -1646,6 +1660,10 @@ r3d_setup(struct tu_cmd_buffer *cmd,
 
    tu_cs_emit_regs(cs, A6XX_RB_MRT_CONTROL(0,
       .component_enable = aspect_write_mask(dst_format, aspect_mask)));
+   if (CHIP >= A8XX) {
+      tu_cs_emit_regs(cs, SP_MRT_BLEND_CNTL_REG(CHIP, 0,
+         .component_write_mask = aspect_write_mask(dst_format, aspect_mask)));
+   }
    tu_cs_emit_regs(cs, A6XX_RB_SRGB_CNTL(util_format_is_srgb(dst_format)));
    tu_cs_emit_regs(cs, A6XX_SP_SRGB_CNTL(util_format_is_srgb(dst_format)));
 
@@ -1792,10 +1810,10 @@ template <chip CHIP>
 static const struct blit_ops r3d_ops = {
    .coords = r3d_coords,
    .clear_value = r3d_clear_value,
-   .src = r3d_src,
+   .src = r3d_src<CHIP>,
    .src_buffer = r3d_src_buffer<CHIP>,
-   .src_depth = r3d_src_depth,
-   .src_stencil = r3d_src_stencil,
+   .src_depth = r3d_src_depth<CHIP>,
+   .src_stencil = r3d_src_stencil<CHIP>,
    .dst = r3d_dst<CHIP>,
    .dst_depth = r3d_dst_depth<CHIP>,
    .dst_stencil = r3d_dst_stencil<CHIP>,
@@ -3630,7 +3648,7 @@ resolve_sysmem(struct tu_cmd_buffer *cmd,
          }
       } else {
          if (ops == &r3d_ops<CHIP>) {
-            r3d_src_sysmem_load(cmd, cs, src, i);
+            r3d_src_sysmem_load<CHIP>(cmd, cs, src, i);
          } else {
             ops->src(cmd, cs, &src->view, i, VK_FILTER_NEAREST, dst_format);
          }
@@ -4196,11 +4214,17 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
    tu_cs_emit_regs(cs,
                    A6XX_RB_PS_MRT_CNTL(.mrt = mrt_count));
 
-   tu_cs_emit_regs(cs, SP_BLEND_CNTL(CHIP));
+   tu_cs_emit_regs(cs, SP_BLEND_CNTL(CHIP,
+      .independent_blend_en = true,
+   ));
    tu_cs_emit_regs(cs, A6XX_RB_BLEND_CNTL(.independent_blend = 1, .sample_mask = 0xffff));
    for (uint32_t i = 0; i < mrt_count; i++) {
       tu_cs_emit_regs(cs, A6XX_RB_MRT_CONTROL(i,
             .component_enable = COND(clear_rts & (1 << i), 0xf)));
+      if (CHIP >= A8XX) {
+         tu_cs_emit_regs(cs, SP_MRT_BLEND_CNTL_REG(CHIP, i,
+            .component_write_mask = COND(clear_rts & (1 << i), 0xf)));
+      }
    }
 
    tu_cs_emit_regs(cs, GRAS_LRZ_CNTL(CHIP, 0));
@@ -5069,11 +5093,11 @@ load_3d_blit(struct tu_cmd_buffer *cmd,
 
       if (iview->image->vk.format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
          if (separate_stencil)
-            r3d_src_stencil(cmd, cs, iview, i, VK_FILTER_NEAREST);
+            r3d_src_stencil<CHIP>(cmd, cs, iview, i, VK_FILTER_NEAREST);
          else
-            r3d_src_depth(cmd, cs, iview, i, VK_FILTER_NEAREST);
+            r3d_src_depth<CHIP>(cmd, cs, iview, i, VK_FILTER_NEAREST);
       } else {
-         r3d_src_gmem_load(cmd, cs, iview, i);
+         r3d_src_gmem_load<CHIP>(cmd, cs, iview, i);
       }
 
       r3d_run(cmd, cs);
@@ -5251,6 +5275,14 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
       src_height += tiling->tile0.height;
    }
 
+   uint64_t va = gmem_offset;
+   if (CHIP < A8XX) {
+      /* For gen8, address is simply gmem_offset if tile_mode is gmem
+       * tiling (TILE6_2)
+       */
+      va += cmd->device->physical_device->gmem_base;
+   }
+
    tu_cs_emit_regs(cs,
                    TPL1_A2D_SRC_TEXTURE_INFO(CHIP,
                       .color_format = format,
@@ -5266,7 +5298,7 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
                    TPL1_A2D_SRC_TEXTURE_SIZE(CHIP,
                       .width = src_width,
                       .height = src_height),
-                   TPL1_A2D_SRC_TEXTURE_BASE(CHIP, .qword = cmd->device->physical_device->gmem_base + gmem_offset),
+                   TPL1_A2D_SRC_TEXTURE_BASE(CHIP, .qword = va),
                    TPL1_A2D_SRC_TEXTURE_PITCH(CHIP, .pitch = cmd->state.tiling->tile0.width * cpp));
 
    /* sync GMEM writes with CACHE. */
@@ -5311,12 +5343,12 @@ store_3d_blit(struct tu_cmd_buffer *cmd,
     * save/restore them dynamically.
     */
    tu_cs_emit_pkt7(cs, CP_REG_TO_SCRATCH, 1);
-   tu_cs_emit(cs, CP_REG_TO_SCRATCH_0_REG(REG_A6XX_RB_CNTL) |
+   tu_cs_emit(cs, CP_REG_TO_SCRATCH_0_REG(RB_CNTL(CHIP).reg) |
                   CP_REG_TO_SCRATCH_0_SCRATCH(0) |
                   CP_REG_TO_SCRATCH_0_CNT(1 - 1));
    if (CHIP >= A7XX) {
       tu_cs_emit_pkt7(cs, CP_REG_TO_SCRATCH, 1);
-      tu_cs_emit(cs, CP_REG_TO_SCRATCH_0_REG(REG_A7XX_RB_BUFFER_CNTL) |
+      tu_cs_emit(cs, CP_REG_TO_SCRATCH_0_REG(RB_BUFFER_CNTL(CHIP).reg) |
                      CP_REG_TO_SCRATCH_0_SCRATCH(1) |
                      CP_REG_TO_SCRATCH_0_CNT(1 - 1));
    }
@@ -5357,18 +5389,18 @@ store_3d_blit(struct tu_cmd_buffer *cmd,
 
    /* Restore RB_CNTL/GRAS_SC_BIN_CNTL saved above. */
    tu_cs_emit_pkt7(cs, CP_SCRATCH_TO_REG, 1);
-   tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(REG_A6XX_RB_CNTL) |
+   tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(RB_CNTL(CHIP).reg) |
                   CP_SCRATCH_TO_REG_0_SCRATCH(0) |
                   CP_SCRATCH_TO_REG_0_CNT(1 - 1));
 
    tu_cs_emit_pkt7(cs, CP_SCRATCH_TO_REG, 1);
-   tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(REG_A6XX_GRAS_SC_BIN_CNTL) |
+   tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(GRAS_SC_BIN_CNTL(CHIP).reg) |
                   CP_SCRATCH_TO_REG_0_SCRATCH(0) |
                   CP_SCRATCH_TO_REG_0_CNT(1 - 1));
 
    if (CHIP >= A7XX) {
       tu_cs_emit_pkt7(cs, CP_SCRATCH_TO_REG, 1);
-      tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(REG_A7XX_RB_BUFFER_CNTL) |
+      tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(RB_BUFFER_CNTL(CHIP).reg) |
                         CP_SCRATCH_TO_REG_0_SCRATCH(1) |
                         CP_SCRATCH_TO_REG_0_CNT(1 - 1));
    }

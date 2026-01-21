@@ -1964,6 +1964,12 @@ can_use_resource_barrier(const struct intel_device_info *devinfo,
                ANV_PIPE_CS_STALL_BIT))
       return false;
 
+   /* There are issues with resource barrier and ANV_PIPE_RT_BTI_CHANGE,
+    * see https://gitlab.freedesktop.org/mesa/mesa/-/issues/14533
+    */
+   if (bits & ANV_PIPE_RT_BTI_CHANGE)
+      return false;
+
    return true;
 }
 
@@ -2122,7 +2128,8 @@ genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
       emit_resource_barrier(batch, device->info,
                             src_stages, dst_stages, bits,
                             signal_addr, wait_addr);
-      *emitted_flush_bits = 0;
+      if (emitted_flush_bits)
+         *emitted_flush_bits = 0;
       return 0;
    }
 #endif
@@ -4518,13 +4525,11 @@ anv_pipe_invalidate_bits_for_access_flags(struct anv_cmd_buffer *cmd_buffer,
           * an A64 message, so we need to invalidate constant cache.
           */
          pipe_bits |= ANV_PIPE_CONSTANT_CACHE_INVALIDATE_BIT;
-         /* Prior to Gfx20, Tile & Data cache flush needed For Cmd*Indirect*
-          * commands since command streamer is not L3 coherent.
+         /* Tile & Data cache flush needed For Cmd*Indirect* commands since
+          * command streamer is not L3 coherent.
           */
-         if (device->info->ver < 20) {
-            pipe_bits |= ANV_PIPE_DATA_CACHE_FLUSH_BIT |
-                         ANV_PIPE_TILE_CACHE_FLUSH_BIT;
-         }
+         pipe_bits |= ANV_PIPE_DATA_CACHE_FLUSH_BIT |
+                      ANV_PIPE_TILE_CACHE_FLUSH_BIT;
          break;
       case VK_ACCESS_2_INDEX_READ_BIT:
       case VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT:

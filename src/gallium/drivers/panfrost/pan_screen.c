@@ -4,26 +4,7 @@
  * Copyright (C) 2018 Alyssa Rosenzweig
  * Copyright (C) 2019 Collabora, Ltd.
  * Copyright (C) 2012 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "draw/draw_context.h"
@@ -145,7 +126,9 @@ get_max_msaa(struct panfrost_device *dev, enum pipe_format format)
 {
    unsigned max_tib_size = pan_query_tib_size(dev->model);
    unsigned max_cbuf_atts = pan_get_max_cbufs(dev->arch, max_tib_size);
-   unsigned format_size = util_format_get_blocksize(format);
+
+   unsigned format_size =
+      pan_format_tib_size(format, dev->blendable_formats[format].internal);
 
    unsigned max_msaa = pan_get_max_msaa(dev->arch, max_tib_size,
                                         max_cbuf_atts, format_size);
@@ -1059,8 +1042,12 @@ panfrost_create_screen(int fd, const struct pipe_screen_config *config,
       return NULL;
    }
 
+   unsigned core_id_range;
+   unsigned core_count =
+      pan_query_core_count(&dev->kmod.dev->props, &core_id_range);
+
    snprintf(screen->renderer_string, sizeof(screen->renderer_string),
-            "%s (Panfrost)", dev->model->name);
+            "%s MC%u (Panfrost)", dev->model->name, core_count);
 
    screen->afbc_tiled = driQueryOptionb(config->options, "pan_afbc_tiled");
 

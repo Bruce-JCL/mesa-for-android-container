@@ -1923,6 +1923,18 @@ ir3_src_is_first_in_group(struct ir3_register *src)
 #define foreach_src_in_alias_group(__alias, __instr, __start)                  \
    foreach_src_in_alias_group_n (__alias, __alias_n, __instr, __start)
 
+static inline unsigned
+ir3_alias_group_size(struct ir3_instruction *instr, unsigned src_n)
+{
+   unsigned size = 0;
+
+   foreach_src_in_alias_group (src, instr, src_n) {
+      size++;
+   }
+
+   return size;
+}
+
 /* iterator for an instructions's destinations (reg), also returns dst #: */
 #define foreach_dst_n(__dstreg, __n, __instr)                                  \
    if ((__instr)->dsts_count)                                                  \
@@ -3202,21 +3214,21 @@ static inline bool
 __regmask_get(regmask_t *regmask, enum ir3_reg_file file, unsigned n, unsigned size)
 {
    BITSET_WORD *regs = __regmask_file(regmask, file);
-   return BITSET_TEST_RANGE(regs, n, n + size - 1);
+   return BITSET_TEST_COUNT(regs, n, size);
 }
 
 static inline void
 __regmask_set(regmask_t *regmask, enum ir3_reg_file file, unsigned n, unsigned size)
 {
    BITSET_WORD *regs = __regmask_file(regmask, file);
-   BITSET_SET_RANGE(regs, n, n + size - 1);
+   BITSET_SET_COUNT(regs, n, size);
 }
 
 static inline void
 __regmask_clear(regmask_t *regmask, enum ir3_reg_file file, unsigned n, unsigned size)
 {
    BITSET_WORD *regs = __regmask_file(regmask, file);
-   BITSET_CLEAR_RANGE(regs, n, n + size - 1);
+   BITSET_CLEAR_COUNT(regs, n, size);
 }
 
 static inline void

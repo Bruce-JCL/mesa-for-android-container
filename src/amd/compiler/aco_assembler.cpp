@@ -1003,8 +1003,7 @@ emit_exp_instruction(asm_context& ctx, std::vector<uint32_t>& out, const Instruc
    /* GFX6 (except OLAND and HAINAN) has a bug that it only looks at the X
     * writemask component.
     */
-   if (ctx.gfx_level == GFX6 && ctx.program->family != CHIP_OLAND &&
-       ctx.program->family != CHIP_HAINAN && exp.enabled_mask && exp.dest <= V_008DFC_SQ_EXP_MRTZ) {
+   if (ctx.program->dev.has_gfx6_mrt_export_bug && exp.enabled_mask && exp.dest <= V_008DFC_SQ_EXP_MRTZ) {
       encoding |= 0x1;
    }
 
@@ -1838,7 +1837,8 @@ emit_program(Program* program, std::vector<uint32_t>& code, std::vector<struct a
                (uint32_t*)(program->constant_data.data() + program->constant_data.size()));
 
    program->config->scratch_bytes_per_wave =
-      align(program->config->scratch_bytes_per_wave, program->dev.scratch_alloc_granule);
+      align(program->config->scratch_bytes_per_wave + program->scratch_arg_size,
+            program->dev.scratch_alloc_granule);
    program->config->wgp_mode = program->wgp_mode;
 
    return exec_size;

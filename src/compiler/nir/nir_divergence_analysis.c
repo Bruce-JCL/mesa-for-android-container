@@ -68,13 +68,13 @@ static bool
 visit_cf_list(struct exec_list *list, struct divergence_state *state);
 
 bool
-nir_src_is_divergent(nir_src *src)
+nir_def_is_divergent_at_use_block(nir_def *def, nir_block *block)
 {
-   if (src->ssa->divergent)
+   if (def->divergent)
       return true;
 
-   nir_cf_node *use_node = nir_src_get_block(src)->cf_node.parent;
-   nir_cf_node *def_node = nir_def_block(src->ssa)->cf_node.parent;
+   nir_cf_node *use_node = block->cf_node.parent;
+   nir_cf_node *def_node = nir_def_block(def)->cf_node.parent;
 
    /* Short-cut the common case. */
    if (def_node == use_node)
@@ -83,7 +83,7 @@ nir_src_is_divergent(nir_src *src)
    /* If the source was computed in a divergent loop, and is not
     * loop-invariant, then it must also be considered divergent.
     */
-   bool loop_invariant = src->ssa->loop_invariant;
+   bool loop_invariant = def->loop_invariant;
    while (def_node) {
       if (def_node->type == nir_cf_node_loop) {
          /* Check whether the use is inside this loop. */
@@ -219,7 +219,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_workgroup_size:
    case nir_intrinsic_load_num_subgroups:
    case nir_intrinsic_load_ray_launch_size:
-   case nir_intrinsic_load_sbt_base_amd:
    case nir_intrinsic_load_subgroup_size:
    case nir_intrinsic_load_subgroup_id_shift_ir3:
    case nir_intrinsic_load_base_instance:
@@ -279,6 +278,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_provoking_vtx_amd:
    case nir_intrinsic_load_sample_positions_pan:
    case nir_intrinsic_load_shader_output_pan:
+   case nir_intrinsic_load_blend_descriptor_pan:
    case nir_intrinsic_load_workgroup_num_input_vertices_amd:
    case nir_intrinsic_load_workgroup_num_input_primitives_amd:
    case nir_intrinsic_load_pipeline_stat_query_enabled_amd:
@@ -323,7 +323,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_barycentric_optimize_amd:
    case nir_intrinsic_load_poly_line_smooth_enabled:
    case nir_intrinsic_load_rasterization_primitive_amd:
-   case nir_intrinsic_unit_test_uniform_amd:
+   case nir_intrinsic_unit_test_uniform_input:
    case nir_intrinsic_load_debug_log_desc_amd:
    case nir_intrinsic_load_xfb_state_address_gfx12_amd:
    case nir_intrinsic_cmat_length:
@@ -360,7 +360,15 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_tess_config_intel:
    case nir_intrinsic_load_urb_input_handle_intel:
    case nir_intrinsic_load_urb_output_handle_intel:
+   case nir_intrinsic_load_ray_query_global_intel:
+   case nir_intrinsic_load_call_return_address_amd:
       is_divergent = false;
+      break;
+
+   case nir_intrinsic_load_push_data_intel:
+      is_divergent =
+         (nir_intrinsic_access(instr) & ACCESS_NON_UNIFORM) &&
+         src_divergent(instr->src[0], state);
       break;
 
    case nir_intrinsic_load_ubo_uniform_block_intel:
@@ -667,14 +675,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
                      load_may_tear(state, instr);
       break;
 
-   case nir_intrinsic_load_converted_output_pan:
-   case nir_intrinsic_load_readonly_output_pan:
-      is_divergent = ((src_divergent(instr->src[0], state) ||
-                       src_divergent(instr->src[2], state)) &&
-                      (nir_intrinsic_access(instr) & ACCESS_NON_UNIFORM)) ||
-                     src_divergent(instr->src[1], state);
-      break;
-
    case nir_intrinsic_optimization_barrier_vgpr_amd:
       is_divergent = src_divergent(instr->src[0], state);
       break;
@@ -822,8 +822,8 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
 
    /* Intrinsics which are always divergent */
    case nir_intrinsic_inverse_ballot:
-   case nir_intrinsic_load_color0:
-   case nir_intrinsic_load_color1:
+   case nir_intrinsic_load_color0_amd:
+   case nir_intrinsic_load_color1_amd:
    case nir_intrinsic_load_sample_id:
    case nir_intrinsic_load_sample_mask_in:
    case nir_intrinsic_load_interpolated_input:
@@ -942,7 +942,6 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_load_packed_passthrough_primitive_amd:
    case nir_intrinsic_load_initial_edgeflags_amd:
    case nir_intrinsic_gds_atomic_add_amd:
-   case nir_intrinsic_load_rt_arg_scratch_offset_amd:
    case nir_intrinsic_load_intersection_opaque_amd:
    case nir_intrinsic_load_vector_arg_amd:
    case nir_intrinsic_load_btd_stack_id_intel:
@@ -951,7 +950,7 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_ordered_xfb_counter_add_gfx11_amd:
    case nir_intrinsic_ordered_add_loop_gfx12_amd:
    case nir_intrinsic_xfb_counter_sub_gfx11_amd:
-   case nir_intrinsic_unit_test_divergent_amd:
+   case nir_intrinsic_unit_test_divergent_input:
    case nir_intrinsic_load_stack:
    case nir_intrinsic_load_ray_launch_id:
    case nir_intrinsic_load_ray_instance_custom_index:
@@ -1012,6 +1011,13 @@ visit_intrinsic(nir_intrinsic_instr *instr, struct divergence_state *state)
    case nir_intrinsic_bvh_stack_rtn_amd:
    case nir_intrinsic_cmat_load_shared_nv:
    case nir_intrinsic_cmat_mov_transpose_nv:
+   case nir_intrinsic_load_tile_pan:
+   case nir_intrinsic_load_tile_res_pan:
+   case nir_intrinsic_load_cumulative_coverage_pan:
+   case nir_intrinsic_load_blend_input_pan:
+   case nir_intrinsic_atest_pan:
+   case nir_intrinsic_zs_emit_pan:
+   case nir_intrinsic_load_return_param_amd:
       is_divergent = true;
       break;
 

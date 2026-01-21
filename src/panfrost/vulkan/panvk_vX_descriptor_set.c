@@ -252,10 +252,16 @@ write_buffer_view_desc(struct panvk_descriptor_set *set,
    VK_FROM_HANDLE(panvk_buffer_view, view, bufferView);
 
 #if PAN_ARCH < 9
-   if (type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)
-      write_desc(set, binding, elem, &view->descs.img_attrib_buf, NO_SUBDESC);
-   else
-      write_desc(set, binding, elem, &view->descs.tex, NO_SUBDESC);
+   struct {
+      struct mali_attribute_buffer_packed attr_buf_desc;
+      struct mali_attribute_packed attr_desc;
+      uint32_t pad[2];
+   } padded_desc = {
+      .attr_buf_desc = view->descs.attrib_buf,
+      .attr_desc = view->descs.attrib,
+   };
+
+   write_desc(set, binding, elem, &padded_desc, NO_SUBDESC);
 #else
    write_desc(set, binding, elem, &view->descs.buf, NO_SUBDESC);
 #endif
@@ -307,6 +313,7 @@ panvk_destroy_descriptor_pool(struct panvk_device *device,
       util_vma_heap_finish(&pool->desc_heap);
       panvk_priv_bo_unref(pool->desc_bo);
    } else if (pool->host_only_mem) {
+      util_vma_heap_finish(&pool->desc_heap);
       vk_free2(&device->vk.alloc, pAllocator, (void *)pool->host_only_mem);
       pool->host_only_mem = 0;
    }
@@ -381,7 +388,7 @@ panvk_per_arch(CreateDescriptorPool)(
    }
 
    /* initialize to all ones to indicate all sets are free */
-   BITSET_SET_RANGE(free_sets, 0, pCreateInfo->maxSets - 1);
+   BITSET_SET_COUNT(free_sets, 0, pCreateInfo->maxSets);
    pool->free_sets = free_sets;
    pool->sets = sets;
    pool->max_sets = pCreateInfo->maxSets;
@@ -641,7 +648,7 @@ panvk_per_arch(ResetDescriptorPool)(VkDevice _device, VkDescriptorPool _pool,
    for (uint32_t i = 0; i < pool->max_sets; i++)
       panvk_desc_pool_free_set(pool, &pool->sets[i]);
 
-   BITSET_SET_RANGE(pool->free_sets, 0, pool->max_sets - 1);
+   BITSET_SET_COUNT(pool->free_sets, 0, pool->max_sets);
    return VK_SUCCESS;
 }
 

@@ -6,24 +6,7 @@
  * Copyright © 2016 Bas Nieuwenhuizen
  * Copyright © 2015 Intel Corporation
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "drm-uapi/panthor_drm.h"
@@ -187,7 +170,7 @@ finish_cs(struct panvk_cmd_buffer *cmdbuf, uint32_t subqueue)
    panvk_per_arch(panvk_instr_end_work)(
       subqueue, cmdbuf, PANVK_INSTR_WORK_TYPE_CMDBUF, &instr_info_cmdbuf);
 
-   cs_finish(&cmdbuf->state.cs[subqueue].builder);
+   cs_end(&cmdbuf->state.cs[subqueue].builder);
 }
 
 static void
@@ -386,39 +369,6 @@ add_memory_dependency(struct panvk_cache_flush_info *cache_flush,
    }
 }
 
-static bool
-should_split_render_pass(const uint32_t wait_masks[static PANVK_SUBQUEUE_COUNT],
-                         VkAccessFlags2 src_access, VkAccessFlags2 dst_access)
-{
-   /* From the Vulkan 1.3.301 spec:
-    *
-    *    VUID-vkCmdPipelineBarrier-None-07892
-    *
-    *    "If vkCmdPipelineBarrier is called within a render pass instance, the
-    *    source and destination stage masks of any memory barriers must only
-    *    include graphics pipeline stages"
-    *
-    * We only consider the tiler and the fragment subqueues here.
-    */
-
-   /* split if the tiler subqueue waits for the fragment subqueue */
-   if (wait_masks[PANVK_SUBQUEUE_VERTEX_TILER] &
-       BITFIELD_BIT(PANVK_SUBQUEUE_FRAGMENT))
-      return true;
-
-   /* split if the fragment subqueue self-waits with a feedback loop, because
-    * we lower subpassLoad to texelFetch
-    */
-   if ((wait_masks[PANVK_SUBQUEUE_FRAGMENT] &
-        BITFIELD_BIT(PANVK_SUBQUEUE_FRAGMENT)) &&
-       (src_access & (VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
-                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)) &&
-       (dst_access & VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT))
-      return true;
-
-   return false;
-}
-
 static void
 collect_cache_flush_info(enum panvk_subqueue_id subqueue,
                          struct panvk_cache_flush_info *cache_flush,
@@ -434,32 +384,41 @@ collect_cache_flush_info(enum panvk_subqueue_id subqueue,
 }
 
 static void
-collect_cs_deps(struct panvk_cmd_buffer *cmdbuf,
+collect_cs_deps(struct panvk_cmd_buffer *cmdbuf, const VkDependencyInfo *info,
                 struct panvk_sync_scope src, struct panvk_sync_scope dst,
                 struct panvk_cs_deps *deps)
 {
    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
-
    uint32_t wait_masks[PANVK_SUBQUEUE_COUNT] = {0};
    add_execution_dependency(wait_masks, src.stages, dst.stages);
 
-   /* within a render pass */
    if (cmdbuf->state.gfx.render.tiler || inherits_render_ctx(cmdbuf)) {
-      if (should_split_render_pass(wait_masks, src.access, dst.access)) {
-         deps->needs_draw_flush = true;
-      } else {
-         /* skip the tiler subqueue self-wait because we use the same
-          * scoreboard slot for the idvs jobs
+      if (info->dependencyFlags & VK_DEPENDENCY_BY_REGION_BIT) {
+         /* Instead of doing an actual fragment job dependency, use a FB
+          * barrier instead.
           */
-         wait_masks[PANVK_SUBQUEUE_VERTEX_TILER] &=
-            ~BITFIELD_BIT(PANVK_SUBQUEUE_VERTEX_TILER);
-
-         /* skip the fragment subqueue self-wait because we emit the fragment
-          * job at the end of the render pass and there is nothing to wait yet
-          */
+         deps->needs_fb_barrier = true;
          wait_masks[PANVK_SUBQUEUE_FRAGMENT] &=
             ~BITFIELD_BIT(PANVK_SUBQUEUE_FRAGMENT);
       }
+
+      /* From the Vulkan 1.4.335 spec:
+       *
+       *    VUID-vkCmdPipelineBarrier-dependencyFlags-07891
+       *
+       *    "If vkCmdPipelineBarrier is called within a render pass
+       *    instance, and the source stage masks of any memory barriers
+       *    include framebuffer-space stages, then dependencyFlags must
+       *    include VK_DEPENDENCY_BY_REGION_BIT"
+       */
+      for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++)
+         assert(!(wait_masks[i] & BITFIELD_BIT(PANVK_SUBQUEUE_FRAGMENT)));
+
+      /* skip the tiler subqueue self-wait because we use the same
+       * scoreboard slot for the idvs jobs
+       */
+      wait_masks[PANVK_SUBQUEUE_VERTEX_TILER] &=
+         ~BITFIELD_BIT(PANVK_SUBQUEUE_VERTEX_TILER);
    }
 
    for (uint32_t i = 0; i < PANVK_SUBQUEUE_COUNT; i++) {
@@ -581,7 +540,7 @@ panvk_per_arch(add_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
                            VK_QUEUE_FAMILY_IGNORED,
                            barrier_stage);
 
-      collect_cs_deps(cmdbuf, src, dst, out);
+      collect_cs_deps(cmdbuf, in, src, dst, out);
    }
 
    for (uint32_t i = 0; i < in->bufferMemoryBarrierCount; i++) {
@@ -593,7 +552,7 @@ panvk_per_arch(add_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
                            barrier->dstQueueFamilyIndex,
                            barrier_stage);
 
-      collect_cs_deps(cmdbuf, src, dst, out);
+      collect_cs_deps(cmdbuf, in, src, dst, out);
    }
 
    for (uint32_t i = 0; i < in->imageMemoryBarrierCount; i++) {
@@ -608,7 +567,7 @@ panvk_per_arch(add_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
                            barrier->dstQueueFamilyIndex,
                            barrier_stage);
 
-      collect_cs_deps(cmdbuf, src, dst, out);
+      collect_cs_deps(cmdbuf, in, src, dst, out);
 
       if (barrier_stage == PANVK_BARRIER_STAGE_FIRST && transition.stages)
          out->needs_layout_transitions = true;
@@ -736,19 +695,12 @@ panvk_per_arch(CmdPipelineBarrier2)(VkCommandBuffer commandBuffer,
                                     const VkDependencyInfo *pDependencyInfo)
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
-
-   /* Intra render pass barriers can be skipped iff we're inside a render
-    * pass. */
-   if ((cmdbuf->state.gfx.render.tiler || inherits_render_ctx(cmdbuf)) &&
-       (pDependencyInfo->dependencyFlags & VK_DEPENDENCY_BY_REGION_BIT))
-      return;
-
    struct panvk_cs_deps deps = {0};
 
    panvk_per_arch(add_cs_deps)(cmdbuf, PANVK_BARRIER_STAGE_FIRST, pDependencyInfo, &deps, false);
 
-   if (deps.needs_draw_flush)
-      panvk_per_arch(cmd_flush_draws)(cmdbuf);
+   if (deps.needs_fb_barrier)
+      panvk_per_arch(cmd_fb_barrier)(cmdbuf);
 
    panvk_per_arch(emit_barrier)(cmdbuf, deps);
 
@@ -765,7 +717,7 @@ panvk_per_arch(CmdPipelineBarrier2)(VkCommandBuffer commandBuffer,
          cmdbuf, PANVK_BARRIER_STAGE_AFTER_LAYOUT_TRANSITION,
          pDependencyInfo, &trans_deps, false);
 
-      assert(!trans_deps.needs_draw_flush);
+      assert(!trans_deps.needs_fb_barrier);
 
       panvk_per_arch(emit_barrier)(cmdbuf, trans_deps);
    }
@@ -875,6 +827,9 @@ panvk_reset_cmdbuf(struct vk_command_buffer *vk_cmdbuf,
       u_trace_init(ut, &dev->utrace.utctx);
    }
 
+   for (uint32_t i = 0; i < ARRAY_SIZE(cmdbuf->state.cs); i++)
+      cs_builder_fini(&cmdbuf->state.cs[i].builder);
+
    memset(&cmdbuf->state, 0, sizeof(cmdbuf->state));
    init_cs_builders(cmdbuf);
 }
@@ -890,6 +845,9 @@ panvk_destroy_cmdbuf(struct vk_command_buffer *vk_cmdbuf)
 
    for (uint32_t i = 0; i < ARRAY_SIZE(cmdbuf->utrace.uts); i++)
       u_trace_fini(&cmdbuf->utrace.uts[i]);
+
+   for (uint32_t i = 0; i < ARRAY_SIZE(cmdbuf->state.cs); i++)
+      cs_builder_fini(&cmdbuf->state.cs[i].builder);
 
    panvk_pool_cleanup(&cmdbuf->cs_pool);
    panvk_pool_cleanup(&cmdbuf->desc_pool);

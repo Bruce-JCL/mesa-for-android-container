@@ -364,6 +364,7 @@ struct alu_opt_info {
    uint8_t omod = 0;
    bool clamp = false;
    bool f32_to_f16 = false;
+   bool f32_to_f16_rtz = false;
    SubdwordSel insert = SubdwordSel::dword;
 
    bool try_swap_operands(unsigned idx0, unsigned idx1)
@@ -600,7 +601,8 @@ format_is(Format f1, Format f2)
 bool
 try_vinterp_inreg(opt_ctx& ctx, alu_opt_info& info)
 {
-   if (ctx.program->gfx_level < GFX11 || info.opcode != aco_opcode::v_fma_f32 || info.omod)
+   if (ctx.program->gfx_level < GFX11 || info.opcode != aco_opcode::v_fma_f32 || info.omod ||
+       info.f32_to_f16_rtz)
       return false;
 
    bool fp16 = info.f32_to_f16;
@@ -691,8 +693,6 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
    case aco_opcode::v_fma_legacy_f32:
    case aco_opcode::v_fma_f16:
    case aco_opcode::v_fma_legacy_f16:
-   case aco_opcode::v_fma_mix_f32:
-   case aco_opcode::v_fma_mixlo_f16:
    case aco_opcode::v_pk_mul_f16:
    case aco_opcode::v_pk_fma_f16:
    case aco_opcode::s_mul_f32:
@@ -834,6 +834,10 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
       }
    }
 
+   assert(!info.f32_to_f16_rtz || info.f32_to_f16);
+   if (info.f32_to_f16_rtz && ctx.fp_mode.round16_64 == fp_round_tz)
+      info.f32_to_f16_rtz = false;
+
    /* convert to VINTERP_INREG */
    try_vinterp_inreg(ctx, info);
 
@@ -871,8 +875,13 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
       default: return false;
       }
 
-      info.opcode = info.f32_to_f16 ? aco_opcode::v_fma_mixlo_f16 : aco_opcode::v_fma_mix_f32;
       info.format = Format::VOP3P;
+      if (info.f32_to_f16_rtz)
+         info.opcode = aco_opcode::p_v_fma_mixlo_f16_rtz;
+      else if (info.f32_to_f16)
+         info.opcode = aco_opcode::v_fma_mixlo_f16;
+      else
+         info.opcode = aco_opcode::v_fma_mix_f32;
    }
 
    /* remove negate modifiers by converting to subtract */
@@ -1126,8 +1135,9 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
             info.defs[0].setPrecolored(vcc);
       }
    } else if (format_is(info.format, Format::VOP3P)) {
-      bool fmamix =
-         info.opcode == aco_opcode::v_fma_mix_f32 || info.opcode == aco_opcode::v_fma_mixlo_f16;
+      bool fmamix = info.opcode == aco_opcode::v_fma_mix_f32 ||
+                    info.opcode == aco_opcode::v_fma_mixlo_f16 ||
+                    info.opcode == aco_opcode::p_v_fma_mixlo_f16_rtz;
       bool dot2_f32 =
          info.opcode == aco_opcode::v_dot2_f32_f16 || info.opcode == aco_opcode::v_dot2_f32_bf16;
       bool supports_dpp = (fmamix || dot2_f32) && ctx.program->gfx_level >= GFX11;
@@ -1253,9 +1263,11 @@ alu_opt_gather_info(opt_ctx& ctx, Instruction* instr, alu_opt_info& info)
       opsel = 0;
    }
 
-   if (instr->opcode == aco_opcode::v_fma_mix_f32 || instr->opcode == aco_opcode::v_fma_mixlo_f16) {
+   if (instr->opcode == aco_opcode::v_fma_mix_f32 || instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
+       instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz) {
       info.opcode = ctx.program->dev.fused_mad_mix ? aco_opcode::v_fma_f32 : aco_opcode::v_mad_f32;
-      info.f32_to_f16 = instr->opcode == aco_opcode::v_fma_mixlo_f16;
+      info.f32_to_f16_rtz = instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz;
+      info.f32_to_f16 = info.f32_to_f16_rtz || instr->opcode == aco_opcode::v_fma_mixlo_f16;
    }
 
    if (instr->isSDWA())
@@ -1268,7 +1280,8 @@ alu_opt_gather_info(opt_ctx& ctx, Instruction* instr, alu_opt_info& info)
       alu_opt_op op_info = {};
       op_info.op = instr->operands[i];
       if (instr->opcode == aco_opcode::v_fma_mix_f32 ||
-          instr->opcode == aco_opcode::v_fma_mixlo_f16) {
+          instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
+          instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz) {
          op_info.neg[0] = instr->valu().neg[i];
          op_info.abs[0] = instr->valu().abs[i];
          if (instr->valu().opsel_hi[i]) {
@@ -1490,7 +1503,8 @@ alu_opt_info_to_instr(opt_ctx& ctx, alu_opt_info& info, Instruction* old_instr)
    for (unsigned i = 0; i < info.operands.size(); i++) {
       instr->operands[i] = info.operands[i].op;
       if (instr->opcode == aco_opcode::v_fma_mix_f32 ||
-          instr->opcode == aco_opcode::v_fma_mixlo_f16) {
+          instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
+          instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz) {
          instr->valu().neg[i] = info.operands[i].neg[0];
          instr->valu().abs[i] = info.operands[i].abs[0];
          instr->valu().opsel_hi[i] = info.operands[i].f16_to_f32;
@@ -3991,6 +4005,53 @@ create_med3_cb(opt_ctx& ctx, alu_opt_info& info)
    return false;
 }
 
+bool
+can_reassoc_omod(opt_ctx& ctx, const alu_opt_info& info, unsigned bit_size)
+{
+   unsigned denorm = bit_size == 32 ? ctx.fp_mode.denorm32 : ctx.fp_mode.denorm16_64;
+   bool no_signed_zero =
+      info.opcode == aco_opcode::v_mul_legacy_f32 || !info.defs[0].isSZPreserve();
+
+   return no_signed_zero && !info.omod && !info.defs[0].isPrecise() && denorm == fp_denorm_flush;
+}
+
+template <bool is_rcp>
+bool
+reassoc_omod_cb(opt_ctx& ctx, alu_opt_info& info)
+{
+   if (info.defs[0].isPrecise())
+      return false;
+
+   aco_type type = instr_info.alu_opcode_infos[(int)info.opcode].def_types[0];
+
+   for (unsigned op_idx = 0; op_idx < 2; op_idx++) {
+      uint64_t constant = 0;
+      if (!op_info_get_constant(ctx, info.operands[op_idx], type, &constant))
+         continue;
+
+      double val = extract_float(constant, type.bit_size);
+      if (val < 0.0) {
+         info.operands[!op_idx].neg[0] ^= true;
+         val = fabs(val);
+      }
+
+      if (val == (is_rcp ? 0.5 : 2.0))
+         info.omod = 1;
+      else if (val == (is_rcp ? 0.25 : 4.0))
+         info.omod = 2;
+      else if (val == (is_rcp ? 2.0 : 0.5))
+         info.omod = 3;
+      else
+         return false;
+
+      info.operands.erase(std::next(info.operands.begin(), op_idx));
+
+      return true;
+   }
+
+   return false;
+}
+
 template <unsigned bits>
 bool
 shift_to_mad_cb(opt_ctx& ctx, alu_opt_info& info)
@@ -4155,8 +4216,7 @@ combine_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
       combine_instr_pattern{aco_opcode::src_op, aco_opcode::res_op, mask, swizzle, __VA_ARGS__})
 
    if (info.opcode == aco_opcode::v_add_f32) {
-      if (ctx.program->gfx_level < GFX10_3 && ctx.program->family != CHIP_GFX940 &&
-          ctx.fp_mode.denorm32 == 0) {
+      if (ctx.program->dev.has_mad32 && ctx.fp_mode.denorm32 == 0) {
          add_opt(v_mul_f32, v_mad_f32, 0x3, "120");
          add_opt(v_mul_legacy_f32, v_mad_legacy_f32, 0x3, "120");
       }
@@ -4293,16 +4353,54 @@ combine_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
    } else if (info.opcode == aco_opcode::v_min_i16_e64) {
       add_opt(v_min_i16_e64, v_min3_i16, 0x3, "120", nullptr, true);
       add_opt(v_max_i16_e64, v_med3_i16, 0x3, "012", create_med3_cb<true>, true);
-   } else if (((info.opcode == aco_opcode::v_mul_f32 && !info.defs[0].isNaNPreserve() &&
-                !info.defs[0].isInfPreserve()) ||
-               (info.opcode == aco_opcode::v_mul_legacy_f32 && !info.defs[0].isSZPreserve())) &&
-              !info.clamp && !info.omod && !ctx.fp_mode.must_flush_denorms32) {
-      /* v_mul_f32(a, v_cndmask_b32(0, 1.0, cond)) -> v_cndmask_b32(0, a, cond) */
-      add_opt(v_cndmask_b32, v_cndmask_b32, 0x3, "1032",
-              and_cb<check_const_cb<0, 0>, remove_const_cb<0x3f800000>>, true);
-      /* v_mul_f32(a, v_cndmask_b32(1.0, 0, cond)) -> v_cndmask_b32(a, 0, cond) */
-      add_opt(v_cndmask_b32, v_cndmask_b32, 0x3, "0231",
-              and_cb<check_const_cb<1, 0>, remove_const_cb<0x3f800000>>, true);
+   } else if (info.opcode == aco_opcode::v_mul_f32 || info.opcode == aco_opcode::v_mul_legacy_f32) {
+      bool legacy = info.opcode == aco_opcode::v_mul_legacy_f32;
+
+      if ((legacy ? !info.defs[0].isSZPreserve()
+                  : (!info.defs[0].isNaNPreserve() && !info.defs[0].isInfPreserve())) &&
+          !info.clamp && !info.omod && !ctx.fp_mode.must_flush_denorms32) {
+         /* v_mul_f32(a, v_cndmask_b32(0, 1.0, cond)) -> v_cndmask_b32(0, a, cond) */
+         add_opt(v_cndmask_b32, v_cndmask_b32, 0x3, "1032",
+                 and_cb<check_const_cb<0, 0>, remove_const_cb<0x3f800000>>, true);
+         /* v_mul_f32(a, v_cndmask_b32(1.0, 0, cond)) -> v_cndmask_b32(a, 0, cond) */
+         add_opt(v_cndmask_b32, v_cndmask_b32, 0x3, "0231",
+                 and_cb<check_const_cb<1, 0>, remove_const_cb<0x3f800000>>, true);
+      }
+
+      if (can_reassoc_omod(ctx, info, 32)) {
+         if (legacy) {
+            add_opt(v_mul_f32, v_mul_legacy_f32, 0x3, "120", reassoc_omod_cb<false>, true);
+            add_opt(v_mul_legacy_f32, v_mul_legacy_f32, 0x3, "120", reassoc_omod_cb<false>, true);
+            add_opt(s_mul_f32, v_mul_legacy_f32, 0x3, "120", reassoc_omod_cb<false>, true);
+         } else {
+            add_opt(v_mul_f32, v_mul_f32, 0x3, "120", reassoc_omod_cb<false>, true);
+            add_opt(v_mul_legacy_f32, v_mul_f32, 0x3, "120", reassoc_omod_cb<false>, true);
+            add_opt(s_mul_f32, v_mul_f32, 0x3, "120", reassoc_omod_cb<false>, true);
+         }
+      }
+   } else if (info.opcode == aco_opcode::v_mul_f16 && can_reassoc_omod(ctx, info, 16)) {
+      add_opt(v_mul_f16, v_mul_f16, 0x3, "120", reassoc_omod_cb<false>, true);
+      add_opt(s_mul_f16, v_mul_f16, 0x3, "120", reassoc_omod_cb<false>, true);
+   } else if (info.opcode == aco_opcode::v_mul_f64 && can_reassoc_omod(ctx, info, 64)) {
+      add_opt(v_mul_f64, v_mul_f64, 0x3, "120", reassoc_omod_cb<false>, true);
+   } else if (info.opcode == aco_opcode::v_mul_f64_e64 && can_reassoc_omod(ctx, info, 64)) {
+      add_opt(v_mul_f64_e64, v_mul_f64_e64, 0x3, "120", reassoc_omod_cb<false>, true);
+   } else if (info.opcode == aco_opcode::v_rcp_f32 && can_reassoc_omod(ctx, info, 32)) {
+      add_opt(v_mul_f32, v_rcp_f32, 0x1, "01", reassoc_omod_cb<true>);
+      add_opt(v_mul_legacy_f32, v_rcp_f32, 0x1, "01", reassoc_omod_cb<true>);
+      add_opt(s_mul_f32, v_rcp_f32, 0x1, "01", reassoc_omod_cb<true>);
+   } else if (info.opcode == aco_opcode::v_s_rcp_f32 && can_reassoc_omod(ctx, info, 32)) {
+      add_opt(s_mul_f32, v_s_rcp_f32, 0x1, "01", reassoc_omod_cb<true>);
+   } else if (info.opcode == aco_opcode::v_rcp_f16 && can_reassoc_omod(ctx, info, 16)) {
+      add_opt(v_mul_f16, v_rcp_f16, 0x1, "01", reassoc_omod_cb<true>);
+      add_opt(s_mul_f16, v_rcp_f16, 0x1, "01", reassoc_omod_cb<true>);
+   } else if (info.opcode == aco_opcode::v_s_rcp_f16 && can_reassoc_omod(ctx, info, 16)) {
+      add_opt(s_mul_f16, v_s_rcp_f16, 0x1, "01", reassoc_omod_cb<true>);
+   } else if (info.opcode == aco_opcode::v_rcp_f64 && can_reassoc_omod(ctx, info, 64)) {
+      if (ctx.program->gfx_level < GFX12)
+         add_opt(v_mul_f64_e64, v_rcp_f64, 0x1, "01", reassoc_omod_cb<true>);
+      else
+         add_opt(v_mul_f64, v_rcp_f64, 0x1, "01", reassoc_omod_cb<true>);
    } else if (info.opcode == aco_opcode::v_add_u16 && !info.clamp) {
       if (ctx.program->gfx_level < GFX9) {
          add_opt(v_mul_lo_u16, v_mad_legacy_u16, 0x3, "120");
@@ -5120,10 +5218,88 @@ try_convert_sopc_to_sopk(aco_ptr<Instruction>& instr)
 }
 
 static void
+opt_split_cvt_pkrtz(opt_ctx& ctx, aco_ptr<Instruction>& instr)
+{
+   if (instr->isDPP() || instr->isSDWA())
+      return;
+
+   if (instr->definitions[0].regClass() != v1 && instr->definitions[0].regClass() != v2b)
+      return;
+
+   bool packed_cvt = instr->definitions[0].bytes() > 2;
+   if (!instr->operands[0].isTemp() || (packed_cvt && !instr->operands[1].isTemp()))
+      return;
+
+   /* Instruction selection emits two uses for scalar f2f16_rtz to avoid using VOP3. */
+   bool replicate =
+      instr->operands[1].isTemp() && instr->operands[0].getTemp() == instr->operands[1].getTemp();
+   if (replicate && packed_cvt)
+      return;
+
+   alu_opt_info info;
+   if (!alu_opt_gather_info(ctx, instr.get(), info))
+      return;
+   aco_type type = {aco_base_type_float, 1, 32};
+
+   Instruction* parent[2];
+   alu_opt_info parent_info[2];
+   for (unsigned i = 0; i < (packed_cvt ? 2 : 1); i++) {
+      unsigned tmpid = instr->operands[i].tempId();
+      parent[i] = ctx.info[tmpid].parent_instr;
+      if (ctx.uses[tmpid] != (replicate ? 2 : 1) || parent[i]->definitions[0].tempId() != tmpid)
+         return;
+      if (!alu_opt_gather_info(ctx, parent[i], parent_info[i]))
+         return;
+
+      if (parent_info[i].uses_insert() || parent_info[i].f32_to_f16)
+         return;
+
+      if (!backpropagate_input_modifiers(ctx, parent_info[i], info.operands[i], type))
+         return;
+
+      parent_info[i].f32_to_f16 = true;
+      parent_info[i].f32_to_f16_rtz = true;
+      if (!alu_opt_info_is_valid(ctx, parent_info[i]))
+         return;
+   }
+
+   ctx.program->needs_fp_mode_insertion = true;
+
+   for (unsigned i = 0; i < (packed_cvt ? 2 : 1); i++) {
+      if (packed_cvt) {
+         parent_info[i].defs[0].setTemp(Temp(parent_info[i].defs[0].tempId(), v2b));
+         ctx.program->temp_rc[parent_info[i].defs[0].tempId()] = v2b;
+      } else {
+         ctx.uses[parent_info[i].defs[0].tempId()] = 0;
+         ctx.info[parent_info[i].defs[0].tempId()].parent_instr = nullptr;
+         parent_info[i].defs[0].setTemp(instr->definitions[0].getTemp());
+      }
+      Instruction* new_instr = alu_opt_info_to_instr(ctx, parent_info[i], parent[i]);
+
+      if (parent[i] != new_instr)
+         ctx.replacement_instr.emplace(parent[i], new_instr);
+
+      parent[i] = new_instr;
+   }
+
+   if (packed_cvt) {
+      static_assert(sizeof(Pseudo_instruction) <= sizeof(VALU_instruction), "invalid direct cast");
+      instr->operands[0] = Operand(parent[0]->definitions[0].getTemp());
+      instr->operands[1] = Operand(parent[1]->definitions[0].getTemp());
+      instr->format = Format::PSEUDO;
+      instr->opcode = aco_opcode::p_create_vector;
+      instr->pseudo().needs_scratch_reg = false;
+   } else {
+      instr.reset();
+   }
+}
+
+static void
 opt_fma_mix_acc(opt_ctx& ctx, aco_ptr<Instruction>& instr)
 {
    /* fma_mix is only dual issued on gfx11 if dst and acc type match */
-   bool f2f16 = instr->opcode == aco_opcode::v_fma_mixlo_f16;
+   bool f2f16 = instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
+                instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz;
 
    if (instr->valu().opsel_hi[2] == f2f16 || instr->isDPP())
       return;
@@ -5274,8 +5450,12 @@ apply_literals(opt_ctx& ctx, aco_ptr<Instruction>& instr)
    if (instr->isSOPC() && ctx.program->gfx_level < GFX12)
       try_convert_sopc_to_sopk(instr);
 
-   if (instr->opcode == aco_opcode::v_fma_mixlo_f16 || instr->opcode == aco_opcode::v_fma_mix_f32)
-      opt_fma_mix_acc(ctx, instr);
+   if (instr->opcode == aco_opcode::v_cvt_pkrtz_f16_f32 ||
+       instr->opcode == aco_opcode::v_cvt_pkrtz_f16_f32_e64) {
+      opt_split_cvt_pkrtz(ctx, instr);
+      if (!instr)
+         return;
+   }
 
    if (instr->opcode == aco_opcode::v_mul_f64 || instr->opcode == aco_opcode::v_mul_f64_e64)
       opt_neg_abs_fp64(ctx, instr);
@@ -5430,6 +5610,17 @@ optimize(Program* program)
       for (aco_ptr<Instruction>& instr : block.instructions)
          apply_literals(ctx, instr);
       block.instructions = std::move(ctx.instructions);
+   }
+
+   for (Block& block : program->blocks) {
+      ctx.fp_mode = block.fp_mode;
+      for (aco_ptr<Instruction>& instr : block.instructions) {
+         insert_replacement_instr(ctx, instr);
+         if (instr->opcode == aco_opcode::v_fma_mixlo_f16 ||
+             instr->opcode == aco_opcode::p_v_fma_mixlo_f16_rtz ||
+             instr->opcode == aco_opcode::v_fma_mix_f32)
+            opt_fma_mix_acc(ctx, instr);
+      }
    }
 
    validate_opt_ctx(ctx, true);

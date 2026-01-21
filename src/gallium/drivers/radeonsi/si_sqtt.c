@@ -149,7 +149,7 @@ static void si_sqtt_start(struct si_context *sctx, struct radeon_cmdbuf *cs)
    si_emit_sqtt_start(sctx, cs, ip_type);
 
    if (sctx->spm.bo)
-      ac_emit_spm_start(&cs->current, AMD_IP_GFX);
+      ac_emit_spm_start(&cs->current, AMD_IP_GFX, &sctx->screen->info);
 }
 
 static void si_sqtt_stop(struct si_context *sctx, struct radeon_cmdbuf *cs)
@@ -208,6 +208,7 @@ static void si_sqtt_stop(struct si_context *sctx, struct radeon_cmdbuf *cs)
 static void si_sqtt_init_cs(struct si_context *sctx)
 {
    struct radeon_winsys *ws = sctx->ws;
+   unsigned barriers;
 
    for (unsigned i = 0; i < ARRAY_SIZE(sctx->sqtt->start_cs); i++) {
       sctx->sqtt->start_cs[i] = CALLOC_STRUCT(radeon_cmdbuf);
@@ -217,6 +218,11 @@ static void si_sqtt_init_cs(struct si_context *sctx)
          sctx->sqtt->start_cs[i] = NULL;
          return;
       }
+
+      /* Save and restore global barrier_flags. */
+      barriers = sctx->barrier_flags;
+      sctx->barrier_flags = 0;
+
       si_sqtt_start(sctx, sctx->sqtt->start_cs[i]);
 
       sctx->sqtt->stop_cs[i] = CALLOC_STRUCT(radeon_cmdbuf);
@@ -227,10 +233,12 @@ static void si_sqtt_init_cs(struct si_context *sctx)
          sctx->sqtt->start_cs[i] = NULL;
          free(sctx->sqtt->stop_cs[i]);
          sctx->sqtt->stop_cs[i] = NULL;
+         sctx->barrier_flags = barriers;
          return;
       }
 
       si_sqtt_stop(sctx, sctx->sqtt->stop_cs[i]);
+      sctx->barrier_flags = barriers;
    }
 }
 

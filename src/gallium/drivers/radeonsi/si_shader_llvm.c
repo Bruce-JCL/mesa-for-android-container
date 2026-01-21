@@ -450,9 +450,9 @@ static bool si_llvm_translate_nir(struct si_shader_context *ctx, struct si_shade
    case MESA_SHADER_FRAGMENT: {
       ctx->abi.kill_ps_if_inf_interp =
          ctx->screen->options.no_infinite_interp &&
-         (ctx->shader->selector->info.uses_persp_center ||
-          ctx->shader->selector->info.uses_persp_centroid ||
-          ctx->shader->selector->info.uses_persp_sample);
+         (ctx->shader->selector->info.uses_sysval_persp_center ||
+          ctx->shader->selector->info.uses_sysval_persp_centroid ||
+          ctx->shader->selector->info.uses_sysval_persp_sample);
       break;
    }
 
@@ -675,7 +675,36 @@ bool si_llvm_compile_shader(struct si_screen *sscreen, struct ac_llvm_compiler *
       assert_registers_equal(sscreen, R_0286D0_SPI_PS_INPUT_ADDR, shader->config.spi_ps_input_addr,
                              config.spi_ps_input_addr, false);
    }
+
+   /* Set the FP ALU behavior. */
+   /* By default, we disable denormals for FP32 and enable them for FP16 and FP64
+    * for performance and correctness reasons. FP32 denormals can't be enabled because
+    * they break output modifiers and v_mad_f32 and are very slow on GFX6-7.
+    *
+    * float_controls_execution_mode defines the set of valid behaviors. Contradicting flags
+    * can be set simultaneously, which means we are allowed to choose, but not really because
+    * some options cause GLCTS failures.
+    */
+   config.float_mode = V_00B028_FP_16_64_DENORMS;
+
+   if (!(nir->info.float_controls_execution_mode & FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP32) &&
+       nir->info.float_controls_execution_mode & FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP32)
+      config.float_mode |= V_00B028_FP_32_ROUND_TOWARDS_ZERO;
+
+   if (!(nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP16 |
+                                                    FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP64)) &&
+       nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP16 |
+                                                  FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP64))
+      config.float_mode |= V_00B028_FP_16_64_ROUND_TOWARDS_ZERO;
+
+   if (!(nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_DENORM_PRESERVE_FP16 |
+                                                    FLOAT_CONTROLS_DENORM_PRESERVE_FP64)) &&
+       nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP16 |
+                                                  FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP64))
+      config.float_mode &= ~V_00B028_FP_16_64_DENORMS;
+
    shader->config = config;
+
    return true;
 }
 

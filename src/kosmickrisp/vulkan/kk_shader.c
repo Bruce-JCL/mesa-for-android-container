@@ -71,11 +71,22 @@ kk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
    return &options;
 }
 
+/* TODO_KOSMICKRISP Once we support robustness2, update these values. */
+static const struct vk_pipeline_robustness_state rs_all_supported = {
+   .uniform_buffers =
+      VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS,
+   .storage_buffers =
+      VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS,
+   .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_ROBUST_IMAGE_ACCESS_2_EXT,
+};
+
 static struct spirv_to_nir_options
 kk_get_spirv_options(struct vk_physical_device *vk_pdev,
                      UNUSED mesa_shader_stage stage,
                      const struct vk_pipeline_robustness_state *rs)
 {
+   if (KK_DEBUG(FORCE_ROBUSTNESS))
+      rs = &rs_all_supported;
    return (struct spirv_to_nir_options){
       .environment = NIR_SPIRV_VULKAN,
       .ssbo_addr_format = kk_buffer_addr_format(rs->storage_buffers),
@@ -332,13 +343,15 @@ kk_lower_fs_blend(nir_shader *nir,
       .logicop_func = vk_logic_op_to_pipe(state->cb->logic_op),
    };
 
-   static_assert(ARRAY_SIZE(opts.format) == 8, "max RTs out of sync");
+   static_assert(ARRAY_SIZE(opts.rt) == 8, "max RTs out of sync");
 
-   for (unsigned i = 0; i < ARRAY_SIZE(opts.format); ++i) {
-      opts.format[i] =
+   for (unsigned i = 0; i < ARRAY_SIZE(opts.rt); ++i) {
+      enum pipe_format format =
          vk_format_to_pipe_format(state->rp->color_attachment_formats[i]);
       if (state->cb->attachments[i].blend_enable) {
          opts.rt[i] = (nir_lower_blend_rt){
+            .format = format,
+
             .rgb.src_factor = vk_blend_factor_to_pipe(
                state->cb->attachments[i].src_color_blend_factor),
             .rgb.dst_factor = vk_blend_factor_to_pipe(
@@ -357,6 +370,8 @@ kk_lower_fs_blend(nir_shader *nir,
          };
       } else {
          opts.rt[i] = (nir_lower_blend_rt){
+            .format = format,
+
             .rgb.src_factor = PIPE_BLENDFACTOR_ONE,
             .rgb.dst_factor = PIPE_BLENDFACTOR_ZERO,
             .rgb.func = PIPE_BLEND_ADD,
@@ -435,6 +450,9 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir,
              struct vk_descriptor_set_layout *const *set_layouts,
              const struct vk_graphics_pipeline_state *state)
 {
+   if (KK_DEBUG(FORCE_ROBUSTNESS))
+      rs = &rs_all_supported;
+
    /* Massage IO related variables to please Metal */
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_, nir, kk_nir_lower_vs_multiview, state->rp->view_mask);
@@ -442,7 +460,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir,
       /* kk_nir_lower_vs_multiview may create a temporary array to assign the
        * correct view index. Since we don't handle derefs, we need to get rid of
        * them. */
-      NIR_PASS(_, nir, nir_lower_vars_to_scratch, nir_var_function_temp, 0,
+      NIR_PASS(_, nir, nir_lower_vars_to_scratch, 0,
                glsl_get_natural_size_align_bytes,
                glsl_get_natural_size_align_bytes);
 
@@ -953,6 +971,7 @@ kk_compile_graphics_pipeline(struct kk_device *device,
          pipeline_descriptor, max_amplification);
    }
 
+   vertex_shader->pipeline.gfx.sample_count = 1u;
    if (state->ms) {
       mtl_render_pipeline_descriptor_set_raster_sample_count(
          pipeline_descriptor, state->ms->rasterization_samples);
@@ -960,6 +979,8 @@ kk_compile_graphics_pipeline(struct kk_device *device,
          pipeline_descriptor, state->ms->alpha_to_coverage_enable);
       mtl_render_pipeline_descriptor_set_alpha_to_one(
          pipeline_descriptor, state->ms->alpha_to_one_enable);
+      vertex_shader->pipeline.gfx.sample_count =
+         state->ms->rasterization_samples;
    }
 
    vertex_shader->pipeline.gfx.handle =
@@ -1216,6 +1237,8 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
    cmd->state.gfx.is_depth_stencil_dynamic = requires_dynamic_depth_stencil;
    cmd->state.gfx.dirty |= KK_DIRTY_PIPELINE;
    cmd->state.gfx.dirty |= KK_DIRTY_VB;
+
+   cmd->state.gfx.sample_count = shader->pipeline.gfx.sample_count;
 }
 
 static void

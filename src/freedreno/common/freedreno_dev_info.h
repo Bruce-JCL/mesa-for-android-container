@@ -69,6 +69,8 @@ struct fd_dev_info {
       uint32_t num_ccu;
    };
 
+   uint32_t num_slices;    /* gen8+ */
+
    struct {
       uint32_t RB_DBG_ECO_CNTL;
       uint32_t RB_DBG_ECO_CNTL_blit;
@@ -207,6 +209,8 @@ struct fd_dev_info {
       bool supports_double_threadsize;
 
       bool has_sampler_minmax;
+
+      bool has_astc_hdr;
 
       bool broken_ds_ubwc_quirk;
 
@@ -369,6 +373,13 @@ struct fd_dev_info {
 
       bool has_primitive_shading_rate;
 
+      /* If true, the hw shading rate value matches vk/gl rather than dx.
+       *
+       *   dx:  (width_log2 << 2) | height_log2
+       *   vk:  (height_log2 << 2) | width_log2
+       */
+      bool shading_rate_matches_vk;
+
       /* A7XX gen1 and gen2 seem to require declaring SAMPLEMASK input
        * for fragment shading rate to be read correctly.
        * This workaround was seen in the prop driver v512.762.12.
@@ -403,6 +414,14 @@ struct fd_dev_info {
        * driver.
        */
       bool has_hw_bin_scaling;
+
+      /* Whether the (eolm) and (eogm) nop flags are supported. */
+      bool has_eolm_eogm;
+
+      /* integer narrowing convert from GPR to uGPR does not behave as
+       * expected:
+       */
+      bool has_salu_int_narrowing_quirk;
    } props;
 };
 

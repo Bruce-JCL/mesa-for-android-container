@@ -39,26 +39,26 @@ struct instance_info {
    PFN_vkGetPhysicalDeviceProperties2 GetPhysicalDeviceProperties2;
    bool has_pci_bus, has_vulkan11;
    bool has_wayland, has_xcb;
-   bool zink, xwayland, xserver;
+   bool xserver;
 
+   /* don't do device selection */
+   bool bypass_device_select;
    bool debug;
+
    char *selection;
    char *dri_prime;
    bool force_default_device;
 };
 
+/* We don't use `drmPciDeviceInfo` because it uses 16-bit ids,
+ * instead of Vulkan's 32-bit ones. */
 struct device_info {
-   PFN_vkDestroyDevice DestroyDevice;
-   PFN_vkGetDeviceProcAddr GetDeviceProcAddr;
+   uint32_t vendor_id;
+   uint32_t device_id;
 };
 
 struct device_pci_info {
-   /* We don't use `drmPciDeviceInfo` because it uses 16-bit ids,
-    * instead of Vulkan's 32-bit ones. */
-   struct {
-      uint32_t vendor_id;
-      uint32_t device_id;
-   } dev_info;
+   struct device_info dev_info;
    drmPciBusInfo bus_info;
    bool has_bus_info;
    VkPhysicalDeviceType device_type;

@@ -1,27 +1,6 @@
 /*
  * Copyright (C) 2020 Collabora Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- * Authors (Collabora):
- *      Alyssa Rosenzweig <alyssa.rosenzweig@collabora.com>
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef __BIFROST_COMPILER_H
@@ -632,6 +611,7 @@ typedef struct {
       bool format;               /* LEA_TEX */
       bool z_stencil;            /* LD_TILE */
       bool scheduling_barrier;   /* NOP */
+      unsigned blend_target;     /* BLEND */
 
       struct {
          enum bi_special special;   /* FADD_RSCALE, FMA_RSCALE */
@@ -1087,7 +1067,6 @@ typedef struct {
    bi_block *break_block;
    bi_block *continue_block;
    bi_block **indexed_nir_blocks;
-   bool emitted_atest;
 
    /* During NIR->BIR, the coverage bitmap. If this is NULL, the default
     * coverage bitmap should be source from preloaded register r60. This is
@@ -1166,7 +1145,7 @@ enum bir_fau {
    BIR_FAU_WLS_PTR = 17,
    BIR_FAU_PROGRAM_COUNTER = 18,
 
-   /* Avalon only */
+   /* 5th Gen only */
    BIR_FAU_SHADER_OUTPUT = (1 << 9),
 
    BIR_FAU_UNIFORM = (1 << 7),
@@ -1446,6 +1425,8 @@ void bi_opt_push_ubo(bi_context *ctx);
 void bi_opt_reorder_push(bi_context *ctx);
 void bi_lower_swizzle(bi_context *ctx);
 void bi_lower_fau(bi_context *ctx);
+uint64_t bi_instr_read_mask(bi_instr *I, bool staging_only);
+uint64_t bi_instr_write_mask(bi_instr *I);
 void bi_assign_scoreboard(bi_context *ctx);
 void bi_register_allocate(bi_context *ctx);
 void va_optimize(bi_context *ctx);

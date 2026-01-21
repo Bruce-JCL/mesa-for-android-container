@@ -73,13 +73,13 @@ void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
    options->has_ford_funord = true;
    options->has_fsub = true;
    options->has_isub = true;
-   options->has_sdot_4x8 = info->has_accelerated_dot_product;
-   options->has_sudot_4x8 = info->has_accelerated_dot_product && info->gfx_level >= GFX11;
-   options->has_udot_4x8 = info->has_accelerated_dot_product;
-   options->has_sdot_4x8_sat = info->has_accelerated_dot_product;
-   options->has_sudot_4x8_sat = info->has_accelerated_dot_product && info->gfx_level >= GFX11;
-   options->has_udot_4x8_sat = info->has_accelerated_dot_product;
-   options->has_dot_2x16 = info->has_accelerated_dot_product && info->gfx_level < GFX11;
+   options->has_sdot_4x8 = info->cu_info.has_accelerated_dot_product;
+   options->has_sudot_4x8 = info->cu_info.has_accelerated_dot_product && info->gfx_level >= GFX11;
+   options->has_udot_4x8 = info->cu_info.has_accelerated_dot_product;
+   options->has_sdot_4x8_sat = info->cu_info.has_accelerated_dot_product;
+   options->has_sudot_4x8_sat = info->cu_info.has_accelerated_dot_product && info->gfx_level >= GFX11;
+   options->has_udot_4x8_sat = info->cu_info.has_accelerated_dot_product;
+   options->has_dot_2x16 = info->cu_info.has_accelerated_dot_product && info->gfx_level < GFX11;
    options->has_bfdot2_bfadd = info->gfx_level >= GFX12;
    options->has_find_msb_rev = true;
    options->has_pack_32_4x8 = true;
@@ -103,7 +103,7 @@ void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
    options->optimize_quad_vote_to_reduce = !use_llvm;
    options->lower_fisnormal = true;
    options->support_16bit_alu = info->gfx_level >= GFX8;
-   options->vectorize_vec2_16bit = info->has_packed_math_16bit;
+   options->vectorize_vec2_16bit = info->cu_info.has_packed_math_16bit;
    options->discard_is_demote = true;
    options->optimize_sample_mask_in = true;
    options->optimize_load_front_face_fsign = true;
@@ -114,7 +114,8 @@ void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
                          nir_io_vectorizer_ignores_types |
                          nir_io_compaction_rotates_color_channels |
                          nir_io_assign_color_input_bases_after_all_other_inputs |
-                         nir_io_use_frag_result_dual_src_blend;
+                         nir_io_use_frag_result_dual_src_blend  |
+                         nir_io_compact_to_higher_16;
    options->lower_layer_fs_input_to_sysval = true;
    options->scalarize_ddx = true;
    options->coarse_ddx = true;
@@ -227,7 +228,7 @@ ac_nir_lower_indirect_derefs(nir_shader *shader,
    /* Lower large variables to scratch first so that we won't bloat the
     * shader by generating large if ladders for them.
     */
-   NIR_PASS(progress, shader, nir_lower_vars_to_scratch, nir_var_function_temp, 256,
+   NIR_PASS(progress, shader, nir_lower_vars_to_scratch, 256,
             glsl_get_natural_size_align_bytes, glsl_get_natural_size_align_bytes);
 
    /* This lowers indirect indexing to if-else ladders. */
@@ -641,6 +642,13 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
    if (!is_shared) {
       return (align % (bit_size / 8u)) == 0 && num_components <= NIR_MAX_VEC_COMPONENTS;
    } else {
+      /* Due to NIR limitations, we can't efficiently bitcast 8-bit vectors into 16-bit.
+       * We don't do this check for VMEM/SMEM because those are just later lowered to 16/32-bit
+       * loads instead.
+       */
+      if (!is_store && bit_size == 8 && (low->def.bit_size == 16 || high->def.bit_size == 16))
+         return false;
+
       /* 96-bit and 128-bit LDS loads are slow. Don't use them. */
       if (!is_store && bit_size * num_components > 64)
          return false;
@@ -910,18 +918,9 @@ ac_nir_lower_phis_to_scalar_cb(const nir_instr *instr, const void *_)
 bool
 ac_nir_allow_offset_wrap_cb(nir_intrinsic_instr *instr, const void *data)
 {
+   /* GFX6 uses a 16-bit adder and can't handle unsigned wrap. */
    enum amd_gfx_level gfx_level = *(enum amd_gfx_level *)data;
-   switch (instr->intrinsic) {
-   case nir_intrinsic_load_shared:
-   case nir_intrinsic_store_shared:
-   case nir_intrinsic_shared_atomic:
-   case nir_intrinsic_shared_atomic_swap:
-   case nir_intrinsic_load_shared2_amd:
-   case nir_intrinsic_store_shared2_amd:
-      /* GFX6 uses a 16-bit adder and can't handle unsigned wrap. */
-      return gfx_level >= GFX7;
-   default: return false;
-   }
+   return nir_is_shared_access(instr) && gfx_level >= GFX7;
 }
 
 /* This only applies to ACO, not LLVM, but it's not part of ACO because it's used by this shared

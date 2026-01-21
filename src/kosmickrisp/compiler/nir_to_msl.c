@@ -1715,9 +1715,11 @@ tex_to_msl(struct nir_to_msl_ctx *ctx, nir_tex_instr *tex)
       nir_src *bias = nir_tex_get_src(tex, nir_tex_src_bias);
       nir_src *min = nir_tex_get_src(tex, nir_tex_src_min_lod);
       nir_src *max = nir_tex_get_src(tex, nir_tex_src_max_lod_kk);
-      P(ctx, "float2(round(clamp(")
+      /* Delegate the mip layer clamping to Metal, then apply bias and clamp
+       * again to ensure we are within expected LOD. */
+      P(ctx, "float2(clamp(")
       src_to_msl(ctx, texhandle);
-      P(ctx, ".calculate_unclamped_lod(");
+      P(ctx, ".calculate_clamped_lod(");
       src_to_msl(ctx, sampler);
       P(ctx, ", ");
       src_to_msl(ctx, coord);
@@ -1727,7 +1729,7 @@ tex_to_msl(struct nir_to_msl_ctx *ctx, nir_tex_instr *tex)
       src_to_msl(ctx, min);
       P(ctx, ", ");
       src_to_msl(ctx, max);
-      P(ctx, ")), ");
+      P(ctx, "), ");
       src_to_msl(ctx, texhandle);
       P(ctx, ".calculate_unclamped_lod(");
       src_to_msl(ctx, sampler);
@@ -1931,7 +1933,7 @@ msl_preprocess_nir(struct nir_shader *nir)
 
    NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
             nir_var_shader_in | nir_var_shader_out, UINT32_MAX);
-   NIR_PASS(_, nir, nir_lower_vars_to_scratch, nir_var_function_temp, 0,
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 0,
             glsl_get_natural_size_align_bytes,
             glsl_get_natural_size_align_bytes);
 

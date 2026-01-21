@@ -70,6 +70,9 @@ struct intel_device_info;
 #define BRW_SWIZZLE_Z 2
 #define BRW_SWIZZLE_W 3
 
+/** Special value to treat inline parameter values like UNIFORM */
+#define BRW_INLINE_PARAM_REG (65535)
+
 #define BRW_SWIZZLE4(a,b,c,d) (((a)<<0) | ((b)<<2) | ((c)<<4) | ((d)<<6))
 #define BRW_GET_SWZ(swz, idx) (((swz) >> ((idx)*2)) & 0x3)
 
@@ -232,6 +235,17 @@ typedef struct brw_reg {
    bool is_accumulator() const { return brw_reg_is_arf(*this, BRW_ARF_ACCUMULATOR); }
    bool is_ip() const { return brw_reg_is_arf(*this, BRW_ARF_IP); }
    bool is_address() const;
+
+   /**
+    * These are all the things that will eventually become FIXED_GRF. The
+    * things that will live in regular registers can, for the most part, be
+    * treated the same by optimization passes.
+    */
+   bool is_grf() const
+   {
+      return file == FIXED_GRF || file == VGRF || file == ATTR ||
+             file == UNIFORM;
+   }
 
    unsigned address_slot(unsigned byte_offset) const;
 

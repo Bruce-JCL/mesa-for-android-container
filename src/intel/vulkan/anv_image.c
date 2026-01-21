@@ -1722,7 +1722,7 @@ anv_image_init_sparse_bindings(struct anv_image *image,
                         b->memory_range.offset + b->memory_range.size);
    }
 
-   struct anv_address base_address;
+   struct anv_address base_address = ANV_NULL_ADDRESS;
    VkResult result = anv_init_sparse_bindings(
       device, total_size, &image->sparse_data, alloc_flags,
       explicit_addresses != NULL ? explicit_addresses->main_binding : 0,
@@ -1943,6 +1943,12 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
           */
          isl_extra_usage_flags |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
       }
+
+      /* Workaround to disable XE2 CCS modifiers from drirc. */
+      if (device->info->ver == 20 &&
+          image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
+          device->physical->instance->disable_xe2_drm_ccs_modifiers)
+         isl_extra_usage_flags |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
    }
 
    /* Fill out the list of view formats. */

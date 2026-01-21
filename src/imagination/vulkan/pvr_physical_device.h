@@ -25,6 +25,7 @@
 #include "wsi_common.h"
 
 #include "pvr_device_info.h"
+#include "pvr_formats.h"
 
 #if defined(VK_USE_PLATFORM_DISPLAY_KHR) || defined(VK_USE_PLATFORM_WAYLAND_KHR)
 #   define PVR_USE_WSI_PLATFORM true
@@ -58,6 +59,8 @@ struct pvr_physical_device {
    struct wsi_device wsi_device;
 
    pco_ctx *pco_ctx;
+
+   struct pvr_format_table formats;
 
    uint8_t device_uuid[SHA1_DIGEST_LENGTH];
    uint8_t cache_uuid[SHA1_DIGEST_LENGTH];

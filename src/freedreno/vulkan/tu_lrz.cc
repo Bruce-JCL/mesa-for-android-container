@@ -109,14 +109,20 @@ template <chip CHIP>
 static void
 tu6_emit_lrz_buffer(struct tu_cs *cs, struct tu_image *depth_image)
 {
+   tu_crb crb = cs->crb(8);
+
    if (!depth_image) {
-      tu_cs_emit_regs(cs, GRAS_LRZ_BUFFER_BASE(CHIP, 0),
-                      GRAS_LRZ_BUFFER_PITCH(CHIP, 0),
-                      A6XX_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE(0));
+      crb.add(GRAS_LRZ_BUFFER_BASE(CHIP, 0))
+         .add(GRAS_LRZ_BUFFER_PITCH(CHIP, 0))
+         .add(A6XX_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE(0));
 
       if (CHIP >= A7XX) {
-         tu_cs_emit_regs(cs, GRAS_LRZ_DEPTH_BUFFER_INFO(CHIP));
-         tu_cs_emit_regs(cs, GRAS_LRZ_CB_CNTL(CHIP));
+         crb.add(GRAS_LRZ_DEPTH_BUFFER_INFO(CHIP));
+         crb.add(GRAS_LRZ_CB_CNTL(CHIP));
+      }
+
+      if (CHIP >= A8XX) {
+         crb.add(GRAS_LRZ_BUFFER_SLICE_PITCH(CHIP));
       }
 
       return;
@@ -128,21 +134,23 @@ tu6_emit_lrz_buffer(struct tu_cs *cs, struct tu_image *depth_image)
    if (!depth_image->lrz_layout.lrz_fc_offset)
       lrz_fc_iova = 0;
 
-   tu_cs_emit_regs(
-      cs, GRAS_LRZ_BUFFER_BASE(CHIP, .qword = lrz_iova),
-      GRAS_LRZ_BUFFER_PITCH(
-         CHIP, .pitch = depth_image->lrz_layout.lrz_pitch,
-         .array_pitch = depth_image->lrz_layout.lrz_layer_size),
-      A6XX_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE(.qword = lrz_fc_iova));
+   crb.add(GRAS_LRZ_BUFFER_BASE(CHIP, .qword = lrz_iova))
+      .add(GRAS_LRZ_BUFFER_PITCH(
+         CHIP, .pitch = depth_image->lrz_layout.lrz_pitch * sizeof(uint16_t),
+         .array_pitch = depth_image->lrz_layout.lrz_layer_size))
+      .add(A6XX_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE(.qword = lrz_fc_iova));
 
    if (CHIP >= A7XX) {
-      tu_cs_emit_regs(
-         cs, GRAS_LRZ_DEPTH_BUFFER_INFO(CHIP, .depth_format = tu6_pipe2depth(
+      crb.add(GRAS_LRZ_DEPTH_BUFFER_INFO(CHIP, .depth_format = tu6_pipe2depth(
                                                  depth_image->vk.format)));
-      tu_cs_emit_regs(
-         cs,
-         GRAS_LRZ_CB_CNTL(CHIP, .double_buffer_stride =
+      crb.add(GRAS_LRZ_CB_CNTL(CHIP, .double_buffer_pitch =
                                    depth_image->lrz_layout.lrz_buffer_size));
+   }
+
+   if (CHIP >= A8XX) {
+      crb.add(GRAS_LRZ_BUFFER_SLICE_PITCH(CHIP,
+         depth_image->lrz_layout.lrz_slice_pitch
+      ));
    }
 }
 
@@ -198,8 +206,8 @@ tu6_disable_lrz_via_depth_view(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
       .disable_on_wrong_dir = true,
    });
 
-   tu_emit_event_write<A6XX>(cmd, cs, FD_LRZ_CLEAR);
-   tu_emit_event_write<A6XX>(cmd, cs, FD_LRZ_FLUSH);
+   tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_CLEAR);
+   tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_FLUSH);
 }
 
 static void
@@ -347,7 +355,7 @@ tu_lrz_begin_renderpass(struct tu_cmd_buffer *cmd)
 {
    const struct tu_render_pass *pass = cmd->state.pass;
 
-   cmd->state.rp.lrz_disable_reason = "";
+   cmd->state.rp.lrz_disable_reason = NULL;
    cmd->state.rp.lrz_disabled_at_draw = 0;
    cmd->state.rp.lrz_write_disabled_at_draw = 0;
 
@@ -732,14 +740,14 @@ tu_lrz_before_sysmem_br(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
          tu_cs_emit(cs, if_dwords + 1);
          /*    GRAS_LRZ_DEPTH_CLEAR = lrz_fc->buffer[1].depth_clear_val */
          tu_cs_emit_pkt7(cs, CP_MEM_TO_REG, 3);
-         tu_cs_emit(cs, CP_MEM_TO_REG_0_REG(REG_A7XX_GRAS_LRZ_DEPTH_CLEAR));
+         tu_cs_emit(cs, CP_MEM_TO_REG_0_REG(GRAS_LRZ_DEPTH_CLEAR(CHIP).reg));
          tu_cs_emit_qw(cs, lrz_fc_iova + offsetof(fd_lrzfc_layout<A7XX>,
                                                   buffer[1].depth_clear_val));
          /* } else { */
          tu_cs_emit_pkt7(cs, CP_NOP, else_dwords);
          /*    GRAS_LRZ_DEPTH_CLEAR = lrz_fc->buffer[0].depth_clear_val */
          tu_cs_emit_pkt7(cs, CP_MEM_TO_REG, 3);
-         tu_cs_emit(cs, CP_MEM_TO_REG_0_REG(REG_A7XX_GRAS_LRZ_DEPTH_CLEAR));
+         tu_cs_emit(cs, CP_MEM_TO_REG_0_REG(GRAS_LRZ_DEPTH_CLEAR(CHIP).reg));
          tu_cs_emit_qw(cs, lrz_fc_iova + offsetof(fd_lrzfc_layout<A7XX>,
                                                   buffer[0].depth_clear_val));
          /* } */
