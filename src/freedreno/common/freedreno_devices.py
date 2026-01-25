@@ -1190,6 +1190,46 @@ add_gpus([
     ))
 
 add_gpus([
+        GPUId(chip_id=0x07010000, name="FD710"), # KGSL, no speedbin data
+        GPUId(chip_id=0xffff07010000, name="FD710"), # Default no-speedbin fallback
+    ], A6xxGPUInfo(
+        CHIP.A7XX,
+        [a7xx_base, a7xx_gen1],
+        num_ccu = 4,
+        tile_align_w = 64,
+        tile_align_h = 32,
+        tile_max_w = 1024,
+        tile_max_h = 1024,
+        num_vsc_pipes = 32,
+        cs_shared_mem_size = 32 * 1024,
+        wave_granularity = 2,
+        fibers_per_sp = 128 * 2 * 16,
+        highest_bank_bit = 16,
+        magic_regs = a730_magic_regs,
+        raw_magic_regs = a730_raw_magic_regs,
+    ))
+
+add_gpus([
+        GPUId(chip_id=0x43020000, name="FD720"), # KGSL, no speedbin data
+        GPUId(chip_id=0xffff043020000, name="FD720"), # Default no-speedbin fallback
+    ], A6xxGPUInfo(
+        CHIP.A7XX,
+        [a7xx_base, a7xx_gen1],
+        num_ccu = 4,
+        tile_align_w = 64,
+        tile_align_h = 32,
+        tile_max_w = 1024,
+        tile_max_h = 1024,
+        num_vsc_pipes = 32,
+        cs_shared_mem_size = 32 * 1024,
+        wave_granularity = 2,
+        fibers_per_sp = 128 * 2 * 16,
+        highest_bank_bit = 16,
+        magic_regs = a730_magic_regs,
+        raw_magic_regs = a730_raw_magic_regs,
+    ))
+
+add_gpus([
         GPUId(chip_id=0xffff43030c00, name="Adreno X1-45"),
         GPUId(chip_id=0x43030B00, name="FD735")
     ], A6xxGPUInfo(
