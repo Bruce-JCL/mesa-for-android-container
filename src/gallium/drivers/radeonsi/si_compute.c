@@ -498,6 +498,7 @@ static void si_setup_nir_user_data(struct si_context *sctx, const struct pipe_gr
    }
 }
 
+#if 0 /* Disabled because we haven't found a case where it's faster. */
 static bool si_get_2d_interleave_size(const struct pipe_grid_info *info,
                                       unsigned *log_x, unsigned *log_y)
 {
@@ -567,6 +568,7 @@ static bool si_get_2d_interleave_size(const struct pipe_grid_info *info,
    assert(*log_x + *log_y <= 4);
    return true;
 }
+#endif
 
 static void si_emit_dispatch_packets(struct si_context *sctx, const struct pipe_grid_info *info)
 {
@@ -691,7 +693,9 @@ static void si_emit_dispatch_packets(struct si_context *sctx, const struct pipe_
        * Only these values are valid: 0 (disabled), 64, 128, 256, 512
        * 64 = RT, 256 = non-RT (run benchmarks to be sure)
        */
-      unsigned dispatch_interleave = S_00B8BC_INTERLEAVE_1D(256);
+      unsigned dispatch_interleave = S_00B8BC_INTERLEAVE_1D(sctx->compute_dispatch_interleave ?
+                                                               sctx->compute_dispatch_interleave : 256);
+#if 0 /* Disabled because we haven't found a case where it's faster. */
       unsigned log_x, log_y;
 
       /* Launch a 2D subgrid on each SE instead of a 1D subgrid. If enabled, INTERLEAVE_1D is
@@ -712,6 +716,7 @@ static void si_emit_dispatch_packets(struct si_context *sctx, const struct pipe_
                                S_00B8BC_INTERLEAVE_2D_Y_SIZE(log_y);
          dispatch_initiator |= S_00B800_INTERLEAVE_2D_EN(1);
       }
+#endif
 
       if (sctx->is_gfx_queue) {
          radeon_opt_set_sh_reg_idx(R_00B8BC_COMPUTE_DISPATCH_INTERLEAVE,
@@ -836,13 +841,6 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    if (program->shader.compilation_failed)
       return;
 
-   bool cs_regalloc_hang = sscreen->info.has_cs_regalloc_hang_bug &&
-                           info->block[0] * info->block[1] * info->block[2] > 256;
-   if (cs_regalloc_hang) {
-      sctx->barrier_flags |= SI_BARRIER_SYNC_PS | SI_BARRIER_SYNC_CS;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
-   }
-
    si_check_dirty_buffers_textures(sctx);
 
    if (sctx->is_gfx_queue) {
@@ -875,8 +873,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
       /* Indirect buffers are read through L2 on GFX9-GFX11, but not other hw. */
       if ((sctx->gfx_level <= GFX8 || sscreen->info.cp_sdma_ge_use_system_memory_scope) &&
           si_resource(info->indirect)->L2_cache_dirty) {
-         sctx->barrier_flags |= SI_BARRIER_WB_L2 | SI_BARRIER_PFP_SYNC_ME;
-         si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
+         si_set_barrier_flags(sctx, SI_BARRIER_WB_L2 | SI_BARRIER_PFP_SYNC_ME);
          si_resource(info->indirect)->L2_cache_dirty = false;
       }
    }
@@ -933,7 +930,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    }
 
    /* Registers that are not read from memory should be set before this: */
-   si_emit_barrier_direct(sctx);
+   si_emit_barrier_direct(sctx, 0);
 
    if (sctx->is_gfx_queue && si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
       sctx->atoms.s.render_cond.emit(sctx, -1);
@@ -973,11 +970,6 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
 
    if (unlikely(sctx->perfetto_enabled))
       trace_si_end_compute(&sctx->trace, info->grid[0], info->grid[1], info->grid[2]);
-
-   if (cs_regalloc_hang) {
-      sctx->barrier_flags |= SI_BARRIER_SYNC_CS;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
-   }
 }
 
 void si_destroy_compute(struct si_compute *program)

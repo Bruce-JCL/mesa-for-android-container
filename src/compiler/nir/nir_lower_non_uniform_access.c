@@ -412,8 +412,8 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
                   progress = true;
                break;
 
-            case nir_intrinsic_load_readonly_output_pan:
-            case nir_intrinsic_load_converted_output_pan:
+            case nir_intrinsic_load_tile_pan:
+            case nir_intrinsic_load_tile_res_pan:
                /* render target can be nonuniform, but not conversion descriptor */
                if ((options->types & nir_lower_non_uniform_image_access) &&
                    lower_non_uniform_access_intrin(&state, intrin, 2, nir_lower_non_uniform_image_access))
@@ -463,7 +463,7 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
             all_equal_first = nir_iand(&b, all_equal_first, equal_first);
       }
 
-      nir_push_if(&b, all_equal_first);
+      nir_push_if(&b, all_equal_first)->control = nir_selection_control_divergent_always_taken;
 
       util_dynarray_foreach(&data.srcs, struct nu_handle_src, src) {
          for (uint32_t i = 0; i < key->handle_count; i++)

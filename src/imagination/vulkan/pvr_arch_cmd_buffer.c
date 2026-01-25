@@ -1738,7 +1738,8 @@ static VkResult pvr_sub_cmd_gfx_job_init(const struct pvr_device_info *dev_info,
    render_target = pvr_get_render_target(hw_render, rstate);
    job->view_state.rt_datasets = &render_target->rt_dataset[0];
 
-   if (cmd_buffer->state.current_sub_cmd->is_dynamic_render) {
+   if (cmd_buffer->state.current_sub_cmd->is_dynamic_render &&
+       !cmd_buffer->state.current_sub_cmd->is_resume) {
       result =
          pvr_render_targets_dataset_init(cmd_buffer->device, rstate, hw_render);
       if (result != VK_SUCCESS) {
@@ -5827,10 +5828,13 @@ static VkResult pvr_setup_descriptor_mappings(
             spill_block_size = spill_block_size ? spill_block_size
                                                 : sizeof(uint32_t);
 
+            size_t total_spill_mem_size =
+               spill_block_size * rogue_get_total_instance_count(
+                                     &cmd_buffer->device->pdevice->dev_info);
             struct pvr_suballoc_bo *spill_buffer_bo;
             result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
                                                         NULL,
-                                                        spill_block_size * 2048,
+                                                        total_spill_mem_size,
                                                         &spill_buffer_bo);
 
             if (result != VK_SUCCESS)
@@ -5862,15 +5866,14 @@ static VkResult pvr_setup_descriptor_mappings(
             assert(data->common.scratch);
             unsigned scratch_block_size = data->common.scratch;
 
-            /* TODO: 2048 is to account for each instance... do this
-             * programmatically!
-             */
+            size_t total_scratch_mem_size =
+               scratch_block_size * rogue_get_total_instance_count(
+                                       &cmd_buffer->device->pdevice->dev_info);
             struct pvr_suballoc_bo *scratch_buffer_bo;
-            result =
-               pvr_arch_cmd_buffer_upload_general(cmd_buffer,
-                                                  NULL,
-                                                  scratch_block_size * 2048,
-                                                  &scratch_buffer_bo);
+            result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
+                                                        NULL,
+                                                        total_scratch_mem_size,
+                                                        &scratch_buffer_bo);
 
             if (result != VK_SUCCESS)
                return result;

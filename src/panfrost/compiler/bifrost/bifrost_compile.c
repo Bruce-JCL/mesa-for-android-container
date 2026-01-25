@@ -2,25 +2,7 @@
  * Copyright (C) 2020 Collabora Ltd.
  * Copyright (C) 2022 Alyssa Rosenzweig <alyssa@rosenzweig.io>
  * Copyright (C) 2025 Arm Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "compiler/glsl/glsl_to_nir.h"
@@ -950,72 +932,6 @@ bi_is_zs(unsigned location)
    return location == FRAG_RESULT_DEPTH || location == FRAG_RESULT_STENCIL;
 }
 
-static unsigned
-bi_pls_fmt_conv(bi_builder *b, enum pipe_format fmt)
-{
-   assert(fmt != PIPE_FORMAT_NONE);
-   assert(b->shader->inputs->get_conv_desc &&
-          "Unable to convert format to descriptor");
-   return (*b->shader->inputs->get_conv_desc)(fmt, 0, 32, false);
-}
-
-static void
-bi_emit_load_pls(bi_builder *b, nir_intrinsic_instr *instr)
-{
-   bi_index dest = bi_def_index(&instr->def);
-   nir_alu_type T = nir_intrinsic_dest_type(instr);
-   nir_io_semantics sem = nir_intrinsic_io_semantics(instr);
-   enum bi_register_format regfmt = bi_reg_fmt_for_nir(T);
-   unsigned size = instr->def.bit_size;
-   unsigned nr = instr->num_components;
-   enum pipe_format fmt = nir_intrinsic_format(instr);
-
-   assert (!bi_is_zs(sem.location) && "bad ld_pls: depth/stencil access");
-   assert (nir_src_is_const(instr->src[0]) && "bad ld_pls: non-constant src");
-   unsigned target =
-      nir_src_as_uint(instr->src[0]) + (sem.location - FRAG_RESULT_DATA0);
-   assert(target < 8);
-
-   bi_index pi = bi_imm_u32(128); /* mega-sample mode */
-
-   unsigned offset = target * 4;
-   bi_index coverage = bi_imm_u32(0xffff | (offset << 16));
-
-   bi_index conv_desc = bi_imm_u32(bi_pls_fmt_conv(b, fmt));
-
-   bi_instr *I = bi_ld_tile_to(b, dest, pi, coverage,
-                               conv_desc, regfmt, nr - 1);
-   assert(I);
-   bi_emit_cached_split(b, dest, size * nr);
-}
-
-static void
-bi_emit_store_pls(bi_builder *b, nir_intrinsic_instr *instr)
-{
-   nir_alu_type T = nir_intrinsic_src_type(instr);
-   nir_io_semantics sem = nir_intrinsic_io_semantics(instr);
-   enum bi_register_format regfmt = bi_reg_fmt_for_nir(T);
-   bi_index color = bi_src_color_vec4(b, &instr->src[0], T);
-   enum pipe_format fmt = nir_intrinsic_format(instr);
-
-   assert(!bi_is_zs(sem.location) && "st_pls only supported for colors");
-   assert(nir_src_is_const(instr->src[1]) && "no indirect render targets");
-   unsigned target =
-      nir_src_as_uint(instr->src[1]) + (sem.location - FRAG_RESULT_DATA0);
-
-   bi_index pi = bi_imm_u32(128); /* mega-sample mode */
-
-   unsigned offset = target * 4;
-   bi_index coverage = bi_imm_u32(0xffff | (offset << 16));
-
-   bi_index conv_desc = bi_imm_u32(bi_pls_fmt_conv(b, fmt));
-
-   bi_instr *I =
-      bi_st_tile(b, color, pi, coverage,
-                 conv_desc, regfmt, BI_VECSIZE_V4);
-   assert(I);
-}
-
 static enum va_shader_output
 va_shader_output_from_semantics(const nir_io_semantics *sem)
 {
@@ -1928,43 +1844,38 @@ bi_emit_ld_tile(bi_builder *b, nir_intrinsic_instr *instr)
    bi_index dest = bi_def_index(&instr->def);
    nir_alu_type T = nir_intrinsic_dest_type(instr);
    nir_io_semantics sem = nir_intrinsic_io_semantics(instr);
-   bool is_zs = bi_is_zs(sem.location);
    enum bi_register_format regfmt = bi_reg_fmt_for_nir(T);
    unsigned size = instr->def.bit_size;
    unsigned nr = instr->num_components;
-   unsigned target = 0, sample = 0;
 
-   if (sem.location == FRAG_RESULT_DEPTH) {
-      target = 255;
-   } else if (sem.location == FRAG_RESULT_STENCIL) {
-      target = 254;
-   } else if (nir_src_is_const(instr->src[0])) {
-      target = nir_src_as_uint(instr->src[0]);
-      assert(target < 8);
-   }
+   bi_index pi = bi_src_index(&instr->src[0]);
+   bi_index coverage = bi_src_index(&instr->src[1]);
+   bi_index conversion = bi_src_index(&instr->src[2]);
 
-   if (nir_src_is_const(instr->src[1]))
-      sample = nir_src_as_uint(instr->src[1]);
+   bi_instr *I = bi_ld_tile_to(b, dest, pi, coverage, conversion,
+                               regfmt, nr - 1);
+   I->z_stencil = bi_is_zs(sem.location);
 
-   bi_index pi = bi_pixel_indices(b, target, sample);
-
-   if (!is_zs && !nir_src_is_const(instr->src[0]))
-      pi = bi_lshift_or(b, 32, bi_src_index(&instr->src[0]), pi, bi_imm_u8(8));
-
-   if (!nir_src_is_const(instr->src[1])) {
-      pi = bi_mux_i32(b, bi_src_index(&instr->src[1]), pi,
-                      bi_imm_u32(0x1f), BI_MUX_BIT);
-   }
-
-   bi_instr *I = bi_ld_tile_to(b, dest, pi, bi_coverage(b),
-                               bi_src_index(&instr->src[2]), regfmt, nr - 1);
-   if (is_zs)
-      I->z_stencil = true;
-
-   if (instr->intrinsic == nir_intrinsic_load_readonly_output_pan)
+   if (instr->intrinsic == nir_intrinsic_load_tile_res_pan)
       I->wait_resource = true;
 
    bi_emit_cached_split(b, dest, size * nr);
+}
+
+static void
+bi_emit_st_tile(bi_builder *b, nir_intrinsic_instr *instr)
+{
+   nir_alu_type T = nir_intrinsic_src_type(instr);
+   assert(!bi_is_zs(nir_intrinsic_io_semantics(instr).location));
+   enum bi_register_format regfmt = bi_reg_fmt_for_nir(T);
+   unsigned nr = instr->num_components;
+
+   bi_index rgba = bi_src_index(&instr->src[0]);
+   bi_index pi = bi_src_index(&instr->src[1]);
+   bi_index coverage = bi_src_index(&instr->src[2]);
+   bi_index conversion = bi_src_index(&instr->src[3]);
+
+   bi_st_tile(b, rgba, pi, coverage, conversion, regfmt, nr - 1);
 }
 
 /*
@@ -2095,14 +2006,6 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       else
          UNREACHABLE("Unsupported shader stage");
       break;
-   case nir_intrinsic_load_pixel_local:
-      assert(stage == MESA_SHADER_FRAGMENT);
-      bi_emit_load_pls(b, instr);
-      break;
-   case nir_intrinsic_store_pixel_local:
-      assert(stage == MESA_SHADER_FRAGMENT);
-      bi_emit_store_pls(b, instr);
-      break;
 
    case nir_intrinsic_load_cumulative_coverage_pan:
       bi_mov_i32_to(b, dst, bi_preload(b, 60));
@@ -2168,14 +2071,15 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
          bi_make_vec_to(b, rgba, srcs, channels, 4, size);
       }
 
-      bi_blend_to(b, bi_temp(b->shader), rgba, coverage,
-                  bi_extract(b, desc, 0), bi_extract(b, desc, 1),
-                  rgba2, regfmt, sr_count, sr_count_2);
-
       nir_io_semantics io = nir_intrinsic_io_semantics(instr);
       assert(io.location >= FRAG_RESULT_DATA0);
       assert(io.location <= FRAG_RESULT_DATA7);
       unsigned rt = io.location - FRAG_RESULT_DATA0;
+
+      bi_instr *I = bi_blend_to(b, bi_temp(b->shader), rgba, coverage,
+                                bi_extract(b, desc, 0), bi_extract(b, desc, 1),
+                                rgba2, regfmt, sr_count, sr_count_2);
+      I->blend_target = rt;
 
       b->shader->info.bifrost->blend[rt].type = T;
       if (instr->intrinsic == nir_intrinsic_blend2_pan) {
@@ -2377,9 +2281,13 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       bi_emit_store_converted_mem(b, instr);
       break;
 
-   case nir_intrinsic_load_converted_output_pan:
-   case nir_intrinsic_load_readonly_output_pan:
+   case nir_intrinsic_load_tile_pan:
+   case nir_intrinsic_load_tile_res_pan:
       bi_emit_ld_tile(b, instr);
+      break;
+
+   case nir_intrinsic_store_tile_pan:
+      bi_emit_st_tile(b, instr);
       break;
 
    case nir_intrinsic_demote_if:
@@ -3147,6 +3055,36 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
                               instr->src[1].swizzle[0]};
 
       bi_make_vec_to(b, dst, srcs, channels, 2, 16);
+      return;
+   }
+
+   case nir_op_pack_32_4x8: {
+      assert(comps == 1);
+
+      bi_index idx = bi_src_index(&instr->src[0].src);
+      bi_index srcs[4] = {idx, idx, idx, idx};
+      unsigned channels[4] = {instr->src[0].swizzle[0],
+                              instr->src[0].swizzle[1],
+                              instr->src[0].swizzle[2],
+                              instr->src[0].swizzle[3]};
+
+      bi_make_vec_to(b, dst, srcs, channels, 4, 8);
+      return;
+   }
+
+   case nir_op_pack_32_4x8_split: {
+      assert(comps == 1);
+
+      bi_index srcs[4] = {bi_src_index(&instr->src[0].src),
+                          bi_src_index(&instr->src[1].src),
+                          bi_src_index(&instr->src[2].src),
+                          bi_src_index(&instr->src[3].src)};
+      unsigned channels[4] = {instr->src[0].swizzle[0],
+                              instr->src[1].swizzle[0],
+                              instr->src[2].swizzle[0],
+                              instr->src[3].swizzle[0]};
+
+      bi_make_vec_to(b, dst, srcs, channels, 4, 8);
       return;
    }
 
@@ -6106,8 +6044,10 @@ bi_fp32_varying_mask(nir_shader *nir)
    assert(nir->info.stage == MESA_SHADER_FRAGMENT);
 
    nir_foreach_shader_in_variable(var, nir) {
-      if (var->data.interpolation == INTERP_MODE_FLAT)
-         mask |= BITFIELD64_BIT(var->data.location);
+      if (var->data.interpolation == INTERP_MODE_FLAT) {
+         unsigned slots = glsl_count_attribute_slots(var->type, false);
+         mask |= BITFIELD64_RANGE(var->data.location, slots);
+      }
    }
 
    nir_shader_instructions_pass(nir, bi_gather_texcoords, nir_metadata_all,
@@ -6151,9 +6091,11 @@ bi_lower_load_output(nir_builder *b, nir_intrinsic_instr *intr,
    nir_def *conversion = nir_load_rt_conversion_pan(
       b, .base = rt, .src_type = nir_intrinsic_dest_type(intr));
 
-   nir_def *lowered = nir_load_converted_output_pan(
-      b, intr->def.num_components, intr->def.bit_size, nir_imm_int(b, rt),
-      nir_imm_int(b, 0), conversion, .dest_type = nir_intrinsic_dest_type(intr),
+   nir_def *lowered = nir_load_tile_pan(
+      b, intr->def.num_components, intr->def.bit_size,
+      pan_nir_tile_location_sample(b, loc, nir_imm_int(b, 0)),
+      pan_nir_tile_default_coverage(b),
+      conversion, .dest_type = nir_intrinsic_dest_type(intr),
       .io_semantics = nir_intrinsic_io_semantics(intr));
 
    nir_def_rewrite_uses(&intr->def, lowered);

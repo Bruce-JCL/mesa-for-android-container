@@ -1,24 +1,6 @@
 /*
  * Copyright © 2014 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "intel_nir.h"
@@ -1308,6 +1290,42 @@ brw_nir_lower_fs_outputs(nir_shader *nir)
 }
 
 static bool
+lower_frag_coord_z_instr(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+{
+   if (intrin->intrinsic != nir_intrinsic_load_frag_coord_z)
+      return false;
+
+   b->cursor = nir_after_instr(&intrin->instr);
+   b->fp_math_ctrl = nir_fp_no_fast_math;
+
+   const struct intel_device_info *devinfo = (const struct intel_device_info *)data;
+   const unsigned precision = devinfo->has_64bit_float ? 64 : 32;
+
+   nir_def *start = nir_f2fN(b, nir_load_fs_start_intel(b), precision);
+   nir_def *z_c = nir_f2fN(b, nir_load_fs_z_c_intel(b), precision);
+   nir_def *z_c0 = nir_f2fN(b, nir_load_fs_z_c0_intel(b), precision);
+   nir_def *coord = nir_fadd_imm(
+      b, nir_i2fN(b, nir_load_pixel_coord(b), precision), 0.5f);
+
+   nir_def *offset = nir_fsub(b, coord, start);
+   nir_def *dot = nir_fdot(b, offset, z_c);
+   nir_def *coarse_z = nir_fadd(b, dot, z_c0);
+
+   nir_def_replace(&intrin->def, nir_f2f32(b, coarse_z));
+
+   return true;
+}
+
+bool
+brw_nir_lower_frag_coord_z(nir_shader *nir,
+                           const struct intel_device_info *devinfo)
+{
+   return nir_shader_intrinsics_pass(nir, lower_frag_coord_z_instr,
+                                     nir_metadata_control_flow,
+                                     (void *)devinfo);
+}
+
+static bool
 tag_speculative_access(nir_builder *b,
                        nir_intrinsic_instr *intrin,
                        void *unused)
@@ -1406,29 +1424,16 @@ brw_nir_optimize(nir_shader *nir,
       LOOP_OPT(nir_opt_cse);
       LOOP_OPT(nir_opt_combine_stores, nir_var_all);
 
-      /* Passing 0 to the peephole select pass causes it to convert
-       * if-statements that contain only move instructions in the branches
-       * regardless of the count.
-       *
-       * Passing 1 to the peephole select pass causes it to convert
-       * if-statements that contain at most a single ALU instruction (total)
-       * in both branches.  Before Gfx6, some math instructions were
-       * prohibitively expensive and the results of compare operations need an
-       * extra resolve step.  For these reasons, this pass is more harmful
-       * than good on those platforms.
-       *
-       * For indirect loads of uniforms (push constants), we assume that array
+      /* For indirect loads of uniforms (push constants), we assume that array
        * indices will nearly always be in bounds and the cost of the load is
-       * low.  Therefore there shouldn't be a performance benefit to avoid it.
+       * low. Therefore there shouldn't be a performance benefit to avoid it.
        */
       nir_opt_peephole_select_options peephole_select_options = {
-         .limit = 0,
+         .limit = 8,
          .indirect_load_ok = true,
+         .expensive_alu_ok = true,
+         .discard_ok = true,
       };
-      LOOP_OPT(nir_opt_peephole_select, &peephole_select_options);
-
-      peephole_select_options.limit = 8;
-      peephole_select_options.expensive_alu_ok = true;
       LOOP_OPT(nir_opt_peephole_select, &peephole_select_options);
 
       LOOP_OPT(nir_opt_intrinsics);
@@ -1452,11 +1457,6 @@ brw_nir_optimize(nir_shader *nir,
       }
       LOOP_OPT_NOT_IDEMPOTENT(nir_opt_if, nir_opt_if_optimize_phi_true_false);
 
-      nir_opt_peephole_select_options peephole_discard_options = {
-         .limit = 0,
-         .discard_ok = true,
-      };
-      LOOP_OPT(nir_opt_peephole_select, &peephole_discard_options);
       if (nir->options->max_unroll_iterations != 0) {
          LOOP_OPT_NOT_IDEMPOTENT(nir_opt_loop_unroll);
       }

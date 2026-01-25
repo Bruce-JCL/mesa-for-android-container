@@ -1,24 +1,6 @@
 /*
  * Copyright © 2010 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "brw_analysis.h"
@@ -679,7 +661,7 @@ brw_shader::assign_curb_setup()
 
          brw_reg addr;
 
-         if (i != 0) {
+         if (i != 0 && devinfo->ver < 20) {
             if (pull_constants_a64) {
                dirty_bits |= BRW_DEPENDENCY_VARIABLES;
                /* We need to do the carry manually as when this pass is run,
@@ -709,7 +691,10 @@ brw_shader::assign_curb_setup()
                             BRW_TYPE_UD);
 
          send->src[SEND_SRC_DESC]     = brw_imm_ud(0);
-         send->src[SEND_SRC_EX_DESC]  = brw_imm_ud(0);
+         send->src[SEND_SRC_EX_DESC]  = devinfo->ver >= 20 ?
+                                        brw_imm_ud(lsc_flat_ex_desc(devinfo,
+                                                                    i * REG_SIZE)) :
+                                        brw_imm_ud(0);
          send->src[SEND_SRC_PAYLOAD1] = addr;
          send->src[SEND_SRC_PAYLOAD2] = brw_reg();
 
@@ -747,26 +732,32 @@ brw_shader::assign_curb_setup()
    /* Map the offsets in the UNIFORM file to fixed HW regs. */
    foreach_block_and_inst(block, brw_inst, inst, cfg) {
       for (unsigned int i = 0; i < inst->sources; i++) {
-	 if (inst->src[i].file == UNIFORM) {
+	 if (inst->src[i].file != UNIFORM)
+            continue;
+
+         struct brw_reg brw_reg;
+         if (inst->src[i].nr == BRW_INLINE_PARAM_REG) {
+            brw_reg = cs_payload().inline_parameter;
+         } else {
             assert(inst->src[i].nr < 64);
             used |= BITFIELD64_BIT(inst->src[i].nr);
 
             assert(inst->src[i].nr < this->push_data_size);
 
-	    struct brw_reg brw_reg = brw_vec1_grf(payload().num_regs +
-						  inst->src[i].nr, 0);
-            brw_reg.abs = inst->src[i].abs;
-            brw_reg.negate = inst->src[i].negate;
+            brw_reg = brw_vec1_grf(payload().num_regs + inst->src[i].nr, 0);
+         }
 
-            /* The combination of is_scalar for load_uniform, copy prop, and
-             * lower_btd_logical_send can generate a MOV from a UNIFORM with
-             * exec size 2 and stride of 1.
-             */
-            assert(inst->src[i].stride == 0 || inst->exec_size == 2);
-            inst->src[i] = byte_offset(
-               retype(brw_reg, inst->src[i].type),
-               inst->src[i].offset);
-	 }
+         brw_reg.abs = inst->src[i].abs;
+         brw_reg.negate = inst->src[i].negate;
+
+         /* The combination of is_scalar for load_uniform, copy prop, and
+          * lower_btd_logical_send can generate a MOV from a UNIFORM with exec
+          * size 2 and stride of 1.
+          */
+         assert(inst->src[i].stride == 0 || inst->exec_size == 2);
+         inst->src[i] = byte_offset(
+            retype(brw_reg, inst->src[i].type),
+            inst->src[i].offset);
       }
    }
 

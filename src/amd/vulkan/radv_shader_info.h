@@ -32,6 +32,7 @@ enum radv_shader_type {
    RADV_SHADER_TYPE_GS_COPY,
    RADV_SHADER_TYPE_TRAP_HANDLER,
    RADV_SHADER_TYPE_RT_PROLOG,
+   RADV_SHADER_TYPE_RT_TRAVERSAL,
 };
 
 struct radv_vs_output_info {
@@ -229,8 +230,6 @@ struct radv_shader_info {
       bool uses_full_subgroups : 1;
       bool linear_taskmesh_dispatch : 1;
       bool has_query : 1; /* Task shader only */
-
-      bool regalloc_hang_bug : 1;
 
       uint32_t derivative_group : 2;
    } cs;

@@ -1,24 +1,6 @@
 /*
  * Copyright © 2010, 2022 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 /**
@@ -1984,9 +1966,16 @@ lower_btd_logical_send(const brw_builder &bld, brw_inst *inst)
       brw_reg global_addr = inst->src[0];
       assert(brw_type_size_bytes(global_addr.type) == 8 &&
              global_addr.stride == 0);
-      global_addr.type = BRW_TYPE_UD;
-      global_addr.stride = 1;
-      ubld.group(2, 0).MOV(header, global_addr);
+      if (global_addr.file != UNIFORM) {
+         global_addr.type = BRW_TYPE_UD;
+         global_addr.stride = 1;
+         ubld.group(2, 0).MOV(header, global_addr);
+      } else {
+         ubld.group(1, 0).MOV(byte_offset(header, 0),
+                              subscript(global_addr, BRW_TYPE_UD, 0));
+         ubld.group(1, 0).MOV(byte_offset(header, 4),
+                              subscript(global_addr, BRW_TYPE_UD, 1));
+      }
 
       /* XXX - There is a Registers Per Thread field in the BTD spawn
        *       header starting on Xe3, it doesn't appear to be needed

@@ -76,15 +76,16 @@ genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
       default:   UNREACHABLE("invalid stack_ids value");
       }
 
-#if INTEL_WA_14021821874_GFX_VER || INTEL_WA_14018813551_GFX_VER
-      /* Wa_14021821874, Wa_14018813551:
+#if INTEL_WA_14021821874_GFX_VER || INTEL_WA_14018813551_GFX_VER || INTEL_WA_14026600921_GFX_VER
+      /* Wa_14021821874, Wa_14018813551, Wa_14026600921:
        *
        * "StackIDControlOverride_RTGlobals = 0 (i.e. 2k)". We
        * already set stack size per ray to 64 in brw_nir_lower_rt_intrinsics
        * as the workaround also requires.
        */
       if (intel_needs_workaround(cmd_buffer->device->info, 14021821874) ||
-          intel_needs_workaround(cmd_buffer->device->info, 14018813551))
+          intel_needs_workaround(cmd_buffer->device->info, 14018813551) ||
+          intel_needs_workaround(cmd_buffer->device->info, 14026600921))
          cfe.StackIDControl = StackIDs2048;
 #endif
 
@@ -821,12 +822,8 @@ genX(cmd_buffer_ray_query_globals)(struct anv_cmd_buffer *cmd_buffer)
       anv_cmd_buffer_alloc_temporary_state(cmd_buffer,
                                            2 * align(BRW_RT_DISPATCH_GLOBALS_SIZE, 64),
                                            BRW_RT_DISPATCH_GLOBALS_ALIGN);
-   struct brw_rt_scratch_layout layout;
-   uint32_t stack_ids_per_dss = 2048; /* TODO: can we use a lower value in
-                                       * some cases?
-                                       */
-   brw_rt_compute_scratch_layout(&layout, device->info,
-                                 stack_ids_per_dss, 1 << 10);
+   uint32_t stack_ids_per_dss =
+      brw_rt_ray_queries_stack_ids_per_dss(device->info);
 
    uint8_t idx = anv_get_ray_query_bo_index(cmd_buffer);
 
@@ -839,8 +836,8 @@ genX(cmd_buffer_ray_query_globals)(struct anv_cmd_buffer *cmd_buffer)
             .bo = device->ray_query_bo[idx],
             .offset = (i + 1) * (device->ray_query_bo[idx]->size / 2),
          },
-         .AsyncRTStackSize = layout.ray_stack_stride / 64,
-         .NumDSSRTStacks = layout.stack_ids_per_dss,
+         .AsyncRTStackSize = BRW_RT_SIZEOF_RAY_QUERY / 64,
+         .NumDSSRTStacks = stack_ids_per_dss,
          .MaxBVHLevels = BRW_RT_MAX_BVH_LEVELS,
          .Flags = RT_DEPTH_TEST_LESS_EQUAL,
          .ResumeShaderTable = (struct anv_address) {

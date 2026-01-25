@@ -106,9 +106,21 @@ vectorize_vec2_16bit(const nir_instr *instr, const void *_)
       return 1;
 }
 
+bool
+radv_is_traversal_shader(nir_shader *nir)
+{
+   return nir && nir->info.stage == MESA_SHADER_INTERSECTION && nir->info.internal;
+}
+
 static bool
 is_meta_shader(nir_shader *nir)
 {
+   /* The built-in traversal shader is marked as "internal", to distinguish
+    * it from intersection shaders even though both share the INTERSECTION
+    * shader stage. It is not a meta shader, though, so special-case it here.
+    */
+   if (radv_is_traversal_shader(nir))
+      return false;
    return nir && nir->info.internal;
 }
 
@@ -141,7 +153,7 @@ radv_can_dump_shader(struct radv_device *device, nir_shader *nir)
    const struct radv_physical_device *pdev = radv_device_physical(device);
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
-   if (is_meta_shader(nir))
+   if (is_meta_shader(nir) && nir->info.stage != MESA_SHADER_INTERSECTION)
       return instance->debug_flags & RADV_DEBUG_DUMP_META_SHADERS;
 
    if (!nir)
@@ -828,6 +840,22 @@ radv_shader_spirv_to_nir(struct radv_device *device, const struct radv_shader_st
    /* Gather info in the case that nir_vk_lower_ycbcr_tex might have emitted resinfo instructions. */
    if (progress)
       nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+
+   if (pdev->info.has_cs_regalloc_hang_bug &&
+       mesa_shader_stage_is_compute(nir->info.stage)) {
+      const uint32_t wg_size = nir->info.workgroup_size[0] *
+                               nir->info.workgroup_size[1] *
+                               nir->info.workgroup_size[2];
+
+      if (wg_size > 256) {
+         NIR_PASS(progress, nir, nir_lower_workgroup_size, 256);
+
+         if (!stage->key.optimisations_disabled)
+            radv_optimize_nir(nir, false);
+
+         nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+      }
+   }
 
    return nir;
 }

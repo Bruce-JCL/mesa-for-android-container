@@ -1,24 +1,6 @@
 /*
  * Copyright © 2010 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 /** @file
@@ -138,7 +120,7 @@ brw_generator::generate_send(brw_send_inst *inst,
       assert(!inst->ex_desc_imm);
       brw_send_indirect_message(p, inst->sfid, dst, payload, desc, inst->eot, gather);
       if (inst->check_tdr)
-         brw_eu_inst_set_opcode(p->isa, brw_last_inst, BRW_OPCODE_SENDC);
+         brw_eu_inst_set_opcode(p->isa, brw_eu_last_inst(p), BRW_OPCODE_SENDC);
    } else {
       /* If we have any sort of extended descriptor, then we need SENDS.  This
        * also covers the dual-payload case because ex_mlen goes in ex_desc.
@@ -149,13 +131,13 @@ brw_generator::generate_send(brw_send_inst *inst,
                                       inst->ex_mlen, ex_bso,
                                       inst->eot, gather);
       if (inst->check_tdr)
-         brw_eu_inst_set_opcode(p->isa, brw_last_inst,
+         brw_eu_inst_set_opcode(p->isa, brw_eu_last_inst(p),
                              devinfo->ver >= 12 ? BRW_OPCODE_SENDC : BRW_OPCODE_SENDSC);
    }
 
    /* Serialize messages if needed */
    if (devinfo->ver == 12 && inst->fused_eu_disable)
-      brw_eu_inst_set_fusion_ctrl(devinfo, brw_last_inst, true);
+      brw_eu_inst_set_fusion_ctrl(devinfo, brw_eu_last_inst(p), true);
 }
 
 void
@@ -729,8 +711,8 @@ brw_generator::generate_code(const brw_shader &s,
        */
       if (devinfo->ver <= 9 &&
           p->nr_insn > 1 &&
-          brw_eu_inst_opcode(p->isa, brw_last_inst) == BRW_OPCODE_MATH &&
-          brw_eu_inst_math_function(devinfo, brw_last_inst) == BRW_MATH_FUNCTION_POW &&
+          brw_eu_inst_opcode(p->isa, brw_eu_last_inst(p)) == BRW_OPCODE_MATH &&
+          brw_eu_inst_math_function(devinfo, brw_eu_last_inst(p)) == BRW_MATH_FUNCTION_POW &&
           inst->dst.component_size(inst->exec_size) > REG_SIZE) {
          brw_NOP(p);
          last_insn_offset = p->next_insn_offset;

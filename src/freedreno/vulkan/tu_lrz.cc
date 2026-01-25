@@ -143,7 +143,7 @@ tu6_emit_lrz_buffer(struct tu_cs *cs, struct tu_image *depth_image)
    if (CHIP >= A7XX) {
       crb.add(GRAS_LRZ_DEPTH_BUFFER_INFO(CHIP, .depth_format = tu6_pipe2depth(
                                                  depth_image->vk.format)));
-      crb.add(GRAS_LRZ_CB_CNTL(CHIP, .double_buffer_stride =
+      crb.add(GRAS_LRZ_CB_CNTL(CHIP, .double_buffer_pitch =
                                    depth_image->lrz_layout.lrz_buffer_size));
    }
 
@@ -924,50 +924,6 @@ tu_disable_lrz(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
    }
 }
 TU_GENX(tu_disable_lrz);
-
-/* Disable LRZ from the CPU, for host image copy */
-template <chip CHIP>
-void
-tu_disable_lrz_cpu(struct tu_device *device, struct tu_image *image)
-{
-   if (!device->physical_device->info->props.has_lrz_dir_tracking)
-      return;
-
-   if (!image->lrz_layout.lrz_total_size)
-      return;
-
-   const unsigned lrz_dir_offset = offsetof(fd_lrzfc_layout<CHIP>,
-                                            buffer[0].dir_track);
-   uint8_t *lrz_dir_tracking =
-      (uint8_t *)image->map + image->lrz_layout.lrz_fc_offset + lrz_dir_offset;
-
-   *lrz_dir_tracking = FD_LRZ_GPU_DIR_DISABLED;
-
-   if (image->mem->bo->cached_non_coherent) {
-      tu_bo_sync_cache(
-         device, image->mem->bo,
-         image->mem_offset + image->lrz_layout.lrz_offset + lrz_dir_offset, 1,
-         TU_MEM_SYNC_CACHE_TO_GPU);
-   }
-
-   if (CHIP >= A7XX) {
-      const unsigned lrz_dir_offset2 = offsetof(fd_lrzfc_layout<CHIP>,
-                                                buffer[1].dir_track);
-      uint8_t *lrz_dir_tracking2 =
-         (uint8_t *)image->map + image->lrz_layout.lrz_fc_offset + lrz_dir_offset2;
-
-      *lrz_dir_tracking2 = FD_LRZ_GPU_DIR_DISABLED;
-
-      if (image->mem->bo->cached_non_coherent) {
-         tu_bo_sync_cache(
-            device, image->mem->bo,
-            image->mem_offset + image->lrz_layout.lrz_offset + lrz_dir_offset2, 1,
-            TU_MEM_SYNC_CACHE_TO_GPU);
-      }
-   }
-
-}
-TU_GENX(tu_disable_lrz_cpu);
 
 /* Clear LRZ, used for out of renderpass depth clears. */
 template <chip CHIP>

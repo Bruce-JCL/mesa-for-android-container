@@ -1437,7 +1437,8 @@ a8xx_base = GPUProps(
         has_dp2acc = False,
         reg_size_vec4 = 96,
         has_rt_workaround = False,
-        supports_double_threadsize = False
+        supports_double_threadsize = False,
+        has_dual_wave_dispatch = True,
     )
 
 a8xx_gen2 = GPUProps(
@@ -1457,6 +1458,9 @@ a8xx_gen2 = GPUProps(
         gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
         gmem_per_ccu_depth_cache_size = 256 * 1024,
         has_fs_tex_prefetch = False,
+
+        # tbd if this applies to a8xx_gen1 as well:
+        has_salu_int_narrowing_quirk = True
 )
 
 # For a8xx, the chicken bit and most other non-ctx reg
@@ -1480,7 +1484,7 @@ a8xx_gen2_raw_magic_regs = [
         [A6XXRegs.REG_A7XX_RB_LRZ_CNTL2,      0x00000000],
         [A6XXRegs.REG_A8XX_RB_RESOLVE_CNTL_5, 0x00000001],
 
-        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01,   0x00000001],
+        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01,   0x00000000],
         [A6XXRegs.REG_A7XX_SP_HLSQ_MODE_CNTL, 0x00000000],
         [A6XXRegs.REG_A8XX_SP_UNKNOWN_AB23,   0x00000000],
 

@@ -374,6 +374,9 @@ typedef enum
    VARYING_SLOT_TASK_COUNT = VARYING_SLOT_BOUNDING_BOX0, /* Only appears in TASK. */
    VARYING_SLOT_CULL_PRIMITIVE = VARYING_SLOT_BOUNDING_BOX0, /* Only appears in MESH. */
 
+   VARYING_SLOT_GS_HEADER_IR3 = VARYING_SLOT_BOUNDING_BOX0, /* VS/TES output and GS input */
+   VARYING_SLOT_GS_VERTEX_FLAGS_IR3 = VARYING_SLOT_BOUNDING_BOX1, /* GS output */
+
    VARYING_SLOT_VAR0 = 32, /* First generic varying slot */
    /* the remaining are simply for the benefit of gl_varying_slot_name()
     * and not to be construed as an upper bound:
@@ -1253,29 +1256,6 @@ enum gl_access_qualifier
    ACCESS_FUSED_EU_DISABLE_INTEL = (1 << 19),
 };
 
-/**
- * \brief Blend support qualifiers
- */
-enum gl_advanced_blend_mode
-{
-   BLEND_NONE = 0,
-   BLEND_MULTIPLY,
-   BLEND_SCREEN,
-   BLEND_OVERLAY,
-   BLEND_DARKEN,
-   BLEND_LIGHTEN,
-   BLEND_COLORDODGE,
-   BLEND_COLORBURN,
-   BLEND_HARDLIGHT,
-   BLEND_SOFTLIGHT,
-   BLEND_DIFFERENCE,
-   BLEND_EXCLUSION,
-   BLEND_HSL_HUE,
-   BLEND_HSL_SATURATION,
-   BLEND_HSL_COLOR,
-   BLEND_HSL_LUMINOSITY,
-};
-
 enum gl_tess_spacing
 {
    TESS_SPACING_UNSPECIFIED,
@@ -1549,15 +1529,24 @@ enum gl_derivative_group {
 enum float_controls
 {
    FLOAT_CONTROLS_DEFAULT_FLOAT_CONTROL_MODE = 0,
+
+   /* Both input and output denorms must be preserved. */
    FLOAT_CONTROLS_DENORM_PRESERVE_FP16       = BITFIELD_BIT(0),
    FLOAT_CONTROLS_DENORM_PRESERVE_FP32       = BITFIELD_BIT(1),
    FLOAT_CONTROLS_DENORM_PRESERVE_FP64       = BITFIELD_BIT(2),
+
+   /* Both input and output denorms must be flushed.
+    * Note that this is different from SPIR-V, which only requires
+    * output flushing.
+    */
    FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP16  = BITFIELD_BIT(3),
    FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP32  = BITFIELD_BIT(4),
    FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP64  = BITFIELD_BIT(5),
+
    FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP16     = BITFIELD_BIT(6),
    FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP32     = BITFIELD_BIT(7),
    FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP64     = BITFIELD_BIT(8),
+
    FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP16     = BITFIELD_BIT(9),
    FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP32     = BITFIELD_BIT(10),
    FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP64     = BITFIELD_BIT(11),

@@ -1671,18 +1671,26 @@ intrinsic("load_frag_coord_zw_pan", [2], dest_comp=1, indices=[COMPONENT], flags
 # src[] = { sampler_index }
 load("sampler_lod_parameters", [1], flags=[CAN_ELIMINATE, CAN_REORDER])
 
-# Like load_output but using a specified render target and conversion descriptor
-# src[] = { target, sample, conversion }
-# target must be in the [0..7] range when io_semantics.location is FRAG_RESULT_DATA0
-# and is ignored otherwise
-load("converted_output_pan", [1, 1, 1], indices=[ACCESS, DEST_TYPE, IO_SEMANTICS], flags=[CAN_ELIMINATE])
+# Maps to LD_TILE
+#
+# rt must be in the [0..7] range when and io_semantics.location is not
+# GL_FRAG_RESULT_DEPTH or GL_FRAG_RESULT_STENCIL
+#
+# src[] = { rt_sample_pixel, coverage_offset, conversion }
+load("tile_pan", [1, 1, 1], indices=[ACCESS, DEST_TYPE, IO_SEMANTICS],
+     flags=[CAN_ELIMINATE])
 
-# Like converted_output_pan but for case where the output is never written by the shader
-# This is used to relax waits on tile-buffer accesses and the target is read-only
-# src[] = { target, sample, conversion }
-# target must be in the [0..7] range when io_semantics.location is FRAG_RESULT_DATA0
-# and is ignored otherwise
-load("readonly_output_pan", [1, 1, 1], indices=[ACCESS, DEST_TYPE, IO_SEMANTICS], flags=[CAN_ELIMINATE])
+# Like load_tile_pan except it relies on resource tracking through
+# resource_read/write_mask for dependencies instead of ensuring absolute
+# pixel ordering like load_tile_pan does.
+#
+# src[] = { rt_sample_pixel, coverage_offset, conversion }
+load("tile_res_pan", [1, 1, 1], indices=[ACCESS, DEST_TYPE, IO_SEMANTICS],
+     flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# Maps to ST_TILE
+# src[] = { rt_sample_pixel, coverage_offset, conversion }
+store("tile_pan", [1, 1, 1], indices=[ACCESS, SRC_TYPE, IO_SEMANTICS])
 
 # Load converted memory given an address and a conversion descriptor
 # src[] = { address, conversion }
@@ -1785,9 +1793,12 @@ intrinsic("optimization_barrier_sgpr_amd", dest_comp=0, src_comp=[0],
           flags=[CAN_ELIMINATE])
 
 # These are no-op intrinsics used as a simple source and user of SSA defs for testing.
-intrinsic("unit_test_amd", src_comp=[0], indices=[BASE])
-intrinsic("unit_test_uniform_amd", dest_comp=0, indices=[BASE])
-intrinsic("unit_test_divergent_amd", dest_comp=0, indices=[BASE])
+intrinsic("unit_test_output", src_comp=[0], indices=[BASE])
+intrinsic("unit_test_uniform_input", dest_comp=0, indices=[BASE])
+intrinsic("unit_test_divergent_input", dest_comp=0, indices=[BASE])
+
+# Intrinsic used for nir_opt_algebraic_pattern_test
+intrinsic("unit_test_assert_eq", src_comp=[0, 0], flags=[])
 
 # Untyped buffer load/store instructions of arbitrary length.
 # src[] = { descriptor, vector byte offset, scalar byte offset, index offset }
@@ -1994,6 +2005,9 @@ system_value("intersection_opaque_amd", 1, bit_sizes=[1])
 system_value("resume_shader_address_amd", 1, bit_sizes=[64], indices=[CALL_IDX])
 
 # Ray Tracing Traversal inputs
+system_value("rt_descriptors_amd", 1)
+system_value("rt_dynamic_descriptors_amd", 1)
+system_value("rt_push_constants_amd", 1)
 system_value("sbt_offset_amd", 1)
 system_value("sbt_stride_amd", 1)
 system_value("accel_struct_amd", 1, bit_sizes=[64])
@@ -2019,6 +2033,7 @@ intrinsic("load_incoming_ray_payload_amd", dest_comp=1, bit_sizes=[32], indices=
 intrinsic("store_incoming_ray_payload_amd", src_comp=[1], indices=[BASE])
 intrinsic("load_outgoing_ray_payload_amd", dest_comp=1, bit_sizes=[32], indices=[BASE])
 intrinsic("store_outgoing_ray_payload_amd", src_comp=[1], indices=[BASE])
+intrinsic("load_ray_payload_ptr_amd", dest_comp=1, indices=[BASE])
 
 # Load forced VRS rates.
 intrinsic("load_force_vrs_rates_amd", dest_comp=1, bit_sizes=[32], flags=[CAN_ELIMINATE, CAN_REORDER])
@@ -2468,6 +2483,13 @@ image("store_raw_intel", src_comp=[1, 0])
 
 # Maximum number of polygons processed in the fragment shader
 system_value("max_polygon_intel", 1, bit_sizes=[32])
+
+# Screen-space X/Y coordinate of upper-left vertex of the triangle being rasterized
+system_value("fs_start_intel", 2, bit_sizes=[32])
+
+# z_c, z_c0 (Cx/Cy/Co for Z plane)
+system_value("fs_z_c_intel", 2, bit_sizes=[32])
+system_value("fs_z_c0_intel", 1, bit_sizes=[32])
 
 # Read the attribute thread payload at a given byte offset
 # src[] = { offset }

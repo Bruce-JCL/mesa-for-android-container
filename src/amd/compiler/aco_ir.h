@@ -1133,7 +1133,7 @@ struct ABI {
    RegisterDemand max_param_demand;
 
    void preservedRegisters(BITSET_DECLARE(regs, 512),
-                           RegisterDemand reg_limit = RegisterDemand(256, 256)) const
+                           RegisterDemand reg_limit = RegisterDemand(256, 128)) const
    {
       unsigned size = DIV_ROUND_UP(512, BITSET_WORDBITS) * sizeof(BITSET_WORD);
       memset(regs, 0, size);
@@ -1155,6 +1155,23 @@ struct ABI {
          gpr_offset = end + block_size.clobbered_size.vgpr;
       }
    }
+
+   RegisterDemand numClobbered(RegisterDemand reg_limit) const
+   {
+      RegisterDemand clobbered_regs;
+
+      unsigned stride = block_size.clobbered_size.vgpr + block_size.preserved_size.vgpr;
+      int clobbered_start = block_size.clobbered_first ? 0 : block_size.preserved_size.vgpr;
+      clobbered_regs.vgpr = (reg_limit.vgpr / stride) * block_size.clobbered_size.vgpr;
+      clobbered_regs.vgpr += std::max((int)(reg_limit.vgpr % stride) - clobbered_start, 0);
+
+      stride = block_size.clobbered_size.sgpr + block_size.preserved_size.sgpr;
+      clobbered_start = block_size.clobbered_first ? 0 : block_size.preserved_size.sgpr;
+      clobbered_regs.sgpr = (reg_limit.sgpr / stride) * block_size.clobbered_size.sgpr;
+      clobbered_regs.sgpr += std::max((int)(reg_limit.sgpr % stride) - clobbered_start, 0);
+
+      return clobbered_regs;
+   }
 };
 
 static constexpr ABI rtRaygenABI = {
@@ -1163,7 +1180,7 @@ static constexpr ABI rtRaygenABI = {
       ABI::GPRRange{0u, 0u},     /* preserved_size */
       true,                      /* preserved_first */
    },
-   RegisterDemand(32, 32), /* max_param_demand */
+   RegisterDemand(48, 48), /* max_param_demand */
 };
 
 static constexpr ABI rtTraversalABI = {
@@ -1172,7 +1189,7 @@ static constexpr ABI rtTraversalABI = {
       ABI::GPRRange{0u, 0u},     /* preserved_size */
       true,                      /* preserved_first */
    },
-   RegisterDemand(32, 32), /* max_param_demand */
+   RegisterDemand(48, 48), /* max_param_demand */
 };
 
 static constexpr ABI rtAnyHitABI = {
@@ -1181,7 +1198,7 @@ static constexpr ABI rtAnyHitABI = {
       ABI::GPRRange{80u, 80u},   /* preserved_size */
       false,                     /* preserved_first */
    },
-   RegisterDemand(32, 32), /* max_param_demand */
+   RegisterDemand(48, 48), /* max_param_demand */
 };
 
 struct Block;

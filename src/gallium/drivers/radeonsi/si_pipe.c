@@ -213,7 +213,6 @@ static void si_destroy_context(struct pipe_context *context)
       context->set_debug_callback(context, NULL);
 
    util_unreference_framebuffer_state(&sctx->framebuffer.state);
-   util_framebuffer_init(context, NULL, sctx->framebuffer.fb_cbufs, &sctx->framebuffer.fb_zsbuf);
    si_release_all_descriptors(sctx);
 
    if (sctx->gfx_level >= GFX10 && sctx->is_gfx_queue)
@@ -533,7 +532,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
       return NULL;
    }
 
-   sctx->is_gfx_queue = sscreen->info.has_cs_regalloc_hang_bug ||
+   sctx->is_gfx_queue = sscreen->info.gfx_level == GFX6 ||
                         /* Compute queues hang on Raven and derivatives, see:
                          * https://gitlab.freedesktop.org/mesa/mesa/-/issues/12310 */
                         ((sscreen->info.family == CHIP_RAVEN ||

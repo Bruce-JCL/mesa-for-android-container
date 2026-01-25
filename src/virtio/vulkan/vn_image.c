@@ -97,14 +97,6 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
    if (!dev->image_reqs_cache.ht)
       return false;
 
-   /* Strip the alias bit as the memory requirements are identical. */
-   VkImageCreateInfo local_info;
-   if (create_info->flags & VK_IMAGE_CREATE_ALIAS_BIT) {
-      local_info = *create_info;
-      local_info.flags &= ~VK_IMAGE_CREATE_ALIAS_BIT;
-      create_info = &local_info;
-   }
-
    _mesa_sha1_init(&sha1_ctx);
 
    /* Hash relevant fields in the pNext chain */
@@ -722,8 +714,9 @@ vn_DestroyImage(VkDevice device,
    if (!img)
       return;
 
-   if (img->wsi.memory && img->wsi.memory_owned) {
-      VkDeviceMemory mem_handle = vn_device_memory_to_handle(img->wsi.memory);
+   if (img->wsi.anb_mem) {
+      VkDeviceMemory mem_handle =
+         vn_device_memory_to_handle(img->wsi.anb_mem);
       vn_FreeMemory(device, mem_handle, pAllocator);
    }
 
