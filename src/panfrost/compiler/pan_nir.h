@@ -1,34 +1,49 @@
 /*
  * Copyright (C) 2025 Collabora, Ltd.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef __PAN_NIR_H__
 #define __PAN_NIR_H__
 
 #include "nir.h"
+#include "nir_builder.h"
 #include "pan_compiler.h"
 
 struct util_format_description;
+
+static inline nir_def *
+pan_nir_tile_rt_sample(nir_builder *b, nir_def *rt, nir_def *sample)
+{
+   /* y = 255 means "current pixel" */
+   return nir_pack_32_4x8_split(b, nir_u2u8(b, sample),
+                                   nir_u2u8(b, rt),
+                                   nir_imm_intN_t(b, 0, 8),
+                                   nir_imm_intN_t(b, 255, 8));
+}
+
+static inline nir_def *
+pan_nir_tile_location_sample(nir_builder *b, gl_frag_result location,
+                             nir_def *sample)
+{
+   uint8_t rt;
+   if (location == FRAG_RESULT_DEPTH) {
+      rt = 255;
+   } else if (location == FRAG_RESULT_STENCIL) {
+      rt = 254;
+   } else {
+      assert(location >= FRAG_RESULT_DATA0);
+      rt = location - FRAG_RESULT_DATA0;
+   }
+
+   return pan_nir_tile_rt_sample(b, nir_imm_int(b, rt), sample);
+}
+
+static inline nir_def *
+pan_nir_tile_default_coverage(nir_builder *b)
+{
+   return nir_iand_imm(b, nir_load_cumulative_coverage_pan(b), 0x1f);
+}
 
 bool pan_nir_lower_store_component(nir_shader *shader);
 

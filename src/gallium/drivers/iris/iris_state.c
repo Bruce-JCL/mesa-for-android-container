@@ -1172,13 +1172,22 @@ init_aux_map_state(struct iris_batch *batch);
 static void
 iris_disable_rhwo_optimization(struct iris_batch *batch, bool disable)
 {
-   assert(batch->screen->devinfo->verx10 == 120);
+   assert(batch->screen->devinfo->verx10 >= 120);
 #if GFX_VERx10 == 120
    iris_emit_reg(batch, GENX(COMMON_SLICE_CHICKEN1), c1) {
       c1.RCCRHWOOptimizationDisable = disable;
       c1.RCCRHWOOptimizationDisableMask = true;
    };
 #endif
+#if INTEL_WA_14024015672_GFX_VER
+   if (intel_needs_workaround(batch->screen->devinfo, 14024015672)) {
+      iris_emit_cmd(batch, GENX(3DSTATE_3D_MODE), p) {
+         p.RCCRHWOOptimizationDisable = disable;
+         p.RCCRHWOOptimizationDisableMask = true;
+      }
+   };
+#endif
+   batch->ice->state.rhwo_disabled = disable;
 }
 
 static void
@@ -1384,7 +1393,7 @@ iris_init_render_context(struct iris_batch *batch)
    }
 #endif
 
-#if INTEL_NEEDS_WA_1508744258
+#if INTEL_WA_1508744258_GFX_VER || INTEL_WA_14024015672_GFX_VER
    /* The suggested workaround is:
     *
     *    Disable RHWO by setting 0x7010[14] by default except during resolve
@@ -1424,19 +1433,27 @@ iris_init_render_context(struct iris_batch *batch)
    };
 #endif
 
-#if GFX_VER >= 20
+#if GFX_VERx10 >= 125
    iris_emit_cmd(batch, GENX(3DSTATE_3D_MODE), p) {
-      p.DX10OGLBorderModeforYCRCB = true;
-      p.DX10OGLBorderModeforYCRCBMask = true;
+      if (devinfo->verx10 > 125 ||
+          intel_device_info_is_mtl_or_arl(devinfo)) {
+         p.DX10OGLBorderModeforYCRCB = true;
+         p.DX10OGLBorderModeforYCRCBMask = true;
+      }
+      p.RCCRHWOOptimizationDisable =
+         intel_needs_workaround(devinfo, 14024015672);
+      p.RCCRHWOOptimizationDisableMask = true;
    }
 
+#if GFX_VER >= 20
    if (intel_device_info_is_bmg_g31(devinfo)) {
       iris_emit_reg(batch, GENX(CACHE_MODE_0), reg) {
          reg.MsaaFastClearEnabled = true;
          reg.MsaaFastClearEnabledMask = true;
       }
    }
-#endif
+#endif /* GFX_VER >= 20 */
+#endif /* GFX_VERx10 >= 125 */
 
 #if GFX_VER >= 30
    iris_emit_cmd(batch, GENX(STATE_COMPUTE_MODE), cm) {
@@ -7406,6 +7423,24 @@ iris_upload_dirty_render_state(struct iris_context *ice,
       iris_use_pinned_bo(batch, border_color_pool->bo, false, IRIS_DOMAIN_NONE);
 
    if (dirty & IRIS_DIRTY_MULTISAMPLE) {
+#if INTEL_WA_14024015672_GFX_VER
+      /* With Wa_14024015672, RHWO is initially disabled. We enable it for MSAA
+       * draws and disable for single sample  unless explicitly disabled via
+       * drirc key.
+       */
+      bool rhwo_disabled =
+         intel_needs_workaround(screen->devinfo, 14024015672) &&
+         (ice->state.framebuffer.base.samples == 1 ||
+          screen->driconf.intel_enable_wa_14024015672_msaa);
+      if (batch->ice->state.rhwo_disabled != rhwo_disabled) {
+         iris_emit_pipe_control_flush(batch, "RHWO state change",
+                                      PIPE_CONTROL_STALL_AT_SCOREBOARD |
+                                      PIPE_CONTROL_CS_STALL);
+         batch->screen->vtbl.disable_rhwo_optimization(
+            batch, rhwo_disabled);
+      }
+#endif
+
       iris_emit_cmd(batch, GENX(3DSTATE_MULTISAMPLE), ms) {
          ms.PixelLocation =
             ice->state.cso_rast->half_pixel_center ? CENTER : UL_CORNER;
@@ -9119,57 +9154,6 @@ static bool iris_emit_indirect_dispatch_supported(const struct intel_device_info
 
 #if GFX_VERx10 >= 125
 
-static void iris_emit_execute_indirect_dispatch(struct iris_context *ice,
-                                                struct iris_batch *batch,
-                                                const struct pipe_grid_info *grid,
-                                                const struct GENX(INTERFACE_DESCRIPTOR_DATA) idd)
-{
-   const struct iris_screen *screen = batch->screen;
-   struct iris_compiled_shader *shader =
-      ice->shaders.prog[MESA_SHADER_COMPUTE];
-   const struct iris_cs_data *cs_data = iris_cs_data(shader);
-   const struct intel_cs_dispatch_info dispatch =
-      iris_get_cs_dispatch_info(screen->devinfo, shader, grid->block);
-   struct iris_bo *indirect = iris_resource_bo(grid->indirect);
-   const int dispatch_size = dispatch.simd_size / 16;
-
-   struct GENX(COMPUTE_WALKER_BODY) body = {};
-   body.SIMDSize            = dispatch_size;
-   body.MessageSIMD         = dispatch_size;
-   body.GenerateLocalID     = cs_data->generate_local_id != 0;
-   body.EmitLocal           = cs_data->generate_local_id;
-   body.WalkOrder           = cs_data->walk_order;
-   body.TileLayout          = cs_data->walk_order == INTEL_WALK_ORDER_YXZ ?
-                              TileY32bpe : Linear;
-   body.LocalXMaximum       = grid->block[0] - 1;
-   body.LocalYMaximum       = grid->block[1] - 1;
-   body.LocalZMaximum       = grid->block[2] - 1;
-   body.ExecutionMask       = dispatch.right_mask;
-   body.PostSync.MOCS       = iris_mocs(NULL, &screen->isl_dev, 0);
-   body.InterfaceDescriptor = idd;
-   /* HSD 14016252163: Use of Morton walk order (and batching using a batch
-    * size of 4) is expected to increase sampler cache hit rates by
-    * increasing sample address locality within a subslice.
-    */
-#if GFX_VER >= 30
-   body.DispatchWalkOrder =
-      cs_data->uses_sampler ? MortonWalk : LinearWalk;
-   body.ThreadGroupBatchSize =
-      cs_data->uses_sampler ? TG_BATCH_4 : TG_BATCH_1;
-#endif
-
-   struct iris_address indirect_bo = ro_bo(indirect, grid->indirect_offset);
-   iris_emit_cmd(batch, GENX(EXECUTE_INDIRECT_DISPATCH), ind) {
-      ind.PredicateEnable            =
-         ice->state.predicate == IRIS_PREDICATE_STATE_USE_BIT;
-      ind.MaxCount                   = 1;
-      ind.body                       = body;
-      ind.ArgumentBufferStartAddress = indirect_bo;
-      ind.MOCS                       =
-         iris_mocs(indirect_bo.bo, &screen->isl_dev, 0);
-   }
-}
-
 static void
 iris_upload_compute_walker(struct iris_context *ice,
                            struct iris_batch *batch,
@@ -9265,45 +9249,58 @@ iris_upload_compute_walker(struct iris_context *ice,
    idd.RegistersPerThread = ptl_register_blocks(shader->brw_prog_data->grf_used);
 #endif
 
+struct GENX(COMPUTE_WALKER_BODY) body = {
+   .SIMDSize                       = dispatch.simd_size / 16,
+   .MessageSIMD                    = dispatch.simd_size / 16,
+   .LocalXMaximum                  = grid->block[0] - 1,
+   .LocalYMaximum                  = grid->block[1] - 1,
+   .LocalZMaximum                  = grid->block[2] - 1,
+   .ThreadGroupIDXDimension        = grid->grid[0],
+   .ThreadGroupIDYDimension        = grid->grid[1],
+   .ThreadGroupIDZDimension        = grid->grid[2],
+   .ExecutionMask                  = dispatch.right_mask,
+   .PostSync.MOCS                  = iris_mocs(NULL, &screen->isl_dev, 0),
+   .InterfaceDescriptor            = idd,
+
+#if GFX_VERx10 >= 125
+   .GenerateLocalID = cs_data->generate_local_id != 0,
+   .EmitLocal       = cs_data->generate_local_id,
+   .WalkOrder       = cs_data->walk_order,
+   .TileLayout      = cs_data->walk_order == INTEL_WALK_ORDER_YXZ ?
+                                             TileY32bpe : Linear,
+#endif
+#if GFX_VER >= 30
+   /* HSD 14016252163 */
+   .DispatchWalkOrder = cs_data->uses_sampler ? MortonWalk : LinearWalk,
+   .ThreadGroupBatchSize = cs_data->uses_sampler ? TG_BATCH_4 : TG_BATCH_1,
+#endif
+   };
+
    iris_measure_snapshot(ice, batch, INTEL_SNAPSHOT_COMPUTE, NULL, NULL, NULL);
 
    if (iris_emit_indirect_dispatch_supported(devinfo) && grid->indirect) {
-      iris_emit_execute_indirect_dispatch(ice, batch, grid, idd);
+      struct iris_bo *indirect = iris_resource_bo(grid->indirect);
+      struct iris_address indirect_bo = ro_bo(indirect, grid->indirect_offset);
+
+      body.ThreadGroupIDXDimension = 0;
+      body.ThreadGroupIDYDimension = 0;
+      body.ThreadGroupIDZDimension = 0;
+
+      iris_emit_cmd(batch, GENX(EXECUTE_INDIRECT_DISPATCH), ind) {
+         ind.PredicateEnable            =
+            ice->state.predicate == IRIS_PREDICATE_STATE_USE_BIT;
+         ind.MaxCount                   = 1;
+         ind.body                       = body;
+         ind.ArgumentBufferStartAddress = indirect_bo;
+         ind.MOCS                       =
+            iris_mocs(indirect_bo.bo, &screen->isl_dev, 0);
+      }
    } else {
       if (grid->indirect)
          iris_load_indirect_location(ice, batch, grid);
 
-      iris_measure_snapshot(ice, batch, INTEL_SNAPSHOT_COMPUTE, NULL, NULL, NULL);
-
       ice->utrace.last_compute_walker =
          iris_emit_dwords(batch, GENX(COMPUTE_WALKER_length));
-
-      struct GENX(COMPUTE_WALKER_BODY) body = {
-         .SIMDSize                       = dispatch.simd_size / 16,
-         .MessageSIMD                    = dispatch.simd_size / 16,
-         .LocalXMaximum                  = grid->block[0] - 1,
-         .LocalYMaximum                  = grid->block[1] - 1,
-         .LocalZMaximum                  = grid->block[2] - 1,
-         .ThreadGroupIDXDimension        = grid->grid[0],
-         .ThreadGroupIDYDimension        = grid->grid[1],
-         .ThreadGroupIDZDimension        = grid->grid[2],
-         .ExecutionMask                  = dispatch.right_mask,
-         .PostSync.MOCS                  = iris_mocs(NULL, &screen->isl_dev, 0),
-         .InterfaceDescriptor            = idd,
-
-#if GFX_VERx10 >= 125
-         .GenerateLocalID = cs_data->generate_local_id != 0,
-         .EmitLocal       = cs_data->generate_local_id,
-         .WalkOrder       = cs_data->walk_order,
-         .TileLayout = cs_data->walk_order == INTEL_WALK_ORDER_YXZ ?
-                       TileY32bpe : Linear,
-#endif
-#if GFX_VER >= 30
-         /* HSD 14016252163 */
-         .DispatchWalkOrder = cs_data->uses_sampler ? MortonWalk : LinearWalk,
-         .ThreadGroupBatchSize = cs_data->uses_sampler ? TG_BATCH_4 : TG_BATCH_1,
-#endif
-      };
 
       _iris_pack_command(batch, GENX(COMPUTE_WALKER),
                          ice->utrace.last_compute_walker, cw) {

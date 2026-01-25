@@ -149,7 +149,7 @@ unsigned si_get_max_workgroup_size(const struct si_shader *shader)
 
    /* Compile a variable block size using the maximum variable size. */
    if (shader->selector->info.base.workgroup_size_variable)
-      return SI_MAX_VARIABLE_THREADS_PER_BLOCK;
+      return sscreen->b.compute_caps.max_variable_threads_per_block;
 
    uint16_t *local_size = shader->selector->info.base.workgroup_size;
    unsigned max_work_group_size = (uint32_t)local_size[0] *
@@ -670,6 +670,22 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
    }
 
    if (mesa_shader_stage_is_compute(nir->info.stage)) {
+      if (sel->screen->info.has_cs_regalloc_hang_bug) {
+         const uint32_t wg_size = nir->info.workgroup_size[0] *
+                                  nir->info.workgroup_size[1] *
+                                  nir->info.workgroup_size[2];
+
+         if (wg_size > 256) {
+            si_nir_opts(sel->screen, nir, true);
+            NIR_PASS(progress, nir, nir_lower_workgroup_size, 256);
+
+            if (progress)
+               si_nir_opts(sel->screen, nir, true);
+
+            nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+         }
+      }
+
       /* gl_LocalInvocationIndex must be derived from gl_LocalInvocationID.xyz to make it correct
        * with quad derivatives. Using gl_SubgroupID for that (which is what we do by default) is
        * incorrect with a non-linear thread order.
@@ -1426,33 +1442,6 @@ bool si_compile_shader(struct si_screen *sscreen, struct ac_llvm_compiler *compi
 
    shader->info.private_mem_vgprs = DIV_ROUND_UP(nir->scratch_size, 4);
 
-   /* Set the FP ALU behavior. */
-   /* By default, we disable denormals for FP32 and enable them for FP16 and FP64
-    * for performance and correctness reasons. FP32 denormals can't be enabled because
-    * they break output modifiers and v_mad_f32 and are very slow on GFX6-7.
-    *
-    * float_controls_execution_mode defines the set of valid behaviors. Contradicting flags
-    * can be set simultaneously, which means we are allowed to choose, but not really because
-    * some options cause GLCTS failures.
-    */
-   unsigned float_mode = V_00B028_FP_16_64_DENORMS;
-
-   if (!(nir->info.float_controls_execution_mode & FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP32) &&
-       nir->info.float_controls_execution_mode & FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP32)
-      float_mode |= V_00B028_FP_32_ROUND_TOWARDS_ZERO;
-
-   if (!(nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP16 |
-                                                    FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP64)) &&
-       nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP16 |
-                                                  FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP64))
-      float_mode |= V_00B028_FP_16_64_ROUND_TOWARDS_ZERO;
-
-   if (!(nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_DENORM_PRESERVE_FP16 |
-                                                    FLOAT_CONTROLS_DENORM_PRESERVE_FP64)) &&
-       nir->info.float_controls_execution_mode & (FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP16 |
-                                                  FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP64))
-      float_mode &= ~V_00B028_FP_16_64_DENORMS;
-
    assert(nir->info.use_aco_amd == si_shader_uses_aco(shader));
    ret =
 #if AMD_LLVM_AVAILABLE
@@ -1466,8 +1455,6 @@ bool si_compile_shader(struct si_screen *sscreen, struct ac_llvm_compiler *compi
 
    if (!ret)
       goto out;
-
-   shader->config.float_mode = float_mode;
 
    /* The GS copy shader is compiled next. */
    if (nir->info.stage == MESA_SHADER_GEOMETRY && !shader->key.ge.as_ngg) {

@@ -1,24 +1,6 @@
 /*
  * Copyright © 2010 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "brw_shader.h"
@@ -3812,6 +3794,22 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
       bld.MOV(dest, s.wpos_w);
       break;
 
+   case nir_intrinsic_load_fs_start_intel: {
+      brw_reg comps[2] = { s.x_start, s.y_start };
+      bld.VEC(retype(dest, BRW_TYPE_F), comps, 2);
+      break;
+   }
+
+   case nir_intrinsic_load_fs_z_c_intel: {
+      brw_reg comps[2] = { s.z_cx, s.z_cy };
+      bld.VEC(retype(dest, BRW_TYPE_F), comps, 2);
+      break;
+   }
+
+   case nir_intrinsic_load_fs_z_c0_intel:
+      bld.MOV(dest, s.z_c0);
+      break;
+
    case nir_intrinsic_load_front_face:
       bld.MOV(retype(dest, BRW_TYPE_D), emit_frontfacing_interpolation(ntb));
       break;
@@ -4313,15 +4311,12 @@ brw_from_nir_emit_cs_intrinsic(nir_to_brw_state &ntb,
       break;
 
    case nir_intrinsic_load_inline_data_intel: {
-      const brw_cs_thread_payload &payload = s.cs_payload();
       unsigned inline_stride = brw_type_size_bytes(dest.type);
       for (unsigned c = 0; c < instr->def.num_components; c++) {
          xbld.MOV(offset(dest, xbld, c),
-                  retype(
-                     byte_offset(payload.inline_parameter,
-                                 nir_intrinsic_base(instr) +
-                                 c * inline_stride),
-                     dest.type));
+                  byte_offset(brw_uniform_reg(BRW_INLINE_PARAM_REG, dest.type),
+                              nir_intrinsic_base(instr) +
+                              c * inline_stride));
       }
       break;
    }
@@ -4711,7 +4706,7 @@ increment_a64_address(const brw_builder &_bld, brw_reg address, uint32_t v, bool
    const brw_builder bld = use_no_mask ? _bld.exec_all().group(8, 0) : _bld;
 
    if (bld.shader->devinfo->has_64bit_int) {
-      return bld.ADD(address, brw_imm_int(address.type, v));
+      return bld.ADD(retype(address, BRW_TYPE_UQ), brw_imm_ud(v));
    } else {
       brw_reg dst = bld.vgrf(BRW_TYPE_UQ);
       brw_reg dst_low = subscript(dst, BRW_TYPE_UD, 0);
@@ -4721,8 +4716,9 @@ increment_a64_address(const brw_builder &_bld, brw_reg address, uint32_t v, bool
 
       /* Add low and if that overflows, add carry to high. */
       bld.ADD(dst_low, src_low, brw_imm_ud(v))->conditional_mod = BRW_CONDITIONAL_O;
-      bld.ADD(dst_high, src_high, brw_imm_ud(0x1))->predicate = BRW_PREDICATE_NORMAL;
-      return dst_low;
+      bld.MOV(dst_high, src_high);
+      bld.ADD(dst_high, dst_high, brw_imm_ud(0x1))->predicate = BRW_PREDICATE_NORMAL;
+      return dst;
    }
 }
 
@@ -6314,7 +6310,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
          bld.emit_uniformize(srcs[MEMORY_LOGICAL_ADDRESS]);
 
       const brw_builder ubld = bld.uniform();
-      unsigned total, done;
+      unsigned total;
       unsigned first_read_component = 0;
 
       if (convergent_block_load) {
@@ -6343,10 +6339,9 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
 
       brw_reg src = srcs[MEMORY_LOGICAL_DATA0];
 
-      unsigned block_comps = components;
-
-      for (done = 0; done < total; done += block_comps) {
-         block_comps = choose_block_size_dwords(devinfo, total - done);
+      unsigned done = 0;
+      while (done < total) {
+         unsigned block_comps = choose_block_size_dwords(devinfo, total - done);
          const unsigned block_bytes = block_comps * (nir_bit_size / 8);
 
          brw_reg dst_offset = is_store ? brw_reg() :
@@ -6370,13 +6365,18 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
          mem->alignment = alignment;
          mem->flags = flags;
 
-         if (brw_type_size_bits(srcs[MEMORY_LOGICAL_ADDRESS].type) == 64) {
-            increment_a64_address(ubld, srcs[MEMORY_LOGICAL_ADDRESS],
-                                  block_bytes, no_mask_handle);
-         } else {
-            srcs[MEMORY_LOGICAL_ADDRESS] =
-               ubld.ADD(retype(srcs[MEMORY_LOGICAL_ADDRESS], BRW_TYPE_UD),
-                        brw_imm_ud(block_bytes));
+         done += block_comps;
+
+         if (done < total) {
+            if (brw_type_size_bits(srcs[MEMORY_LOGICAL_ADDRESS].type) == 64) {
+               srcs[MEMORY_LOGICAL_ADDRESS] =
+                  increment_a64_address(ubld, srcs[MEMORY_LOGICAL_ADDRESS],
+                                        block_bytes, no_mask_handle);
+            } else {
+               srcs[MEMORY_LOGICAL_ADDRESS] =
+                  ubld.ADD(retype(srcs[MEMORY_LOGICAL_ADDRESS], BRW_TYPE_UD),
+                           brw_imm_ud(block_bytes));
+            }
          }
       }
       assert(done == total);

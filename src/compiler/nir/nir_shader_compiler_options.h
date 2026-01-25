@@ -612,6 +612,9 @@ typedef struct nir_shader_compiler_options {
    /** Backend supports pack_32_4x8 or pack_32_4x8_split. */
    bool has_pack_32_4x8;
 
+   /** Backend supports nir_load_pixel_coord */
+   bool has_pixel_coord;
+
    /** Backend supports nir_load_texture_scale and prefers it over txs for nir
     * lowerings. */
    bool has_texture_scaling;
@@ -648,6 +651,11 @@ typedef struct nir_shader_compiler_options {
     * FLOAT_CONTROLS_DENORM_PRESERVE_FP32 is not set
     */
    bool has_fmulz_no_denorms;
+
+   /** Backend supports fcanonicalize, if not set fcanonicalize will be lowered
+    * to fmul(a, 1.0)
+    */
+   bool has_fcanonicalize;
 
    /** Backend supports 32bit ufind_msb_rev and ifind_msb_rev. */
    bool has_find_msb_rev;

@@ -12,7 +12,7 @@
 
 #include "panvk_blend.h"
 #include "panvk_cmd_desc_state.h"
-#include "panvk_cmd_oq.h"
+#include "panvk_cmd_query.h"
 #include "panvk_entrypoints.h"
 #include "panvk_image.h"
 #include "panvk_image_view.h"
@@ -26,7 +26,6 @@
 #include "pan_props.h"
 
 #define MAX_VBS 16
-#define MAX_RTS 8
 
 struct panvk_cmd_buffer;
 
@@ -130,6 +129,9 @@ struct panvk_cmd_graphics_state {
    } dynamic;
 
    struct panvk_occlusion_query_state occlusion_query;
+#if PAN_ARCH >= 10
+   struct panvk_prims_generated_query_state prims_generated_query;
+#endif
    struct panvk_graphics_sysvals sysvals;
 
 #if PAN_ARCH < 9
@@ -139,6 +141,7 @@ struct panvk_cmd_graphics_state {
    struct {
       const struct panvk_shader *shader;
       struct panvk_shader_desc_state desc;
+      uint64_t blend_descs[MAX_RTS];
       uint64_t push_uniforms;
       bool required;
 #if PAN_ARCH < 9
@@ -373,7 +376,6 @@ void
 panvk_per_arch(cmd_preload_render_area_border)(struct panvk_cmd_buffer *cmdbuf,
                                                const VkRenderingInfo *render_info);
 
-void panvk_per_arch(cmd_resolve_attachments)(struct panvk_cmd_buffer *cmdbuf);
 void panvk_per_arch(cmd_select_tile_size)(struct panvk_cmd_buffer *cmdbuf);
 
 struct panvk_draw_info {

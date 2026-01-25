@@ -363,7 +363,7 @@ is_16_bits_with_scale(const nir_alu_instr *instr,
 
    for (unsigned i = 0; i < num_components; i++) {
       const int64_t val =
-         scale * nir_src_comp_as_int(instr->src[src].src, swizzle[i]);
+         (uint64_t)(int64_t)scale * nir_src_comp_as_uint(instr->src[src].src, swizzle[i]);
 
       if (val > 0xffff || val < -0x8000)
          return false;
@@ -1063,6 +1063,20 @@ cannot_add_output_modifier(const nir_search_state *state,
                            const uint8_t *swizzle)
 {
    return !can_add_output_modifier(state, instr, src, num_components, swizzle);
+}
+
+
+static inline bool
+is_created_as_float(const nir_search_state *state, const nir_alu_instr *instr, unsigned src,
+                    UNUSED unsigned num_components, UNUSED const uint8_t *swizzle)
+{
+   nir_alu_instr *src_alu = nir_src_as_alu(instr->src[src].src);
+
+   if (src_alu == NULL)
+      return false;
+
+   nir_alu_type output_type = nir_op_infos[src_alu->op].output_type;
+   return nir_alu_type_get_base_type(output_type) == nir_type_float;
 }
 
 #endif /* _NIR_SEARCH_ */

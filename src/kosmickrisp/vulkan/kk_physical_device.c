@@ -123,7 +123,9 @@ kk_get_device_extensions(const struct kk_instance *instance,
 
       /* Optional extensions */
       .KHR_calibrated_timestamps = true,
-      .KHR_shader_maximal_reconvergence = true,
+      /* Temporarily disabled due to failing tests in
+       * dEQP-VK.reconvergence.maximal.compute.nesting* */
+      .KHR_shader_maximal_reconvergence = false,
       .KHR_shader_relaxed_extended_instruction = true,
       .KHR_shader_subgroup_uniform_control_flow = true,
 #ifdef KK_USE_WSI_PLATFORM
@@ -242,6 +244,7 @@ kk_get_device_features(
       .bufferDeviceAddress = true,
       .computeFullSubgroups = true,
       .dynamicRendering = true,
+      .extendedDynamicState = true,
       .inlineUniformBlock = true,
       .maintenance4 = true,
       .pipelineCreationCacheControl = true,
@@ -268,7 +271,9 @@ kk_get_device_features(
       .shaderExpectAssume = true,
 
       /* VK_KHR_shader_maximal_reconvergence */
-      .shaderMaximalReconvergence = true,
+      /* Temporarily disabled due to failing tests in
+       * dEQP-VK.reconvergence.maximal.compute.nesting* */
+      .shaderMaximalReconvergence = false,
 
       /* VK_KHR_shader_relaxed_extended_instruction */
       .shaderRelaxedExtendedInstruction = true,
@@ -527,7 +532,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .maxSubgroupSize = 32,
       .maxComputeWorkgroupSubgroups = pdev->info.max_workgroup_invocations / 32,
       .requiredSubgroupSizeStages = 0,
-      .maxInlineUniformBlockSize = 1 << 16,
+      .maxInlineUniformBlockSize = KK_MAX_INLINE_UNIFORM_BLOCK_SIZE,
       .maxPerStageDescriptorInlineUniformBlocks = 32,
       .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks = 32,
       .maxDescriptorSetInlineUniformBlocks = 6 * 32,
@@ -821,6 +826,8 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
                                     &properties, &dispatch_table);
    if (result != VK_SUCCESS)
       goto fail_mtl_dev;
+
+   kk_physical_device_init_pipeline_cache(pdev);
 
    uint64_t sysmem_size_B = kk_get_sysmem_heap_size();
    if (sysmem_size_B == 0) {

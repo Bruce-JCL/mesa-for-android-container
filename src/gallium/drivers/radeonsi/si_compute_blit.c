@@ -15,10 +15,8 @@
 static void si_compute_begin_internal(struct si_context *sctx, bool render_condition_enabled)
 {
    sctx->barrier_flags &= ~SI_BARRIER_EVENT_PIPELINESTAT_START;
-   if (sctx->num_hw_pipestat_streamout_queries) {
-      sctx->barrier_flags |= SI_BARRIER_EVENT_PIPELINESTAT_STOP;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
-   }
+   if (sctx->num_hw_pipestat_streamout_queries)
+      si_set_barrier_flags(sctx, SI_BARRIER_EVENT_PIPELINESTAT_STOP);
 
    if (!render_condition_enabled)
       sctx->render_cond_enabled = false;
@@ -33,10 +31,8 @@ static void si_compute_begin_internal(struct si_context *sctx, bool render_condi
 static void si_compute_end_internal(struct si_context *sctx)
 {
    sctx->barrier_flags &= ~SI_BARRIER_EVENT_PIPELINESTAT_STOP;
-   if (sctx->num_hw_pipestat_streamout_queries) {
-      sctx->barrier_flags |= SI_BARRIER_EVENT_PIPELINESTAT_START;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
-   }
+   if (sctx->num_hw_pipestat_streamout_queries)
+      si_set_barrier_flags(sctx, SI_BARRIER_EVENT_PIPELINESTAT_START);
 
    sctx->render_cond_enabled = sctx->render_cond;
    sctx->blitter_running = false;
@@ -205,12 +201,15 @@ bool si_compute_clear_copy_buffer(struct si_context *sctx, struct pipe_resource 
    }
 
    memcpy(sctx->cs_user_data, dispatch.user_data, sizeof(dispatch.user_data));
+   sctx->compute_dispatch_interleave = dispatch.dispatch_interleave;
 
    struct pipe_grid_info grid = {};
    set_work_size(&grid, dispatch.workgroup_size, 1, 1, dispatch.num_threads, 1, 1);
 
    si_launch_grid_internal_ssbos(sctx, &grid, shader, dispatch.num_ssbos, sb,
                                  is_copy ? 0x2 : 0x1, render_condition_enable);
+
+   sctx->compute_dispatch_interleave = 0; /* this will restore the default value */
    return true;
 }
 
@@ -345,8 +344,7 @@ void si_retile_dcc(struct si_context *sctx, struct si_texture *tex)
    assert(sctx->gfx_level < GFX12);
 
    /* Flush and wait for CB before retiling DCC. */
-   sctx->barrier_flags |= SI_BARRIER_SYNC_AND_INV_CB;
-   si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
+   si_set_barrier_flags(sctx, SI_BARRIER_SYNC_AND_INV_CB);
 
    /* Set the DCC buffer. */
    assert(tex->surface.meta_offset && tex->surface.meta_offset <= UINT_MAX);

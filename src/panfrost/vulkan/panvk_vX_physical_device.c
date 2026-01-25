@@ -91,6 +91,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_pipeline_library = true,
       .KHR_push_descriptor = true,
       .KHR_relaxed_block_layout = true,
+      .KHR_robustness2 = PAN_ARCH >= 10,
       .KHR_sampler_mirror_clamp_to_edge = true,
       .KHR_sampler_ycbcr_conversion = true,
       .KHR_separate_depth_stencil_layouts = true,
@@ -165,6 +166,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_pipeline_robustness = true,
       .EXT_private_data = true,
       .EXT_primitive_topology_list_restart = true,
+      .EXT_primitives_generated_query = PAN_ARCH >= 10,
       .EXT_provoking_vertex = true,
       .EXT_queue_family_foreign = true,
       .EXT_robustness2 = PAN_ARCH >= 10,
@@ -472,6 +474,12 @@ panvk_per_arch(get_physical_device_features)(
       .primitiveTopologyListRestart = true,
       .primitiveTopologyPatchListRestart = false,
 
+      /* VK_EXT_primitives_generated_query */
+      .primitivesGeneratedQuery = PAN_ARCH >= 10,
+      .primitivesGeneratedQueryWithRasterizerDiscard = PAN_ARCH >= 10,
+      /* TODO: xfb */
+      .primitivesGeneratedQueryWithNonZeroStreams = false,
+
       /* VK_EXT_provoking_vertex */
       .provokingVertexLast = true,
       .transformFeedbackPreservesProvokingVertex = false,
@@ -489,7 +497,7 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_KHR_pipeline_executable_properties */
       .pipelineExecutableInfo = true,
 
-      /* VK_EXT_robustness2 */
+      /* VK_KHR_robustness2 */
       .robustBufferAccess2 = PAN_ARCH >= 11,
       .robustImageAccess2 = false,
       .nullDescriptor = PAN_ARCH >= 10,
@@ -1018,7 +1026,7 @@ panvk_per_arch(get_physical_device_properties)(
       .pipelineBinaryPrecompiledInternalCache = has_disk_cache,
       .pipelineBinaryCompressedData = false,
 
-      /* VK_EXT_robustness2 */
+      /* VK_KHR_robustness2 */
       .robustStorageBufferAccessSizeAlignment = 1,
       .robustUniformBufferAccessSizeAlignment = 1,
 
