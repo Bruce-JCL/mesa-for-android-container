@@ -927,6 +927,7 @@ struct pipe_caps {
    bool shareable_shaders;
    bool copy_between_compressed_and_plain_formats;
    bool clear_scissored;
+   bool clear_masked;
    bool draw_parameters;
    bool shader_pack_half_float;
    bool multi_draw_indirect;
@@ -1056,6 +1057,7 @@ struct pipe_caps {
    bool call_finalize_nir_in_linker;
    bool mesh_shader;
    bool representative_fragment_test;
+   bool prefer_persp;
 
    int accelerated;
    int min_texel_offset;

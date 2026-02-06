@@ -1490,14 +1490,13 @@ nir_op_is_selection(nir_op op)
 {
    return (nir_op_infos[op].algebraic_properties & NIR_OP_IS_SELECTION) != 0;
 }
+
+#define NIR_FP_MATH_CONTROL_BIT_COUNT 4
 /**
  * Floating point fast math control.
  *
  * All new bits must restrict optimizations when they are set, not when they
  * are missing. This means a bitwise OR always produces a no less restrictive set.
- *
- * See also nir_alu_instr::exact, which should (and hopefully will be) moved
- * to this enum in the future.
  */
 typedef enum {
    /**
@@ -1538,7 +1537,7 @@ typedef enum {
                                 nir_fp_preserve_nan,
 
    nir_fp_fast_math = 0,
-   nir_fp_no_fast_math = BITFIELD_MASK(4),
+   nir_fp_no_fast_math = BITFIELD_MASK(NIR_FP_MATH_CONTROL_BIT_COUNT),
 } nir_fp_math_control;
 
 /***/
@@ -1569,7 +1568,7 @@ typedef struct nir_alu_instr {
     * that have no float_controls2 equivalent (rounding mode and denorm handling)
     * remain in the execution mode only.
     */
-   uint32_t fp_math_ctrl : 4;
+   uint32_t fp_math_ctrl : NIR_FP_MATH_CONTROL_BIT_COUNT;
 
    /** Sources
     *
@@ -2384,6 +2383,15 @@ typedef enum nir_tex_src_type {
    /** Second backend-specific vec4 tex src argument, see nir_tex_src_backend1. */
    nir_tex_src_backend2,
 
+   /** VK_QCOM_image_processing sources */
+   nir_tex_src_ref_coord,
+   nir_tex_src_texture_2_deref,
+   nir_tex_src_sampler_2_deref,
+   nir_tex_src_texture_2_handle,
+   nir_tex_src_sampler_2_handle,
+   nir_tex_src_block_size,
+   nir_tex_src_box_size,
+
    nir_num_tex_src_types
 } nir_tex_src_type;
 
@@ -2450,6 +2458,26 @@ typedef enum nir_texop {
    nir_texop_tex_type_nv,
    /** Maps to TXQ.SAMPLER_POS */
    nir_texop_sample_pos_nv,
+   /**
+    * Returns the weighted average of a region of texels in the texture, using
+    * the filter kernel sampled from ref_texture. (VK_QCOM_image_processing)
+   */
+   nir_texop_sample_weighted_qcom,
+   /**
+    * Returns the result of a weighted average of the texels in a box of size
+    * box_size centered at coord. (VK_QCOM_image_processing)
+   */
+   nir_texop_box_filter_qcom,
+   /**
+    * Returns the result of SAD/SSD block matching on 2D textures.
+    * (VK_QCOM_image_processing)
+    *
+    * The textures are always 2D dim, and the coord and ref_coord texture
+    * sources are ivec2s.  The size of the block is specified in the block_size
+    * texture source (uvec2 from SPIRV, packed u32 in the backend)
+   */
+   nir_texop_block_match_sad_qcom,
+   nir_texop_block_match_ssd_qcom,
 } nir_texop;
 
 /** Represents a texture instruction */
@@ -2493,7 +2521,10 @@ typedef struct nir_tex_instr {
    /** Number of sources */
    unsigned num_srcs;
 
-   /** Number of components in the coordinate, if any */
+   /** Number of components in the coordinate, if any.
+    *
+    * This applies to the nir_tex_src_coord and nir_tex_src_ref_coord src types.
+    */
    unsigned coord_components;
 
    /** True if the texture instruction acts on an array texture */
@@ -3443,6 +3474,9 @@ typedef struct nir_loop_info {
 
    /* Unroll the loop regardless of its size */
    bool force_unroll;
+
+   /* Whether all control flow gets eliminated upon unrolling. */
+   bool flattens_all_control_flow;
 
    /* Does the loop contain complex loop terminators, continues or other
     * complex behaviours? If this is true we can't rely on
@@ -5160,12 +5194,6 @@ void nir_find_inlinable_uniforms(nir_shader *shader);
 bool nir_inline_uniforms(nir_shader *shader, unsigned num_uniforms,
                          const uint32_t *uniform_values,
                          const uint16_t *uniform_dw_offsets);
-bool nir_collect_src_uniforms(const nir_src *src, int component,
-                              uint32_t *uni_offsets, uint8_t *num_offsets,
-                              unsigned max_num_bo, unsigned max_offset);
-void nir_add_inlinable_uniforms(const nir_src *cond, nir_loop_info *info,
-                                uint32_t *uni_offsets, uint8_t *num_offsets,
-                                unsigned max_num_bo, unsigned max_offset);
 
 bool nir_inline_sysval(nir_shader *shader, nir_intrinsic_op op, uint64_t imm);
 
@@ -5499,10 +5527,12 @@ typedef bool (*nir_should_vectorize_mem_func)(unsigned align_mul,
 
 typedef struct nir_load_store_vectorize_options {
    nir_should_vectorize_mem_func callback;
+   unsigned (*round_up_components)(unsigned);
    nir_variable_mode modes;
    nir_variable_mode robust_modes;
    void *cb_data;
    bool has_shared2_amd;
+   bool round_up_store_components;
 } nir_load_store_vectorize_options;
 
 bool nir_opt_load_store_vectorize(nir_shader *shader, const nir_load_store_vectorize_options *options);
@@ -5558,6 +5588,34 @@ nir_src *nir_get_io_offset_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_index_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_arrayed_index_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_shader_call_payload_src(nir_intrinsic_instr *call);
+
+static inline unsigned
+nir_get_io_base_size_nv(const nir_intrinsic_instr *intr)
+{
+   switch (intr->intrinsic) {
+   case nir_intrinsic_global_atomic_nv:
+   case nir_intrinsic_global_atomic_swap_nv:
+   case nir_intrinsic_shared_atomic_nv:
+   case nir_intrinsic_shared_atomic_swap_nv:
+   case nir_intrinsic_load_global_nv:
+   case nir_intrinsic_load_scratch_nv:
+   case nir_intrinsic_load_shared_nv:
+   case nir_intrinsic_load_shared_lock_nv:
+   case nir_intrinsic_store_global_nv:
+   case nir_intrinsic_store_scratch_nv:
+   case nir_intrinsic_store_shared_nv:
+   case nir_intrinsic_store_shared_unlock_nv:
+      return 24;
+   case nir_intrinsic_ldc_nv:
+   case nir_intrinsic_ldcx_nv:
+      return 16;
+   case nir_intrinsic_vild_nv:
+      return 8;
+   default:
+      UNREACHABLE("unknown nvidia intrinsic");
+      return -1;
+   }
+}
 
 bool nir_is_shared_access(nir_intrinsic_instr *intr);
 bool nir_is_output_load(nir_intrinsic_instr *intr);
@@ -6965,6 +7023,20 @@ bool nir_unlower_io_to_vars(nir_shader *nir, bool keep_intrinsics);
 bool nir_opt_barycentric(nir_shader *shader, bool lower_sample_to_pos);
 
 #include "nir_inline_helpers.h"
+
+static inline bool
+nir_is_io_compact(nir_shader *nir, bool is_output, unsigned location)
+{
+   return nir->options->compact_arrays &&
+          (nir->info.stage != MESA_SHADER_VERTEX || is_output) &&
+          (nir->info.stage != MESA_SHADER_FRAGMENT || !is_output) &&
+          (location == VARYING_SLOT_CLIP_DIST0 ||
+           location == VARYING_SLOT_CLIP_DIST1 ||
+           location == VARYING_SLOT_CULL_DIST0 ||
+           location == VARYING_SLOT_CULL_DIST1 ||
+           location == VARYING_SLOT_TESS_LEVEL_OUTER ||
+           location == VARYING_SLOT_TESS_LEVEL_INNER);
+}
 
 #ifdef __cplusplus
 } /* extern "C" */

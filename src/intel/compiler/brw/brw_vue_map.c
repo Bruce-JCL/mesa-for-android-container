@@ -1,24 +1,6 @@
 /*
  * Copyright © 2011 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 /**
@@ -32,13 +14,7 @@
  * have to agree on the layout.  However, there is also a "VUE Header" that
  * prescribes a fixed-layout for items that interact with fixed function
  * hardware, such as the clipper and rasterizer.
- *
- * Authors:
- *   Paul Berry <stereotype441@gmail.com>
- *   Chris Forbes <chrisf@ijw.co.nz>
- *   Eric Anholt <eric@anholt.net>
  */
-
 
 #include "brw_compiler.h"
 #include "dev/intel_debug.h"
@@ -296,6 +272,11 @@ brw_compute_vue_map(const struct intel_device_info *devinfo,
          assign_vue_slot(vue_map, varying, slot++);
       }
    }
+
+   assert(vue_map->varying_to_slot[VARYING_SLOT_PSIZ] == 0);
+   vue_map->varying_to_slot[VARYING_SLOT_PRIMITIVE_SHADING_RATE] = 0;
+   vue_map->varying_to_slot[VARYING_SLOT_LAYER] = 0;
+   vue_map->varying_to_slot[VARYING_SLOT_VIEWPORT] = 0;
 
    vue_map->num_slots = slot;
    vue_map->num_pos_slots = pos_slots;

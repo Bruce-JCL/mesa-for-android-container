@@ -363,7 +363,8 @@ ac_create_blit_cs(const struct ac_cs_blit_options *options, const union ac_cs_bl
                                               nir_channel(&b, coord_src[i * src_samples],
                                                           num_src_coords - 1), zero_lod,
                                               .image_dim = img_src->type->sampler_dimensionality,
-                                              .image_array = img_src->type->sampler_array);
+                                              .image_array = img_src->type->sampler_array,
+                                              .dest_type = nir_type_uint | bit_size);
          }
          nir_push_else(&b, if_identical);
       }
@@ -374,7 +375,8 @@ ac_create_blit_cs(const struct ac_cs_blit_options *options, const union ac_cs_bl
                                          deref_ssa(&b, img_src), coord_src[i],
                                          nir_channel(&b, coord_src[i], num_src_coords - 1), zero_lod,
                                          .image_dim = img_src->type->sampler_dimensionality,
-                                         .image_array = img_src->type->sampler_array);
+                                         .image_array = img_src->type->sampler_array,
+                                         .dest_type = nir_type_uint | bit_size);
       }
 
       /* Resolve MSAA if necessary. */
@@ -599,8 +601,13 @@ ac_prepare_compute_blit(const struct ac_cs_blit_options *options,
             if (info->gfx_level == GFX6 && blit->dst.surf->bpe == 8)
                return false;
          } else if (is_2d_tiling) {
+            /* Each condition inside the parentheses enables the compute clear for that case. */
             if (!(info->gfx_level == GFX6 && blit->dst.surf->bpe <= 4 && dst_samples == 1) &&
-                !(info->gfx_level == GFX7 && blit->dst.surf->bpe == 1 && dst_samples == 1))
+                !(info->gfx_level == GFX7 && blit->dst.surf->bpe == 1 && dst_samples == 1) &&
+                !(info->gfx_level == GFX12 &&
+                  (blit->dst.surf->bpe <= 2 ||
+                   (blit->dst.surf->bpe == 4 && dst_samples == 8) ||
+                   (blit->dst.surf->bpe == 16 && dst_samples <= 2))))
                return false;
          }
       } else {
@@ -658,7 +665,6 @@ ac_prepare_compute_blit(const struct ac_cs_blit_options *options,
 
          case GFX11:
          case GFX11_5:
-         default:
             /* Verified on Navi31. */
             if (is_resolve) {
                if (!((blit->dst.surf->bpe <= 2 && src_samples == 2) ||
@@ -679,6 +685,11 @@ ac_prepare_compute_blit(const struct ac_cs_blit_options *options,
                      return false;
                }
             }
+            break;
+
+         default:
+         case GFX12:
+            /* Verified on Navi48. */
             break;
          }
       }

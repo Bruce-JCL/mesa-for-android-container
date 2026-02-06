@@ -23,6 +23,7 @@
 #include "util/os_misc.h"
 #include "util/u_process.h"
 #include "vk_android.h"
+#include "vk_debug_utils.h"
 #include "vk_shader_module.h"
 #include "vk_sampler.h"
 #include "vk_util.h"
@@ -278,6 +279,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .EXT_descriptor_buffer = true,
       .EXT_descriptor_indexing = true,
       .EXT_device_address_binding_report = true,
+      .EXT_device_memory_report = true,
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
       .EXT_display_control = true,
 #endif
@@ -315,6 +317,9 @@ get_device_extensions(const struct tu_physical_device *device,
       .EXT_physical_device_drm = !is_kgsl(device->instance),
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
+#ifdef TU_USE_WSI_PLATFORM
+      .EXT_present_timing = device->info->props.has_persistent_counter,
+#endif
       .EXT_primitive_topology_list_restart = true,
       .EXT_primitives_generated_query = true,
       .EXT_private_data = true,
@@ -353,6 +358,10 @@ get_device_extensions(const struct tu_physical_device *device,
       .IMG_filter_cubic = device->info->props.has_tex_filter_cubic,
       .NV_compute_shader_derivatives = device->info->chip >= 7,
       .QCOM_fragment_density_map_offset = true,
+      .QCOM_image_processing = device->info->props.has_image_processing,
+      .QCOM_multiview_per_view_render_areas = true,
+      .QCOM_multiview_per_view_viewports =
+         device->info->props.has_per_view_viewport,
       .QCOM_render_pass_shader_resolve = true,
       .VALVE_fragment_density_map_layered = true,
       .VALVE_mutable_descriptor_type = true,
@@ -637,6 +646,9 @@ tu_get_features(struct tu_physical_device *pdevice,
    /* VK_EXT_device_address_binding_report */
    features->reportAddressBinding = true;
 
+   /* VK_EXT_device_memory_report */
+   features->deviceMemoryReport = true;
+
    /* VK_EXT_extended_dynamic_state */
    features->extendedDynamicState = true;
 
@@ -816,6 +828,11 @@ tu_get_features(struct tu_physical_device *pdevice,
    /* VK_EXT_zero_initialize_device_memory */
    features->zeroInitializeDeviceMemory = true;
 
+   /* VK_QCOM_image_processing */
+   features->textureSampleWeighted = pdevice->vk.supported_extensions.QCOM_image_processing;
+   features->textureBoxFilter = pdevice->vk.supported_extensions.QCOM_image_processing;
+   features->textureBlockMatch = pdevice->vk.supported_extensions.QCOM_image_processing;
+
    /* VK_VALVE_fragment_density_map_layered */
    features->fragmentDensityMapLayered = true;
 
@@ -827,6 +844,19 @@ tu_get_features(struct tu_physical_device *pdevice,
 
    /* VK_EXT_custom_resolve */
    features->customResolve = true;
+
+   /* QCOM_multiview_per_view_viewports */
+   features->multiviewPerViewViewports = true;
+
+   /* QCOM_multiview_per_view_render_areas */
+   features->multiviewPerViewRenderAreas = true;
+
+#ifdef TU_USE_WSI_PLATFORM
+   /* VK_EXT_present_timing */
+   features->presentTiming = true;
+   features->presentAtRelativeTime = true;
+   features->presentAtAbsoluteTime = true;
+#endif
 }
 
 static void
@@ -1506,6 +1536,21 @@ tu_get_properties(struct tu_physical_device *pdevice,
 
    /* VK_VALVE_fragment_density_map_layered */
    props->maxFragmentDensityMapLayers = MAX_VIEWS;
+
+   /* VK_QCOM_image_processing */
+   props->maxWeightFilterPhases = 1024;
+   props->maxWeightFilterDimension =
+      pdevice->vk.supported_extensions.QCOM_image_processing
+         ? (VkExtent2D) { 64, 64 }
+         : (VkExtent2D) { 0, 0 };
+   props->maxBlockMatchRegion =
+      pdevice->vk.supported_extensions.QCOM_image_processing
+         ? (VkExtent2D) { 64, 64 }
+         : (VkExtent2D) { 0, 0 };
+   props->maxBoxFilterBlockSize =
+      pdevice->vk.supported_extensions.QCOM_image_processing
+         ? (VkExtent2D) { 64, 64 }
+         : (VkExtent2D) { 0, 0 };
 }
 
 static const struct vk_pipeline_cache_object_ops *const cache_import_ops[] = {
@@ -2699,7 +2744,6 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
       break;
    case 8:
       /* gen8 TODO: */
-      tu_env.debug |= TU_DEBUG_NOLRZ;     /* WRITE iova faults from UCHE */
       tu_env.debug |= TU_DEBUG_FLUSHALL;  /* dEQP-VK.draw.\*from_compute\* */
       vk_device_dispatch_table_from_entrypoints(
          &dispatch_table, &tu_device_entrypoints_a8xx, false);
@@ -3441,6 +3485,40 @@ tu_destroy_memory(struct tu_device *device,
    vk_object_free(&device->vk, NULL, mem);
 }
 
+static void
+tu_memory_emit_report(struct tu_device *device,
+                      const struct tu_device_memory *mem,
+                      const VkMemoryAllocateInfo *alloc_info,
+                      VkResult result)
+{
+   if (likely(!device->vk.memory_reports))
+      return;
+
+   if (result != VK_SUCCESS) {
+      vk_emit_device_memory_report(
+         &device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT,
+         /* mem_obj_id */ 0, alloc_info->allocationSize,
+         VK_OBJECT_TYPE_DEVICE_MEMORY,
+         /* obj_handle */ 0, alloc_info->memoryTypeIndex);
+      return;
+   }
+
+   VkDeviceMemoryReportEventTypeEXT type;
+   if (alloc_info) {
+      type = mem->vk.import_handle_type
+                ? VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_IMPORT_EXT
+                : VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT;
+   } else {
+      type = mem->vk.import_handle_type
+                ? VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_UNIMPORT_EXT
+                : VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_FREE_EXT;
+   }
+
+   vk_emit_device_memory_report(&device->vk, type, mem->bo->unique_id,
+                                mem->bo->size, VK_OBJECT_TYPE_DEVICE_MEMORY,
+                                (uintptr_t)(mem), mem->vk.memory_type_index);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 tu_AllocateMemory(VkDevice _device,
                   const VkMemoryAllocateInfo *pAllocateInfo,
@@ -3553,6 +3631,7 @@ tu_AllocateMemory(VkDevice _device,
 
    if (result != VK_SUCCESS) {
       vk_device_memory_destroy(&device->vk, pAllocator, &mem->vk);
+      tu_memory_emit_report(device, /* mem */ NULL, pAllocateInfo, result);
       return result;
    }
 
@@ -3565,6 +3644,8 @@ tu_AllocateMemory(VkDevice _device,
    }
 
    TU_RMV(heap_create, device, pAllocateInfo, mem);
+
+   tu_memory_emit_report(device, mem, pAllocateInfo, VK_SUCCESS);
 
    *pMem = tu_device_memory_to_handle(mem);
 
@@ -3630,6 +3711,8 @@ tu_FreeMemory(VkDevice _device,
       return;
 
    TU_RMV(resource_destroy, device, mem);
+
+   tu_memory_emit_report(device, mem, /* alloc_info */ NULL, VK_SUCCESS);
 
    _tu_destroy_memory(device, mem);
 

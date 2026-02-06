@@ -221,6 +221,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       case nir_tex_src_texture_offset:
       case nir_tex_src_texture_handle:
       case nir_tex_src_texture_deref:
+      case nir_tex_src_texture_2_deref:
          if (!tex->texture_non_uniform)
             continue;
          if (!(opts->types & nir_lower_non_uniform_texture_access))
@@ -232,6 +233,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       case nir_tex_src_sampler_offset:
       case nir_tex_src_sampler_handle:
       case nir_tex_src_sampler_deref:
+      case nir_tex_src_sampler_2_deref:
          if (!tex->sampler_non_uniform)
             continue;
          if (!(opts->types & nir_lower_non_uniform_texture_access))
@@ -463,7 +465,7 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
             all_equal_first = nir_iand(&b, all_equal_first, equal_first);
       }
 
-      nir_push_if(&b, all_equal_first);
+      nir_push_if(&b, all_equal_first)->control = nir_selection_control_divergent_always_taken;
 
       util_dynarray_foreach(&data.srcs, struct nu_handle_src, src) {
          for (uint32_t i = 0; i < key->handle_count; i++)

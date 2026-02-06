@@ -113,7 +113,9 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_spirv_1_4 = PAN_ARCH >= 10,
       .KHR_storage_buffer_storage_class = true,
 #ifdef PANVK_USE_WSI_PLATFORM
+      .KHR_present_id = true,
       .KHR_present_id2 = true,
+      .KHR_present_wait = true,
       .KHR_present_wait2 = true,
       .KHR_swapchain = true,
 #endif
@@ -164,6 +166,10 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
       .EXT_pipeline_robustness = true,
+#ifdef PANVK_USE_WSI_PLATFORM
+	  .EXT_present_timing =
+         device->kmod.dev->props.gpu_can_query_timestamp,
+#endif
       .EXT_private_data = true,
       .EXT_primitive_topology_list_restart = true,
       .EXT_provoking_vertex = true,
@@ -185,6 +191,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_vertex_input_dynamic_state = true,
       .EXT_ycbcr_2plane_444_formats = PAN_ARCH >= 10,
       .EXT_ycbcr_image_arrays = PAN_ARCH >= 10,
+      .EXT_zero_initialize_device_memory = true,
       .EXT_inline_uniform_block = true,
       .ANDROID_external_memory_android_hardware_buffer = has_gralloc,
       .ANDROID_native_buffer = has_gralloc,
@@ -301,7 +308,7 @@ panvk_per_arch(get_physical_device_features)(
       .sparseBinding = has_sparse,
       .sparseResidencyBuffer = has_sparse,
       .sparseResidencyImage2D = has_sparse,
-      .sparseResidencyImage3D = false, /* https://gitlab.freedesktop.org/panfrost/mesa/-/issues/242 */
+      .sparseResidencyImage3D = has_sparse,
       .sparseResidency2Samples = false,
       .sparseResidency4Samples = false,
       .sparseResidency8Samples = false,
@@ -534,12 +541,21 @@ panvk_per_arch(get_physical_device_features)(
       /* Video is not currently supported, so set to false */
       .unifiedImageLayoutsVideo = false,
 
+      /* VK_EXT_zero_initialize_device_memory */
+      .zeroInitializeDeviceMemory = true,
+
       /* VK_EXT_mutable_descriptor_type */
       .mutableDescriptorType = PAN_ARCH >= 9,
 
 #ifdef PANVK_USE_WSI_PLATFORM
+      /* VK_KHR_present_id */
+      .presentId = true,
+
       /* VK_KHR_present_id2 */
       .presentId2 = true,
+
+      /* VK_KHR_present_wait */
+      .presentWait = true,
 
       /* VK_KHR_present_wait2 */
       .presentWait2 = true,
@@ -553,6 +569,13 @@ panvk_per_arch(get_physical_device_features)(
 
       /* VK_EXT_multisampled_render_to_single_sampled */
       .multisampledRenderToSingleSampled = true,
+
+#ifdef PANVK_USE_WSI_PLATFORM
+      /* VK_EXT_present_timing */
+      .presentTiming = true,
+      .presentAtRelativeTime = true,
+      .presentAtAbsoluteTime = true,
+#endif
    };
 }
 
@@ -1128,6 +1151,7 @@ panvk_per_arch(get_physical_device_properties)(
       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       VK_IMAGE_LAYOUT_PREINITIALIZED,
+      VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT,
 
       /* Only if vk1.1+ is supported */
 #if PAN_ARCH >= 10

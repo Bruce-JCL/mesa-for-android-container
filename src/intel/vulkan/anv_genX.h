@@ -226,11 +226,7 @@ void genX(cmd_buffer_mark_image_written)(struct anv_cmd_buffer *cmd_buffer,
 
 void genX(cmd_emit_conditional_render_predicate)(struct anv_cmd_buffer *cmd_buffer);
 
-void genX(setup_ray_query_globals)(struct anv_device *device,
-                                   struct anv_bo* bo,
-                                   uint64_t offset,
-                                   void* map,
-                                   uint32_t num_queries);
+struct anv_address genX(cmd_buffer_ray_query_globals)(struct anv_cmd_buffer *cmd_buffer);
 
 void genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
                                        uint32_t total_scratch);
@@ -302,7 +298,8 @@ void genX(batch_emit_fast_color_dummy_blit)(struct anv_batch *batch,
    (struct GENX(BINDLESS_SHADER_RECORD)) {                           \
       .OffsetToLocalArguments = (local_arg_offset) / 8,              \
       .BindlessShaderDispatchMode = RT_SIMD16,                       \
-      .KernelStartPointer = shader->kernel.offset,                   \
+      .KernelStartPointer = shader->replay_kernel.alloc_size != 0 ?  \
+         shader->replay_kernel.offset : shader->kernel.offset,       \
       .RegistersPerThread = ptl_register_blocks(prog_data->base.grf_used), \
    };                                                                \
 })
@@ -317,7 +314,8 @@ void genX(batch_emit_fast_color_dummy_blit)(struct anv_batch *batch,
       .OffsetToLocalArguments = (local_arg_offset) / 8,              \
       .BindlessShaderDispatchMode =                                  \
          prog_data->simd_size == 16 ? RT_SIMD16 : RT_SIMD8,          \
-      .KernelStartPointer = shader->kernel.offset,                   \
+      .KernelStartPointer = shader->replay_kernel.alloc_size != 0 ?  \
+         shader->replay_kernel.offset : shader->kernel.offset,       \
    };                                                                \
 })
 #endif

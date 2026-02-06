@@ -475,6 +475,10 @@ struct ir3_instruction {
          unsigned tex_base : 3;
          unsigned cluster_size : 4;
          type_t type;
+         enum {
+            IR3_MATCH_MODE_SAD = 0, /* Sum of Absolute Difference */
+            IR3_MATCH_MODE_SSD = 1, /* Sum of Squared Differences */
+         } match_mode; /* for block matching textures */
       } cat5;
       struct {
          type_t type;
@@ -749,7 +753,18 @@ struct ir3_block {
 
    uint16_t start_ip, end_ip;
 
+   /**
+    * Is the block a reconvergence point within a wave:
+    */
    bool reconvergence_point;
+
+   /**
+    * If the block is not a recoverngence point within a wave, it may
+    * still be a point where parallel waves recoverge.  This should
+    * be considered for (jp) marking and branchstack, but need not be
+    * considered for constructing physical edges for uGPR allocation.
+    */
+   bool wave_reconvergence_point;
 
    bool in_early_preamble;
 

@@ -1016,6 +1016,7 @@ a7xx_gen2 = GPUProps(
         reading_shading_rate_requires_smask_quirk = True,
         has_ray_intersection = True,
         has_hw_bin_scaling = True,
+        has_image_processing = True,
     )
 
 a7xx_gen3 = GPUProps(
@@ -1043,6 +1044,7 @@ a7xx_gen3 = GPUProps(
         has_abs_bin_mask = True,
         new_control_regs = True,
         has_hw_bin_scaling = True,
+        has_image_processing = True,
     )
 
 a730_magic_regs = dict(
@@ -1437,7 +1439,8 @@ a8xx_base = GPUProps(
         has_dp2acc = False,
         reg_size_vec4 = 96,
         has_rt_workaround = False,
-        supports_double_threadsize = False
+        supports_double_threadsize = False,
+        has_dual_wave_dispatch = True,
     )
 
 a8xx_gen2 = GPUProps(
@@ -1483,7 +1486,7 @@ a8xx_gen2_raw_magic_regs = [
         [A6XXRegs.REG_A7XX_RB_LRZ_CNTL2,      0x00000000],
         [A6XXRegs.REG_A8XX_RB_RESOLVE_CNTL_5, 0x00000001],
 
-        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01,   0x00000001],
+        [A6XXRegs.REG_A7XX_SP_UNKNOWN_AB01,   0x00000000],
         [A6XXRegs.REG_A7XX_SP_HLSQ_MODE_CNTL, 0x00000000],
         [A6XXRegs.REG_A8XX_SP_UNKNOWN_AB23,   0x00000000],
 

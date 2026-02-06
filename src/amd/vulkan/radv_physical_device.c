@@ -124,13 +124,8 @@ radv_video_encode_queue_enabled(const struct radv_physical_device *pdev)
 bool
 radv_compute_queue_enabled(const struct radv_physical_device *pdev)
 {
-   /* Compute queues may run compute dispatches in parallel with
-    * the graphics queue, even from other processes/apps.
-    * At the moment we can't make sure that all compute shaders
-    * use a workgroup size of 256 to mitigate the regalloc hang,
-    * so disable compute queues on affected chips.
-    */
-   if (pdev->info.has_cs_regalloc_hang_bug)
+   /* Compute queues may hang on GFX6, need further investigation before enabling them. */
+   if (pdev->info.gfx_level == GFX6)
       return false;
 
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
@@ -181,6 +176,18 @@ radv_cooperative_matrix2_nv_enabled(const struct radv_physical_device *pdev)
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
    return instance->drirc.features.cooperative_matrix2_nv;
+}
+
+static bool
+radv_bfloat16_enabled(const struct radv_physical_device *pdev)
+{
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   if (pdev->info.gfx_level < GFX11)
+      return false;
+
+   /* GFX11-11.5 has precision issues. */
+   return (instance->perftest_flags & RADV_PERFTEST_BFLOAT16) || pdev->info.gfx_level >= GFX12;
 }
 
 static bool
@@ -650,6 +657,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_incremental_present = true,
 #endif
       .KHR_index_type_uint8 = pdev->info.gfx_level >= GFX8,
+      .KHR_internally_synchronized_queues = true,
       .KHR_line_rasterization = true,
       .KHR_load_store_op_none = true,
       .KHR_maintenance1 = true,
@@ -685,7 +693,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_sampler_ycbcr_conversion = true,
       .KHR_separate_depth_stencil_layouts = true,
       .KHR_shader_atomic_int64 = true,
-      .KHR_shader_bfloat16 = pdev->info.gfx_level >= GFX12, /* GFX11 has precision issues. */
+      .KHR_shader_bfloat16 = radv_bfloat16_enabled(pdev),
       .KHR_shader_clock = true,
       .KHR_shader_draw_parameters = true,
       .KHR_shader_expect_assume = true,
@@ -805,6 +813,10 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_pipeline_library_group_handles = radv_enable_rt(pdev),
       .EXT_pipeline_robustness = !pdev->use_llvm,
       .EXT_post_depth_coverage = pdev->info.gfx_level >= GFX10,
+#ifdef RADV_USE_WSI_PLATFORM
+      /* KHR_calibrated_timestamps is a requirement to expose EXT_present_timing. */
+      .EXT_present_timing = radv_calibrated_timestamps_enabled(pdev),
+#endif
       .EXT_primitive_topology_list_restart = true,
       .EXT_primitives_generated_query = true,
       .EXT_private_data = true,
@@ -1435,7 +1447,7 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
 
       /* VK_KHR_shader_bfloat16 */
       .shaderBFloat16Type = true,
-      .shaderBFloat16DotProduct = true,
+      .shaderBFloat16DotProduct = pdev->info.gfx_level >= GFX12,
       .shaderBFloat16CooperativeMatrix = radv_cooperative_matrix_enabled(pdev),
 
       /* VK_EXT_zero_initialize_device_memory */
@@ -1495,6 +1507,17 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
 
       /* VK_EXT_custom_resolve */
       .customResolve = true,
+
+#ifdef RADV_USE_WSI_PLATFORM
+      /* VK_EXT_present_timing */
+      /* The actual query is deferred to surface time. */
+      .presentTiming = true,
+      .presentAtAbsoluteTime = true,
+      .presentAtRelativeTime = true,
+#endif
+
+      /* VK_KHR_internally_synchronized_queues */
+      .internallySynchronizedQueues = true,
    };
 }
 
@@ -3293,8 +3316,8 @@ fill_array_sizes_structs(const struct radv_physical_device *pdev, struct __vk_ou
          prop.a_type = prop.b_type = bfloat ? VK_COMPONENT_TYPE_BFLOAT16_KHR : VK_COMPONENT_TYPE_FLOAT16_KHR;
          prop.c_type = prop.r_type = fp32 ? VK_COMPONENT_TYPE_FLOAT32_KHR : prop.a_type;
 
-         if (pdev->info.gfx_level < GFX12 && bfloat)
-            continue; /* BF16 isn't working precisely on GFX11. */
+         if (!radv_bfloat16_enabled(pdev) && bfloat)
+            continue;
 
          (*array_size_cb)(base, &prop);
       }

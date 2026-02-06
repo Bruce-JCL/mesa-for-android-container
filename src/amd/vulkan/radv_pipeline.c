@@ -335,8 +335,8 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
    if (progress)
       constant_fold_for_push_const = true;
 
-   NIR_PASS(_, stage->nir, ac_nir_lower_tex,
-            &(ac_nir_lower_tex_options){
+   NIR_PASS(_, stage->nir, ac_nir_lower_image_tex,
+            &(ac_nir_lower_image_tex_options){
                .gfx_level = gfx_level,
                .lower_array_layer_round_even =
                   !pdev->info.conformant_trunc_coord || instance->drirc.debug.disable_trunc_coord,
@@ -640,7 +640,7 @@ radv_get_executable_count(struct radv_pipeline *pipeline)
    return ret;
 }
 
-static struct radv_shader *
+struct radv_shader *
 radv_get_shader_from_executable_index(struct radv_pipeline *pipeline, int index, mesa_shader_stage *stage)
 {
    if (pipeline->type == RADV_PIPELINE_RAY_TRACING) {

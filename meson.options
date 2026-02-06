@@ -865,3 +865,17 @@ option(
   type : 'feature',
   description : 'Use SPIRV-Tools for dumping SPIR-V for debugging purposes (required by CLC)'
 )
+
+option(
+  'allow-broken-lto',
+  type : 'boolean',
+  value : false,
+  description : 'Manual override switch to enable LTO, which is unsupported due to being broken. WARNING: This option may break your driver randomly!'
+)
+
+option(
+  'intel-virtio-experimental',
+  type : 'boolean',
+  value : false,
+  description : 'use experimental virtio backend for intel driver',
+)

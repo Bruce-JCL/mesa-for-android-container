@@ -369,6 +369,13 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
       .shared_fd = os_dupfd_cloexec(fd),
    };
 
+   struct stat st;
+   if (fstat(fd, &st) == 0)
+      /* Use the inode number as the unique ID, but set the MSB to avoid
+       * collisions with 32-bit KGSL handles (which are used for native BOs).
+       */
+      bo->unique_id = st.st_ino | (1ULL << 63);
+
    tu_dump_bo_init(dev, bo);
 
    *out_bo = bo;
@@ -1326,7 +1333,7 @@ kgsl_queue_submit(struct tu_queue *queue, void *_submit,
    uint64_t start_ts = tu_perfetto_begin_submit();
 #endif
 
-   if (submit->commands.size == 0) {
+   if (submit->commands.size == 0 && submit->bind_cmds.size == 0) {
       /* This handles the case where we have a wait and no commands to submit.
        * It is necessary to handle this case separately as the kernel will not
        * advance the GPU timeline if a submit with no commands is made, even

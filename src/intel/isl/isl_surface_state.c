@@ -534,8 +534,31 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
       assert(isl_tiling_is_any_y(info->surf->tiling));
 
    s.TileMode = isl_encode_tiling[info->surf->tiling];
-   if (isl_tiling_is_std_y(info->surf->tiling))
+   if (isl_tiling_is_std_y(info->surf->tiling)) {
       s.TiledResourceMode = isl_tiling_encode_trmode[info->surf->tiling];
+#if GFX_VER >= 11
+      /* Use the ICL swizzles for CMS and UMS surfaces. Although the
+       * RENDER_SURFACE_STATE field of the ICL+ PRMs command us to leave this
+       * bit cleared (and thus use the SKL swizzles), the TGL and DG1 PRMs
+       * seem to explain that the command was based on the lack of driver
+       * support. ISL has support for these swizzles however. From the TGL
+       * PRM:
+       *
+       *    This field should always be programmed to 0h. Tiling mode is the
+       *    standard tile layout for 3D.
+       *
+       *    This field should NOT be programmed to 1h as the Tiling (for
+       *    Standard Tiling) Address Mapping mode is not supported by SW.
+       *
+       * Additionally, the multisampled SKL swizzles for Yf are not explicitly
+       * defined as being applicable for ICL+ in the ICL PRM, Volume 5,
+       * "Tiling for CMS and UMS Surfaces" section. Compare this to the SKL
+       * PRM which provides the same table for multisampled Yf/Ys.
+       */
+      s.TileAddressMappingMode =
+         info->surf->msaa_layout == ISL_MSAA_LAYOUT_ARRAY;
+#endif
+   }
 #elif GFX_VER >= 8
    assert(isl_format_get_layout(info->view->format)->txc != ISL_TXC_ASTC);
    assert(!isl_tiling_is_std_y(info->surf->tiling));
@@ -751,12 +774,12 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
           * compression, this means that we can't even specify MSAA depth CCS
           * in RENDER_SURFACE_STATE::AuxiliarySurfaceMode.
           *
-          * On Xe2+, the above restriction is not mentioned in the
+          * On GFX12.5+, the above restriction is not mentioned in the
           * RENDER_SURFACE_STATE::AuxiliarySurfaceMode.
           *
           * Bspec 57023 (r58975)
           */
-         assert(GFX_VER >= 20 || info->surf->samples == 1);
+         assert(GFX_VERx10 >= 125 || info->surf->samples == 1);
 
          /* Prior to Gfx12, the dimension must not be 3D */
          if (info->aux_usage == ISL_AUX_USAGE_HIZ)
@@ -888,8 +911,15 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
        * doesn't expect our definition of the compression, it expects qpitch
        * in units of samples on the main surface.
        */
-      s.AuxiliarySurfaceQPitch =
-         isl_surf_get_array_pitch_sa_rows(info->aux_surf) >> 2;
+      uint32_t aux_qpitch = isl_surf_get_array_pitch_sa_rows(info->aux_surf);
+
+      /* From RENDER_SURFACE_STATE::AuxiliarySurfaceQPitch on BDW+,
+       *
+       *    This field must be set to an integer multiple of the Surface
+       *    Vertical Alignment
+       */
+      assert(aux_qpitch % image_align.h == 0);
+      s.AuxiliarySurfaceQPitch = aux_qpitch >> 2;
 #endif
    }
 #endif

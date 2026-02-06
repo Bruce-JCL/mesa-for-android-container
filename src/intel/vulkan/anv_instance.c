@@ -29,11 +29,15 @@ static const driOptionDescription anv_dri_options[] = {
       DRI_CONF_ANV_GENERATED_INDIRECT_RING_THRESHOLD(100)
       DRI_CONF_NO_16BIT(false)
       DRI_CONF_INTEL_ENABLE_WA_14018912822(false)
+      DRI_CONF_INTEL_ENABLE_WA_14024015672_MSAA(false)
       DRI_CONF_INTEL_SAMPLER_ROUTE_TO_LSC(false)
       DRI_CONF_ANV_QUERY_CLEAR_WITH_BLORP_THRESHOLD(6)
       DRI_CONF_ANV_QUERY_COPY_WITH_SHADER_THRESHOLD(6)
       DRI_CONF_ANV_FORCE_INDIRECT_DESCRIPTORS(false)
+      DRI_CONF_ANV_DISABLE_LINK_TIME_OPTIMIZATION(false)
       DRI_CONF_SHADER_SPILLING_RATE(11)
+      DRI_CONFIG_INTEL_FORCE_COMPUTE_SURFACE_PREFETCH(false)
+      DRI_CONFIG_INTEL_FORCE_SAMPLER_PREFETCH(false)
       DRI_CONFIG_INTEL_TBIMR(true)
       DRI_CONFIG_INTEL_VF_DISTRIBUTION(true)
       DRI_CONFIG_INTEL_TE_DISTRIBUTION(true)
@@ -180,6 +184,8 @@ anv_init_dri_options(struct anv_instance *instance)
        driQueryOptionb(&instance->dri_options, "no_16bit");
     instance->intel_enable_wa_14018912822 =
        driQueryOptionb(&instance->dri_options, "intel_enable_wa_14018912822");
+    instance->intel_enable_wa_14024015672_msaa =
+       driQueryOptionb(&instance->dri_options, "intel_enable_wa_14024015672_msaa");
     instance->emulate_read_without_format =
        driQueryOptionb(&instance->dri_options, "anv_emulate_read_without_format");
     instance->fp64_workaround_enabled =
@@ -196,6 +202,10 @@ anv_init_dri_options(struct anv_instance *instance)
        driQueryOptioni(&instance->dri_options, "force_vk_vendor");
     instance->has_fake_sparse =
        driQueryOptionb(&instance->dri_options, "fake_sparse");
+    instance->force_sampler_prefetch =
+       driQueryOptionb(&instance->dri_options, "intel_force_sampler_prefetch");
+    instance->force_compute_surface_prefetch =
+       driQueryOptionb(&instance->dri_options, "intel_force_compute_surface_prefetch");
     instance->enable_tbimr = driQueryOptionb(&instance->dri_options, "intel_tbimr");
     instance->enable_vf_distribution =
        driQueryOptionb(&instance->dri_options, "intel_vf_distribution");
@@ -237,6 +247,9 @@ anv_init_dri_options(struct anv_instance *instance)
          */
         instance->force_filter_addr_rounding &= !is_d3d9;
     }
+
+    instance->disable_lto = 
+        driQueryOptionb(&instance->dri_options, "anv_disable_link_time_optimization");
 
     instance->stack_ids = driQueryOptioni(&instance->dri_options, "intel_stack_id");
     switch (instance->stack_ids) {

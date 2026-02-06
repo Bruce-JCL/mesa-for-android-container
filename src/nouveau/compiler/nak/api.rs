@@ -168,6 +168,7 @@ fn nir_options(dev: &nv_device_info) -> nir_shader_compiler_options {
         lower_scmp: true,
         lower_uadd_carry: true,
         lower_usub_borrow: true,
+        has_rotate32: dev.sm >= 32,
         has_iadd3: dev.sm >= 70,
         has_imad32: dev.sm >= 70,
         has_sdot_4x8: dev.sm >= 70,
@@ -298,12 +299,30 @@ impl ShaderBin {
                         },
                     }
                 }
+                ShaderStageInfo::TessellationInit(ts_info) => {
+                    nak_shader_info__bindgen_ty_1 {
+                        ts: nak_shader_info__bindgen_ty_1__bindgen_ty_3 {
+                            domain: 0,
+                            spacing: ts_info
+                                .common
+                                .spacing
+                                .map_or(0, |x| x as u8),
+                            ccw: ts_info.common.ccw,
+                            point_mode: ts_info.common.point_mode,
+                            _pad: Default::default(),
+                        },
+                    }
+                }
                 ShaderStageInfo::Tessellation(ts_info) => {
                     nak_shader_info__bindgen_ty_1 {
                         ts: nak_shader_info__bindgen_ty_1__bindgen_ty_3 {
                             domain: ts_info.domain as u8,
-                            spacing: ts_info.spacing as u8,
-                            prims: ts_info.primitives as u8,
+                            spacing: ts_info
+                                .common
+                                .spacing
+                                .map_or(0, |x| x as u8),
+                            ccw: ts_info.common.ccw,
+                            point_mode: ts_info.common.point_mode,
                             _pad: Default::default(),
                         },
                     }

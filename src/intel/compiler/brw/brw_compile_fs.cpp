@@ -451,82 +451,27 @@ brw_emit_interpolation_setup(brw_shader &s)
       }
    }
 
-   abld = bld.annotate("compute pos.z");
-   brw_reg coarse_z;
-   if (wm_prog_data->coarse_pixel_dispatch != INTEL_NEVER &&
-       wm_prog_data->uses_depth_w_coefficients) {
-      /* In coarse pixel mode, the HW doesn't interpolate Z coordinate
-       * properly. In the same way we have to add the coarse pixel size to
-       * pixels locations, here we recompute the Z value with 2 coefficients
-       * in X & Y axis.
-       *
-       * src_z = (x - xstart)*z_cx + (y - ystart)*z_cy + z_c0
-       */
+   if (wm_prog_data->uses_depth_w_coefficients) {
       brw_reg coef_payload = brw_vec8_grf(payload.depth_w_coef_reg, 0);
-      const brw_reg x_start = devinfo->ver >= 20 ?
+      s.x_start = devinfo->ver >= 20 ?
          brw_vec1_grf(coef_payload.nr, 6) :
          brw_vec1_grf(coef_payload.nr, 2);
-      const brw_reg y_start = devinfo->ver >= 20 ?
+      s.y_start = devinfo->ver >= 20 ?
          brw_vec1_grf(coef_payload.nr, 7) :
          brw_vec1_grf(coef_payload.nr, 6);
-      const brw_reg z_cx    = devinfo->ver >= 20 ?
+      s.z_cx    = devinfo->ver >= 20 ?
          brw_vec1_grf(coef_payload.nr + 1, 1) :
          brw_vec1_grf(coef_payload.nr, 1);
-      const brw_reg z_cy    = devinfo->ver >= 20 ?
+      s.z_cy    = devinfo->ver >= 20 ?
          brw_vec1_grf(coef_payload.nr + 1, 0) :
          brw_vec1_grf(coef_payload.nr, 0);
-      const brw_reg z_c0    = devinfo->ver >= 20 ?
+      s.z_c0    = devinfo->ver >= 20 ?
          brw_vec1_grf(coef_payload.nr + 1, 2) :
          brw_vec1_grf(coef_payload.nr, 3);
-
-      const brw_reg float_pixel_x = abld.vgrf(BRW_TYPE_F);
-      const brw_reg float_pixel_y = abld.vgrf(BRW_TYPE_F);
-
-      abld.MOV(float_pixel_x, s.uw_pixel_x);
-      abld.MOV(float_pixel_y, s.uw_pixel_y);
-
-      abld.ADD(float_pixel_x, float_pixel_x, negate(x_start));
-      abld.ADD(float_pixel_y, float_pixel_y, negate(y_start));
-
-      const brw_reg f_cps_width = abld.vgrf(BRW_TYPE_F);
-      const brw_reg f_cps_height = abld.vgrf(BRW_TYPE_F);
-      abld.MOV(f_cps_width, ub_cps_width);
-      abld.MOV(f_cps_height, ub_cps_height);
-
-      /* Center in the middle of the coarse pixel. */
-      abld.MAD(float_pixel_x, float_pixel_x, f_cps_width, brw_imm_f(0.5f));
-      abld.MAD(float_pixel_y, float_pixel_y, f_cps_height, brw_imm_f(0.5f));
-
-      coarse_z = abld.vgrf(BRW_TYPE_F);
-      abld.MAD(coarse_z, z_c0, z_cx, float_pixel_x);
-      abld.MAD(coarse_z, coarse_z, z_cy, float_pixel_y);
    }
 
    if (wm_prog_data->uses_src_depth)
       s.pixel_z = brw_fetch_payload_reg(bld, payload.source_depth_reg);
-
-   if (wm_prog_data->uses_depth_w_coefficients ||
-       wm_prog_data->uses_src_depth) {
-      switch (wm_prog_data->coarse_pixel_dispatch) {
-      case INTEL_NEVER:
-         break;
-
-      case INTEL_SOMETIMES:
-         /* We cannot enable 3DSTATE_PS_EXTRA::PixelShaderUsesSourceDepth when
-          * coarse is enabled. Here we don't know if it's going to be, but
-          * setting brw_wm_prog_data::uses_src_depth dynamically would disturb
-          * the payload. So instead rely on the computed coarse_z which will
-          * produce a correct value even when coarse is disabled.
-          */
-
-         /* Fallthrough */
-      case INTEL_ALWAYS:
-         assert(!wm_prog_data->uses_src_depth);
-         assert(wm_prog_data->uses_depth_w_coefficients);
-         s.pixel_z = coarse_z;
-         break;
-      }
-   }
 
    if (wm_prog_data->uses_src_w) {
       abld = bld.annotate("compute pos.w");
@@ -1477,6 +1422,21 @@ brw_print_fs_urb_setup(FILE *fp, const struct brw_wm_prog_data *prog_data,
    }
 }
 
+static void
+brw_nir_cleanup_pre_wm_prog_data(brw_pass_tracker *pt)
+{
+   pass_tracker_new_loop(pt);
+
+   do {
+      pass_tracker_new_iteration(pt);
+      BRW_NIR_LOOP_PASS(nir_opt_algebraic);
+      BRW_NIR_LOOP_PASS(nir_opt_copy_prop);
+      BRW_NIR_LOOP_PASS(nir_opt_constant_folding);
+      BRW_NIR_LOOP_PASS(nir_opt_dce);
+      BRW_NIR_LOOP_PASS(nir_opt_cse);
+   } while (pt->progress);
+}
+
 const unsigned *
 brw_compile_fs(const struct brw_compiler *compiler,
                struct brw_compile_fs_params *params)
@@ -1496,17 +1456,24 @@ brw_compile_fs(const struct brw_compiler *compiler,
    const unsigned max_subgroup_size = 32;
    unsigned max_polygons = MAX2(1, params->max_polygons);
 
-   brw_debug_archive_nir(params->base.archiver, nir, 0, "first");
+   brw_pass_tracker pt_ = {
+      .nir = nir,
+      .dispatch_width = 0,
+      .compiler = compiler,
+      .archiver = params->base.archiver,
+   }, *pt = &pt_;
 
-   brw_nir_apply_key(nir, compiler, &key->base, max_subgroup_size);
+   BRW_NIR_SNAPSHOT("first");
+
+   brw_nir_apply_key(pt, &key->base, max_subgroup_size);
 
    if (brw_nir_fragment_shader_needs_wa_18019110168(devinfo, key->mesh_input, nir)) {
       if (params->mue_map && params->mue_map->wa_18019110168_active) {
          brw_nir_frag_convert_attrs_prim_to_vert(
             nir, params->mue_map->per_primitive_offsets);
       } else {
-         NIR_PASS(_, nir, brw_nir_frag_convert_attrs_prim_to_vert_indirect,
-                  devinfo, params);
+         BRW_NIR_PASS(brw_nir_frag_convert_attrs_prim_to_vert_indirect,
+                      devinfo, params);
       }
       /* Remapping per-primitive inputs into unused per-vertex inputs cannot
        * work with multipolygon.
@@ -1517,26 +1484,41 @@ brw_compile_fs(const struct brw_compiler *compiler,
    brw_nir_lower_fs_inputs(nir, devinfo, key);
    brw_nir_lower_fs_outputs(nir);
 
-   if (!brw_can_coherent_fb_fetch(devinfo))
-      NIR_PASS(_, nir, brw_nir_lower_fs_load_output, key);
+   BRW_NIR_SNAPSHOT("after_lower_io");
 
-   NIR_PASS(_, nir, nir_opt_frag_coord_to_pixel_coord);
-   NIR_PASS(_, nir, nir_lower_frag_coord_to_pixel_coord);
+   if (!brw_can_coherent_fb_fetch(devinfo))
+      BRW_NIR_PASS(brw_nir_lower_fs_load_output, key);
+
+   /* Do this lowering before brw_nir_populate_wm_prog_data(). */
+   BRW_NIR_PASS(nir_opt_frag_coord_to_pixel_coord);
+   BRW_NIR_PASS(nir_lower_frag_coord_to_pixel_coord);
+
+   BRW_NIR_PASS(brw_nir_move_interpolation_to_top);
+
+   brw_nir_cleanup_pre_wm_prog_data(pt);
+
+   int per_primitive_offsets[VARYING_SLOT_MAX];
+   memset(per_primitive_offsets, -1, sizeof(per_primitive_offsets));
+
+   brw_nir_populate_wm_prog_data(nir, compiler->devinfo, key, prog_data,
+                                 params->mue_map,
+                                 per_primitive_offsets);
 
    /* From the SKL PRM, Volume 7, "Alpha Coverage":
     *  "If Pixel Shader outputs oMask, AlphaToCoverage is disabled in
     *   hardware, regardless of the state setting for this feature."
     */
-   if (key->alpha_to_coverage != INTEL_NEVER) {
+   if (prog_data->alpha_to_coverage != INTEL_NEVER) {
       /* Run constant fold optimization in order to get the correct source
        * offset to determine render target 0 store instruction in
        * emit_alpha_to_coverage pass.
        */
-      NIR_PASS(_, nir, nir_opt_constant_folding);
-      NIR_PASS(_, nir, brw_nir_lower_alpha_to_coverage);
+      BRW_NIR_PASS(nir_opt_constant_folding);
+      BRW_NIR_PASS(brw_nir_lower_alpha_to_coverage);
    }
 
-   NIR_PASS(_, nir, brw_nir_move_interpolation_to_top);
+   if (prog_data->coarse_pixel_dispatch != INTEL_NEVER)
+      BRW_NIR_PASS(brw_nir_lower_frag_coord_z, devinfo);
 
    if (!brw_wm_prog_key_is_dynamic(key)) {
       uint32_t f = 0;
@@ -1555,10 +1537,13 @@ brw_compile_fs(const struct brw_compiler *compiler,
               INTEL_MSAA_FLAG_PERSAMPLE_INTERP;
       }
 
-      NIR_PASS(_, nir, nir_inline_sysval, nir_intrinsic_load_fs_msaa_intel, f);
+      if (prog_data->coarse_pixel_dispatch == INTEL_ALWAYS)
+         f |= INTEL_MSAA_FLAG_COARSE_RT_WRITES;
+
+      BRW_NIR_PASS(nir_inline_sysval, nir_intrinsic_load_fs_msaa_intel, f);
    }
 
-   brw_postprocess_nir_opts(nir, compiler, key->base.robust_flags);
+   brw_postprocess_nir_opts(pt, key->base.robust_flags);
 
    unsigned pressure[SIMD_COUNT];
    brw_nir_quick_pressure_estimate(nir, devinfo, pressure);
@@ -1569,15 +1554,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
          pressure[i] > compiler->register_pressure_threshold;
    }
 
-   brw_postprocess_nir_out_of_ssa(nir, 0, params->base.archiver,
-                                  debug_enabled);
-
-   int per_primitive_offsets[VARYING_SLOT_MAX];
-   memset(per_primitive_offsets, -1, sizeof(per_primitive_offsets));
-
-   brw_nir_populate_wm_prog_data(nir, compiler->devinfo, key, prog_data,
-                                 params->mue_map,
-                                 per_primitive_offsets);
+   brw_postprocess_nir_out_of_ssa(pt, debug_enabled);
 
    if (unlikely(debug_enabled))
       brw_print_fs_urb_setup(stderr, prog_data, per_primitive_offsets);

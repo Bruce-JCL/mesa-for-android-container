@@ -215,7 +215,6 @@ struct radv_shader_info {
       bool load_provoking_vtx : 1;
       bool load_rasterization_prim : 1;
       bool force_sample_iter_shading_rate : 1;
-      bool uses_fbfetch_output : 1;
       bool allow_flat_shading : 1;
 
       bool has_epilog : 1;
@@ -230,8 +229,6 @@ struct radv_shader_info {
       bool uses_full_subgroups : 1;
       bool linear_taskmesh_dispatch : 1;
       bool has_query : 1; /* Task shader only */
-
-      bool regalloc_hang_bug : 1;
 
       uint32_t derivative_group : 2;
    } cs;

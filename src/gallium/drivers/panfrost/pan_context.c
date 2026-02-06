@@ -28,7 +28,6 @@
 #include "util/u_surface.h"
 #include "util/u_upload_mgr.h"
 #include "util/u_vbuf.h"
-#include "util/perf/cpu_trace.h"
 
 #include "compiler/pan_compiler.h"
 #include "compiler/nir/nir_serialize.h"
@@ -36,15 +35,17 @@
 #include "pan_device.h"
 #include "pan_fence.h"
 #include "pan_screen.h"
+#include "pan_trace.h"
 #include "pan_util.h"
 
 static void
 panfrost_clear(struct pipe_context *pipe, unsigned buffers,
+               uint32_t color_clear_mask, uint8_t stencil_clear_mask,
                const struct pipe_scissor_state *scissor_state,
                const union pipe_color_union *color, double depth,
                unsigned stencil)
 {
-   MESA_TRACE_FUNC();
+   PAN_TRACE_FUNC(PAN_TRACE_GL_CONTEXT);
 
    if (!panfrost_render_condition_check(pan_context(pipe)))
       return;
@@ -89,7 +90,7 @@ void
 panfrost_flush(struct pipe_context *pipe, struct pipe_fence_handle **fence,
                unsigned flags)
 {
-   MESA_TRACE_FUNC();
+   PAN_TRACE_FUNC(PAN_TRACE_GL_CONTEXT);
 
    struct panfrost_context *ctx = pan_context(pipe);
    struct panfrost_device *dev = pan_device(pipe->screen);
@@ -532,6 +533,8 @@ panfrost_render_condition(struct pipe_context *pipe, struct pipe_query *query,
 static void
 panfrost_destroy(struct pipe_context *pipe)
 {
+   PAN_TRACE_FUNC(PAN_TRACE_GL_CONTEXT);
+
    struct panfrost_context *panfrost = pan_context(pipe);
    struct panfrost_device *dev = pan_device(pipe->screen);
 
@@ -981,6 +984,8 @@ static const struct debug_named_value panfrost_prio_options[] = {
 struct pipe_context *
 panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
 {
+   PAN_TRACE_FUNC(PAN_TRACE_GL_CONTEXT);
+
    struct panfrost_context *ctx = rzalloc(NULL, struct panfrost_context);
 
    if (!ctx)

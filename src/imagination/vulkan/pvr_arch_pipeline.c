@@ -47,16 +47,19 @@
 #include "pvr_entrypoints.h"
 #include "pvr_hw_pass.h"
 #include "pvr_macros.h"
+#include "pvr_nir_lower_ycbcr.h"
 #include "pvr_pass.h"
 #include "pvr_pds.h"
 #include "pvr_physical_device.h"
 #include "pvr_robustness.h"
+#include "pvr_sampler.h"
 #include "pvr_types.h"
 #include "pvr_usc.h"
 
 #include "util/log.h"
 #include "util/macros.h"
 #include "util/ralloc.h"
+#include "util/shader_stats.h"
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
 #include "vk_alloc.h"
@@ -930,6 +933,40 @@ static void pvr_postprocess_shader_data(pco_data *data,
                                         struct vk_pipeline_layout *layout,
                                         struct usc_mrt_setup *setup);
 
+struct lower_ycbcr_state {
+   uint32_t set_layout_count;
+   struct vk_descriptor_set_layout *const *set_layouts;
+};
+
+static const struct vk_ycbcr_conversion_state *
+lookup_ycbcr_conversion(const void *_state,
+                        uint32_t set,
+                        uint32_t binding,
+                        uint32_t array_index)
+{
+   const struct lower_ycbcr_state *state = _state;
+   assert(set < state->set_layout_count);
+   assert(state->set_layouts[set] != NULL);
+   const struct pvr_descriptor_set_layout *set_layout =
+      vk_to_pvr_descriptor_set_layout(state->set_layouts[set]);
+   assert(binding < set_layout->binding_count);
+
+   const struct pvr_descriptor_set_layout_binding *bind_layout =
+      &set_layout->bindings[binding];
+
+   if (bind_layout->immutable_samplers == NULL)
+      return NULL;
+
+   array_index = MIN2(array_index, bind_layout->immutable_sampler_count - 1);
+
+   const struct pvr_sampler *sampler =
+      bind_layout->immutable_samplers[array_index];
+
+   return sampler && sampler->vk.ycbcr_conversion
+             ? &sampler->vk.ycbcr_conversion->state
+             : NULL;
+}
+
 /******************************************************************************
    Compute pipeline functions
  ******************************************************************************/
@@ -983,6 +1020,16 @@ static VkResult pvr_compute_pipeline_compile(
                               layout,
                               NULL,
                               NULL);
+
+   const struct lower_ycbcr_state ycbcr_state = {
+      .set_layout_count = layout->set_count,
+      .set_layouts = layout->set_layouts,
+   };
+   NIR_PASS(_,
+            nir,
+            nir_pvr_lower_ycbcr_tex,
+            lookup_ycbcr_conversion,
+            &ycbcr_state);
    pco_lower_nir(pco_ctx, nir, &shader_data);
    pco_postprocess_nir(pco_ctx, nir, &shader_data);
    pvr_postprocess_shader_data(&shader_data, nir, pCreateInfo, layout, NULL);
@@ -997,6 +1044,21 @@ static VkResult pvr_compute_pipeline_compile(
    pco_encode_ir(pco_ctx, cs);
 
    pvr_compute_state_save(compute_pipeline, cs);
+
+   if (pCreateInfo->flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) {
+      struct pvr_stats stats = pco_get_pvr_stats(cs);
+      compute_pipeline->cs_stats =
+         vk_zalloc2(&device->vk.alloc,
+                    allocator,
+                    sizeof(stats),
+                    8,
+                    VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+
+      if (!compute_pipeline->cs_stats)
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+      memcpy(compute_pipeline->cs_stats, &stats, sizeof(stats));
+   }
 
    result = pvr_gpu_upload_usc(device,
                                pco_shader_binary_data(cs),
@@ -1145,6 +1207,8 @@ static void pvr_compute_pipeline_destroy(
 
    pvr_pipeline_finish(device, &compute_pipeline->base);
 
+   vk_free2(&device->vk.alloc, allocator, compute_pipeline->cs_stats);
+
    vk_free2(&device->vk.alloc, allocator, compute_pipeline);
 }
 
@@ -1228,6 +1292,9 @@ pvr_graphics_pipeline_destroy(struct pvr_device *const device,
 
    pvr_pipeline_destroy_shader_data(&gfx_pipeline->vs_data);
    pvr_pipeline_destroy_shader_data(&gfx_pipeline->fs_data);
+
+   vk_free2(&device->vk.alloc, allocator, gfx_pipeline->vs_stats);
+   vk_free2(&device->vk.alloc, allocator, gfx_pipeline->fs_stats);
 
    vk_free2(&device->vk.alloc, allocator, gfx_pipeline);
 }
@@ -2822,6 +2889,15 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
                                  state,
                                  &mrt_setup);
 
+      const struct lower_ycbcr_state ycbcr_state = {
+         .set_layout_count = layout->set_count,
+         .set_layouts = layout->set_layouts,
+      };
+      NIR_PASS(_,
+               nir_shaders[stage],
+               nir_pvr_lower_ycbcr_tex,
+               lookup_ycbcr_conversion,
+               &ycbcr_state);
       pco_lower_nir(pco_ctx, nir_shaders[stage], &shader_data[stage]);
 
       pco_postprocess_nir(pco_ctx, nir_shaders[stage], &shader_data[stage]);
@@ -2858,6 +2934,20 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
 
    pvr_vertex_state_save(gfx_pipeline, *vs);
 
+   if (pCreateInfo->flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) {
+      struct pvr_stats stats = pco_get_pvr_stats(*vs);
+      gfx_pipeline->vs_stats = vk_zalloc2(&device->vk.alloc,
+                                          allocator,
+                                          sizeof(stats),
+                                          8,
+                                          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+
+      if (!gfx_pipeline->vs_stats)
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+      memcpy(gfx_pipeline->vs_stats, &stats, sizeof(stats));
+   }
+
    pvr_graphics_pipeline_setup_vertex_dma(gfx_pipeline,
                                           pCreateInfo->pVertexInputState,
                                           state->vi,
@@ -2874,6 +2964,20 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
 
    if (*fs) {
       pvr_fragment_state_save(gfx_pipeline, *fs);
+
+      if (pCreateInfo->flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) {
+         struct pvr_stats stats = pco_get_pvr_stats(*fs);
+         gfx_pipeline->fs_stats = vk_zalloc2(&device->vk.alloc,
+                                             allocator,
+                                             sizeof(stats),
+                                             8,
+                                             VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+
+         if (!gfx_pipeline->fs_stats)
+            return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+         memcpy(gfx_pipeline->fs_stats, &stats, sizeof(stats));
+      }
 
       pvr_graphics_pipeline_setup_fragment_coeff_program(
          gfx_pipeline,
@@ -3247,4 +3351,158 @@ void PVR_PER_ARCH(DestroyPipeline)(VkDevice _device,
    default:
       UNREACHABLE("Unknown pipeline type.");
    }
+}
+
+static uint32_t pvr_get_executable_count(struct pvr_pipeline *pipeline)
+{
+   uint32_t exe_count = 0;
+
+   switch (pipeline->type) {
+   case PVR_PIPELINE_TYPE_GRAPHICS: {
+      struct pvr_graphics_pipeline *const gfx_pipeline =
+         to_pvr_graphics_pipeline(pipeline);
+
+      for (mesa_shader_stage stage = 0; stage < MESA_SHADER_STAGES; ++stage) {
+         size_t stage_index = gfx_pipeline->stage_indices[stage];
+
+         if (stage_index != ~0)
+            exe_count++;
+      }
+      break;
+   }
+
+   case PVR_PIPELINE_TYPE_COMPUTE: {
+      /* Compute pipelines always only have one executable. */
+      exe_count = 1;
+      break;
+   }
+
+   default:
+      UNREACHABLE("Unknown pipeline type.");
+   }
+
+   return exe_count;
+}
+
+VkResult pvr_GetPipelineExecutableStatisticsKHR(
+   UNUSED VkDevice _device,
+   const VkPipelineExecutableInfoKHR *pExecutableInfo,
+   uint32_t *pStatisticCount,
+   VkPipelineExecutableStatisticKHR *pStatistics)
+{
+   VK_FROM_HANDLE(pvr_pipeline, pipeline, pExecutableInfo->pipeline);
+   VK_OUTARRAY_MAKE_TYPED(VkPipelineExecutableStatisticKHR,
+                          out,
+                          pStatistics,
+                          pStatisticCount);
+
+   switch (pipeline->type) {
+   case PVR_PIPELINE_TYPE_GRAPHICS: {
+      struct pvr_graphics_pipeline *const gfx_pipeline =
+         to_pvr_graphics_pipeline(pipeline);
+
+      if (pExecutableInfo->executableIndex == 0) {
+         vk_add_pvr_stats(out, gfx_pipeline->vs_stats);
+      } else {
+         assert(pExecutableInfo->executableIndex == 1);
+         vk_add_pvr_stats(out, gfx_pipeline->fs_stats);
+      }
+      break;
+   }
+
+   case PVR_PIPELINE_TYPE_COMPUTE: {
+      struct pvr_compute_pipeline *const compute_pipeline =
+         to_pvr_compute_pipeline(pipeline);
+
+      assert(pExecutableInfo->executableIndex == 0);
+      vk_add_pvr_stats(out, compute_pipeline->cs_stats);
+      break;
+   }
+
+   default:
+      UNREACHABLE("Unknown pipeline type.");
+   }
+
+   return vk_outarray_status(&out);
+}
+
+VkResult pvr_GetPipelineExecutablePropertiesKHR(
+   VkDevice _device,
+   const VkPipelineInfoKHR *pPipelineInfo,
+   uint32_t *pExecutableCount,
+   VkPipelineExecutablePropertiesKHR *pProperties)
+{
+   VK_FROM_HANDLE(pvr_device, device, _device);
+   VK_FROM_HANDLE(pvr_pipeline, pipeline, pPipelineInfo->pipeline);
+   ASSERTED uint32_t actualExeCount = pvr_get_executable_count(pipeline);
+
+   /* Due to individual shaders currently being stored as individual members
+    * of pvr_graphics_pipeline, if support is added for a new shader stage,
+    * this code will need to be updated.
+    */
+   assert(actualExeCount >= 1 && actualExeCount <= 2);
+
+   VK_OUTARRAY_MAKE_TYPED(VkPipelineExecutablePropertiesKHR,
+                          out,
+                          pProperties,
+                          pExecutableCount);
+
+   switch (pipeline->type) {
+   case PVR_PIPELINE_TYPE_GRAPHICS: {
+      struct pvr_graphics_pipeline *const gfx_pipeline =
+         to_pvr_graphics_pipeline(pipeline);
+
+      vk_outarray_append_typed (VkPipelineExecutablePropertiesKHR,
+                                &out,
+                                vertProps) {
+         vertProps->stages |= VK_SHADER_STAGE_VERTEX_BIT;
+         VK_COPY_STR(vertProps->name, "vertex");
+         VK_COPY_STR(vertProps->description, "Vulkan Vertex Shader");
+         vertProps->subgroupSize = device->pdevice->vk.properties.subgroupSize;
+      }
+
+      if (gfx_pipeline->stage_indices[MESA_SHADER_FRAGMENT] != ~0) {
+         vk_outarray_append_typed (VkPipelineExecutablePropertiesKHR,
+                                   &out,
+                                   fragProps) {
+            fragProps->stages |= VK_SHADER_STAGE_FRAGMENT_BIT;
+            VK_COPY_STR(fragProps->name, "fragment");
+            VK_COPY_STR(fragProps->description, "Vulkan Fragment Shader");
+            fragProps->subgroupSize =
+               device->pdevice->vk.properties.subgroupSize;
+         }
+      }
+
+      break;
+   }
+
+   case PVR_PIPELINE_TYPE_COMPUTE: {
+      vk_outarray_append_typed (VkPipelineExecutablePropertiesKHR,
+                                &out,
+                                compProps) {
+         compProps->stages = VK_SHADER_STAGE_COMPUTE_BIT;
+         VK_COPY_STR(compProps->name, "compute");
+         VK_COPY_STR(compProps->description, "Vulkan Compute Shader");
+         compProps->subgroupSize = device->pdevice->vk.properties.subgroupSize;
+      }
+      break;
+   }
+   default:
+      UNREACHABLE("Unknown pipeline type.");
+   }
+
+   return vk_outarray_status(&out);
+}
+
+VkResult pvr_GetPipelineExecutableInternalRepresentationsKHR(
+   UNUSED VkDevice _device,
+   UNUSED const VkPipelineExecutableInfoKHR *pExecutableInfo,
+   uint32_t *pInternalRepresentationCount,
+   UNUSED VkPipelineExecutableInternalRepresentationKHR
+      *pInternalRepresentations)
+{
+   pvr_finishme("Add support for requesting intermediate representations.");
+   *pInternalRepresentationCount = 0;
+
+   return VK_SUCCESS;
 }

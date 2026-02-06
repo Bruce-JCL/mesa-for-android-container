@@ -147,8 +147,11 @@ get_device_extensions(const struct anv_physical_device *device,
                       struct vk_device_extension_table *ext)
 {
    const bool rt_enabled = ANV_SUPPORT_RT && device->info.has_ray_tracing;
+   const bool hw_video_encode_supported = device->info.verx10 < 125;
+   const bool video_encode_enabled = hw_video_encode_supported &&
+                                     (device->instance->debug & ANV_DEBUG_VIDEO_ENCODE);
    const bool video_decode_enabled = device->instance->debug & ANV_DEBUG_VIDEO_DECODE;
-   const bool video_encode_enabled = device->instance->debug & ANV_DEBUG_VIDEO_ENCODE;
+
 
    *ext = (struct vk_device_extension_table) {
       .KHR_8bit_storage                      = true,
@@ -189,6 +192,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .KHR_incremental_present               = true,
 #endif
       .KHR_index_type_uint8                  = true,
+      .KHR_internally_synchronized_queues    = true,
       .KHR_line_rasterization                = true,
       .KHR_load_store_op_none                = true,
       .KHR_maintenance1                      = true,
@@ -308,7 +312,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_extended_dynamic_state3           = true,
       .EXT_external_memory_acquire_unmodified = true,
       .EXT_external_memory_dma_buf           = true,
-      .EXT_external_memory_host              = true,
+      .EXT_external_memory_host              = device->info.has_userptr_uapi,
       .EXT_fragment_shader_interlock         = true,
       .EXT_global_priority                   = device->max_context_priority >=
                                                VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR,
@@ -355,6 +359,9 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_pipeline_protected_access         = device->has_protected_contexts,
       .EXT_pipeline_robustness               = true,
       .EXT_post_depth_coverage               = true,
+#ifdef ANV_USE_WSI_PLATFORM
+      .EXT_present_timing                    = device->has_reg_timestamp,
+#endif
       .EXT_primitive_topology_list_restart   = true,
       .EXT_primitives_generated_query        = true,
       .EXT_private_data                      = true,
@@ -712,7 +719,7 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_ray_tracing_pipeline */
       .rayTracingPipeline = rt_enabled,
-      .rayTracingPipelineShaderGroupHandleCaptureReplay = false,
+      .rayTracingPipelineShaderGroupHandleCaptureReplay = true,
       .rayTracingPipelineShaderGroupHandleCaptureReplayMixed = false,
       .rayTracingPipelineTraceRaysIndirect = rt_enabled,
       .rayTraversalPrimitiveCulling = rt_enabled,
@@ -1006,6 +1013,16 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_pipeline_binary */
       .pipelineBinaries = true,
+
+#ifdef ANV_USE_WSI_PLATFORM
+      /* VK_EXT_present_timing */
+      .presentTiming = true,
+      .presentAtRelativeTime = true,
+      .presentAtAbsoluteTime = true,
+#endif
+
+      /* VK_KHR_internally_synchronized_queues */
+      .internallySynchronizedQueues = true,
    };
 
    /* The new DOOM and Wolfenstein games require depthBounds without
@@ -1612,7 +1629,8 @@ get_properties(const struct anv_physical_device *pdevice,
       /* MemRay::hitGroupSRBasePtr requires 16B alignment */
       props->shaderGroupBaseAlignment = 16;
       props->shaderGroupHandleAlignment = 16;
-      props->shaderGroupHandleCaptureReplaySize = 32;
+      props->shaderGroupHandleCaptureReplaySize =
+         sizeof(struct anv_shader_group_rt_replay);
       props->maxRayDispatchInvocationCount = 1U << 30; /* required min limit */
       props->maxRayHitAttributeSize = BRW_RT_SIZEOF_HIT_ATTRIB_DATA;
    }
@@ -2618,16 +2636,12 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
    struct anv_instance *instance =
       container_of(vk_instance, struct anv_instance, vk);
 
-   if (!(drm_device->available_nodes & (1 << DRM_NODE_RENDER)) ||
-       drm_device->bustype != DRM_BUS_PCI ||
-       drm_device->deviceinfo.pci->vendor_id != 0x8086)
-      return VK_ERROR_INCOMPATIBLE_DRIVER;
-
    const char *primary_path = drm_device->nodes[DRM_NODE_PRIMARY];
    const char *path = drm_device->nodes[DRM_NODE_RENDER];
    VkResult result;
    int fd;
    int master_fd = -1;
+   int ret;
 
    process_intel_debug_variable();
 
@@ -2639,6 +2653,22 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
       }
       return vk_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
                        "Unable to open device %s: %m", path);
+   }
+
+   ret = intel_virtio_init_fd(fd);
+   if (ret < 0) {
+      result = VK_ERROR_INCOMPATIBLE_DRIVER;
+      goto fail_fd;
+   }
+
+   bool is_virtio = ret > 0;
+   if (!is_virtio) {
+      if (!(drm_device->available_nodes & (1 << DRM_NODE_RENDER)) ||
+         drm_device->bustype != DRM_BUS_PCI ||
+         drm_device->deviceinfo.pci->vendor_id != 0x8086) {
+         result = VK_ERROR_INCOMPATIBLE_DRIVER;
+         goto fail_fd;
+      }
    }
 
    struct intel_device_info devinfo;
@@ -2745,7 +2775,13 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
    device->has_cooperative_matrix =
       device->info.cooperative_matrix_configurations[0].scope != INTEL_CMAT_SCOPE_NONE;
 
-   device->sync_syncobj_type = vk_drm_syncobj_get_type(fd);
+   if (is_virtio) {
+      struct util_sync_provider *sync = intel_virtio_sync_provider(fd);
+      device->sync_syncobj_type = vk_drm_syncobj_get_type_from_provider(sync);
+   } else {
+      device->sync_syncobj_type = vk_drm_syncobj_get_type(fd);
+   }
+
    assert(vk_sync_type_is_drm_syncobj(&device->sync_syncobj_type));
    assert(device->sync_syncobj_type.features & VK_SYNC_FEATURE_TIMELINE);
    assert(device->sync_syncobj_type.features & VK_SYNC_FEATURE_CPU_WAIT);
@@ -2899,6 +2935,7 @@ fail_base:
 fail_alloc:
    vk_free(&instance->vk.alloc, device);
 fail_fd:
+   intel_virtio_unref_fd(fd);
    close(fd);
    if (master_fd != -1)
       close(master_fd);
@@ -2917,6 +2954,7 @@ anv_physical_device_destroy(struct vk_physical_device *vk_device)
    anv_physical_device_free_disk_cache(device);
    ralloc_free(device->compiler);
    intel_perf_free(device->perf);
+   intel_virtio_unref_fd(device->local_fd);
    close(device->local_fd);
    if (device->master_fd >= 0)
       close(device->master_fd);

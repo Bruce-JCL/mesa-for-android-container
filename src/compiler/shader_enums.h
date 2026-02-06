@@ -374,6 +374,9 @@ typedef enum
    VARYING_SLOT_TASK_COUNT = VARYING_SLOT_BOUNDING_BOX0, /* Only appears in TASK. */
    VARYING_SLOT_CULL_PRIMITIVE = VARYING_SLOT_BOUNDING_BOX0, /* Only appears in MESH. */
 
+   VARYING_SLOT_GS_HEADER_IR3 = VARYING_SLOT_BOUNDING_BOX0, /* VS/TES output and GS input */
+   VARYING_SLOT_GS_VERTEX_FLAGS_IR3 = VARYING_SLOT_BOUNDING_BOX1, /* GS output */
+
    VARYING_SLOT_VAR0 = 32, /* First generic varying slot */
    /* the remaining are simply for the benefit of gl_varying_slot_name()
     * and not to be construed as an upper bound:
@@ -1251,29 +1254,18 @@ enum gl_access_qualifier
     * fusion feature.
     */
    ACCESS_FUSED_EU_DISABLE_INTEL = (1 << 19),
-};
 
-/**
- * \brief Blend support qualifiers
- */
-enum gl_advanced_blend_mode
-{
-   BLEND_NONE = 0,
-   BLEND_MULTIPLY,
-   BLEND_SCREEN,
-   BLEND_OVERLAY,
-   BLEND_DARKEN,
-   BLEND_LIGHTEN,
-   BLEND_COLORDODGE,
-   BLEND_COLORBURN,
-   BLEND_HARDLIGHT,
-   BLEND_SOFTLIGHT,
-   BLEND_DIFFERENCE,
-   BLEND_EXCLUSION,
-   BLEND_HSL_HUE,
-   BLEND_HSL_SATURATION,
-   BLEND_HSL_COLOR,
-   BLEND_HSL_LUMINOSITY,
+   /**
+    * Whether the last returned component describes whether the address
+    * is resident, which is an opaque value that can be interpreted by
+    * nir_intrinsic_is_sparse_texels_resident.
+    *
+    * This only applies to nir_intrinsic_load_buffer_amd for now.
+    *
+    * TODO: Consider using this everywhere instead of having separate
+    *       intrinsics for sparse.
+    */
+   ACCESS_SPARSE = (1 << 20),
 };
 
 enum gl_tess_spacing

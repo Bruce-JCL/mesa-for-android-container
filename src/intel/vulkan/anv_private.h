@@ -53,6 +53,7 @@
 #include "compiler/brw/brw_compiler.h"
 #include "compiler/brw/brw_rt.h"
 #include "ds/intel_driver_ds.h"
+#include "dev/virtio/intel_virtio.h"
 #include "util/bitset.h"
 #include "util/bitscan.h"
 #include "util/cache_ops.h"
@@ -611,9 +612,6 @@ anv_bo_ref(struct anv_bo *bo)
    p_atomic_inc(&bo->refcount);
    return bo;
 }
-
-enum intel_device_info_mmap_mode
-anv_bo_get_mmap_mode(struct anv_device *device, struct anv_bo *bo);
 
 static inline bool
 anv_bo_needs_host_cache_flush(enum anv_bo_alloc_flags alloc_flags)
@@ -1283,12 +1281,19 @@ struct anv_shader_alloc anv_shader_heap_alloc(struct anv_shader_heap *heap,
                                               uint64_t size,
                                               uint64_t align,
                                               bool capture_replay,
-                                              uint64_t requested_addr);
+                                              uint64_t requested_offset);
 void anv_shader_heap_free(struct anv_shader_heap *heap, struct anv_shader_alloc alloc);
 
 void anv_shader_heap_upload(struct anv_shader_heap *heap,
                             struct anv_shader_alloc alloc,
                             const void *data, uint64_t size);
+
+struct anv_shader_group_rt_replay {
+   uint64_t general;
+   uint64_t closest_hit;
+   uint64_t any_hit;
+   uint64_t intersection;
+};
 
 struct anv_shader {
    struct vk_shader vk;
@@ -1317,6 +1322,10 @@ struct anv_shader {
     * Array of pointers of length bind_map.embedded_sampler_count
     */
    struct anv_embedded_sampler **embedded_samplers;
+
+   /* Mutex to protect the lazy replay allocation */
+   simple_mtx_t replay_mutex;
+   struct anv_shader_alloc replay_kernel;
 
    struct anv_reloc_list relocs;
 
@@ -1393,6 +1402,23 @@ struct anv_shader {
 };
 
 extern struct vk_device_shader_ops anv_device_shader_ops;
+
+void anv_write_rt_shader_group(struct vk_device *vk_device,
+                               VkRayTracingShaderGroupTypeKHR type,
+                               const struct vk_shader **shaders,
+                               uint32_t shader_count,
+                               void *output);
+
+void anv_write_rt_shader_group_replay_handle(struct vk_device *vk_device,
+                                             const struct vk_shader **shaders,
+                                             uint32_t shader_count,
+                                             void *output);
+
+void anv_replay_rt_shader_group(struct vk_device *vk_device,
+                                VkRayTracingShaderGroupTypeKHR type,
+                                uint32_t shader_count,
+                                struct vk_shader **vk_shaders,
+                                const void *replay_data);
 
 /* Physical device */
 
@@ -1785,10 +1811,18 @@ struct anv_instance {
     bool                                        custom_border_colors_without_format;
     bool                                        vf_component_packing;
     bool                                        large_workgroup_non_coherent_image_workaround;
+    bool                                        force_sampler_prefetch;
+    bool                                        force_compute_surface_prefetch;
 
     /* HW workarounds */
     bool                                        no_16bit;
     bool                                        intel_enable_wa_14018912822;
+    bool                                        intel_enable_wa_14024015672_msaa;
+
+    /**
+     * Performance workarounds
+     */
+    bool                                        disable_lto;
 
     /**
      * Ray tracing configuration.
@@ -2532,9 +2566,6 @@ struct anv_device {
     /** List of anv_image objects with a private binding for implicit CCS */
     struct list_head                            image_private_objects;
 
-    /** List of anv_bvh_dump objects that get dumped on cmd buf completion */
-    struct list_head                            bvh_dumps;
-
     /** Memory pool for batch buffers */
     struct anv_bo_pool                          batch_bo_pool;
     /** Memory pool for utrace timestamp buffers */
@@ -2625,11 +2656,22 @@ struct anv_device {
 
     uint32_t                                    protected_session_id;
 
-    /** Pool of ray query buffers used to communicated with HW unit.
+    /** Shadow ray query BO
+     *
+     * The ray_query_bo only holds the current ray being traced. When using
+     * more than 1 ray query per thread, we cannot fit all the queries in
+     * there, so we need a another buffer to hold query data that is not
+     * currently being used by the HW for tracing, similar to a scratch space.
+     *
+     * The size of the shadow buffer depends on the number of queries per
+     * shader.
      *
      * We might need a buffer per queue family due to Wa_14022863161.
      */
-    struct anv_bo                              *ray_query_bos[2][16];
+    struct anv_bo                              *ray_query_shadow_bos[2][16];
+    /** Ray query buffer used to communicated with HW unit.
+     */
+    struct anv_bo                              *ray_query_bo[2];
 
     struct anv_shader_internal                 *rt_trampoline;
     struct anv_shader_internal                 *rt_trivial_return;
@@ -2925,7 +2967,11 @@ VkResult anv_device_wait(struct anv_device *device, struct anv_bo *bo,
 VkResult anv_device_print_init(struct anv_device *device);
 void anv_device_print_fini(struct anv_device *device);
 
-void anv_dump_bvh_to_files(struct anv_device *device);
+void anv_get_pending_bvh_dumps(struct list_head *list,
+                               uint32_t cmd_buffer_count,
+                               struct anv_cmd_buffer **cmd_buffers);
+
+void anv_dump_bvh_to_files(struct anv_device *device, struct list_head *list);
 
 void anv_wait_for_attach(void);
 
@@ -2953,12 +2999,6 @@ anv_queue_post_submit(struct anv_queue *queue, VkResult submit_result)
       if (result != VK_SUCCESS)
          result = vk_queue_set_lost(&queue->vk, "sync wait failed");
    }
-
-#if ANV_SUPPORT_RT
-   /* The recorded bvh is dumped to files upon command buffer completion */
-   if (INTEL_DEBUG_BVH_ANY)
-      anv_dump_bvh_to_files(queue->device);
-#endif
 
    return result;
 }
@@ -4236,19 +4276,10 @@ struct anv_push_constants {
     */
    uint32_t surfaces_base_offset;
 
-   /**
-    * Pointer to ray query stacks and their associated pairs of
-    * RT_DISPATCH_GLOBALS structures (see genX(setup_ray_query_globals))
+   /** Ray query globals
     *
-    * The pair of globals for each query object are stored counting up from
-    * this address in units of BRW_RT_DISPATCH_GLOBALS_ALIGN:
-    *
-    *    rq_globals = ray_query_globals + (rq * BRW_RT_DISPATCH_GLOBALS_ALIGN)
-    *
-    * The raytracing scratch area for each ray query is stored counting down
-    * from this address in units of brw_rt_ray_queries_stacks_stride(devinfo):
-    *
-    *    rq_stacks_addr = ray_query_globals - (rq * ray_queries_stacks_stride)
+    * Pointer to a couple of RT_DISPATCH_GLOBALS structures (see
+    * genX(cmd_buffer_ray_query_globals))
     */
    uint64_t ray_query_globals;
 
@@ -4732,7 +4763,7 @@ struct anv_cmd_state {
    enum isl_aux_op                              color_aux_op;
 
    /**
-    * Whether RHWO optimization is enabled (Wa_1508744258).
+    * Whether RHWO optimization is enabled (Wa_1508744258 and Wa_14024015672).
     */
    bool                                         rhwo_optimization_enabled;
 
@@ -4751,14 +4782,9 @@ struct anv_cmd_state {
    unsigned                                     current_hash_scale;
 
    /**
-    * Number of ray query buffers allocated.
+    * A buffer used for spill/fill of ray queries.
     */
-   uint32_t                                     num_ray_query_globals;
-
-   /**
-    * Current array of RT_DISPATCH_GLOBALS for ray queries.
-    */
-   struct anv_address                           ray_query_globals;
+   struct anv_bo *                              ray_query_shadow_bo;
 
    /** Pointer to the last emitted COMPUTE_WALKER.
     *
@@ -4926,6 +4952,9 @@ struct anv_cmd_buffer {
       struct anv_video_session *vid;
       struct vk_video_session_parameters *params;
    } video;
+
+   /** List of anv_bvh_dump objects that get dumped on cmd buf completion */
+   struct list_head                            bvh_dumps;
 
    /**
     * Companion RCS command buffer to support the MSAA operations on compute
@@ -5527,9 +5556,6 @@ anv_get_vbo_format(const struct anv_physical_device *device, VkFormat vk_format)
    return format != NULL ? format->planes[0].vbo_format : ISL_FORMAT_UNSUPPORTED;
 }
 
-bool anv_format_supports_ccs_e(const struct anv_physical_device *device,
-                               const enum isl_format format);
-
 bool anv_formats_ccs_e_compatible(const struct anv_physical_device *device,
                                   VkImageCreateFlags create_flags,
                                   VkFormat vk_format, VkImageTiling vk_tiling,
@@ -5656,12 +5682,6 @@ struct anv_image {
     * Image is a WSI image
     */
    bool from_wsi;
-
-   /**
-    * Image is a WSI blit src image, it will never be scanout directly to
-    * display but will be copied to a dma-buf that can be scanout.
-    */
-   bool wsi_blit_src;
 
    /**
     * Image was imported from an struct AHardwareBuffer.  We have to delay
@@ -6128,6 +6148,15 @@ void
 anv_attachment_external_resolve(struct anv_cmd_buffer *cmd_buffer,
                                 const struct anv_attachment *att);
 
+bool
+anv_image_pixel_is_default_value(const struct intel_device_info *devinfo,
+                                 const struct anv_image *image,
+                                 const uint32_t *view_pixel);
+
+union isl_color_value
+anv_image_color_clear_value(const struct intel_device_info * const devinfo,
+                            const struct anv_image *image);
+
 static inline union isl_color_value
 anv_image_hiz_clear_value(const struct anv_image *image)
 {
@@ -6151,6 +6180,7 @@ void
 anv_image_hiz_clear(struct anv_cmd_buffer *cmd_buffer,
                     const struct anv_image *image,
                     VkImageAspectFlags aspects,
+                    VkImageLayout depth_layout, VkImageLayout stencil_layout,
                     uint32_t level,
                     uint32_t base_layer, uint32_t layer_count,
                     VkRect2D area,
@@ -6276,6 +6306,7 @@ anv_can_fast_clear_color(const struct anv_cmd_buffer *cmd_buffer,
                          const struct VkClearRect *clear_rect,
                          VkImageLayout layout,
                          enum isl_format view_format,
+                         struct isl_swizzle view_swizzle,
                          union isl_color_value clear_color);
 
 enum isl_aux_state ATTRIBUTE_PURE

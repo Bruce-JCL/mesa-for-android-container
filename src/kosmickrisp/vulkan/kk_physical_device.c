@@ -183,6 +183,7 @@ kk_get_device_features(
       .textureCompressionASTC_LDR = true,
       .textureCompressionBC = true,
       .textureCompressionETC2 = true,
+      .vertexPipelineStoresAndAtomics = true,
 
       /* Vulkan 1.1 */
       .multiview = true,
@@ -826,6 +827,8 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
                                     &properties, &dispatch_table);
    if (result != VK_SUCCESS)
       goto fail_mtl_dev;
+
+   kk_physical_device_init_pipeline_cache(pdev);
 
    uint64_t sysmem_size_B = kk_get_sysmem_heap_size();
    if (sysmem_size_B == 0) {

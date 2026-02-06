@@ -573,52 +573,10 @@ static void si_set_optimal_micro_tile_mode(struct si_screen *sscreen, struct si_
 
 static uint32_t si_get_htile_clear_value(struct si_texture *tex, float depth)
 {
-   /* Maximum 14-bit UINT value. */
-   const uint32_t max_z_value = 0x3FFF;
-
-   /* For clears, Zmask and Smem will always be set to zero. */
-   const uint32_t zmask = 0;
-   const uint32_t smem  = 0;
-
-   /* Convert depthValue to 14-bit zmin/zmax uint values. */
-   const uint32_t zmin = lroundf(depth * max_z_value);
-   const uint32_t zmax = zmin;
-
-   if (tex->htile_stencil_disabled) {
-      /* Z-only HTILE is laid out as follows:
-       * |31     18|17      4|3     0|
-       * +---------+---------+-------+
-       * |  Max Z  |  Min Z  | ZMask |
-       */
-      return ((zmax & 0x3FFF) << 18) |
-             ((zmin & 0x3FFF) << 4) |
-             ((zmask & 0xF) << 0);
-   } else {
-      /* Z+S HTILE is laid out as-follows:
-       * |31       12|11 10|9    8|7   6|5   4|3     0|
-       * +-----------+-----+------+-----+-----+-------+
-       * |  Z Range  |     | SMem | SR1 | SR0 | ZMask |
-       *
-       * The base value for zRange is either zMax or zMin, depending on ZRANGE_PRECISION.
-       * For a fast clear, zMin == zMax == clearValue. This means that the base will
-       * always be the clear value (converted to 14-bit UINT).
-       *
-       * When abs(zMax-zMin) < 16, the delta is equal to the difference. In the case of
-       * fast clears, where zMax == zMin, the delta is always zero.
-       */
-      const uint32_t delta = 0;
-      const uint32_t zrange = (zmax << 6) | delta;
-
-      /* SResults 0 & 1 are set based on the stencil compare state.
-       * For fast-clear, the default value of sr0 and sr1 are both 0x3.
-       */
-      const uint32_t sresults = 0xf;
-
-      return ((zrange & 0xFFFFF) << 12) |
-             ((smem & 0x3) <<  8) |
-             ((sresults & 0xF) <<  4) |
-             ((zmask & 0xF) <<  0);
-   }
+   if (tex->htile_stencil_disabled)
+      return HTILE_Z_CLEAR_REG(depth);
+   else
+      return HTILE_ZS_CLEAR_REG(depth);
 }
 
 static bool si_can_fast_clear_depth(struct si_texture *zstex, unsigned level, float depth,
@@ -766,12 +724,15 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
             num_clears++;
          }
 
-         /* DCC fast clear with MSAA should clear CMASK to 0xC. */
+         /* DCC fast clear with MSAA should clear FMASK by clearing CMASK to
+          * CMASK_MSAA_FMASK_CLEAR_0_COLOR_EXPANDED.
+          */
          if (tex->buffer.b.b.nr_samples >= 2 && tex->cmask_buffer) {
             assert(sctx->gfx_level < GFX11); /* no FMASK/CMASK on GFX11 */
             assert(num_clears < ARRAY_SIZE(info));
             si_init_buffer_clear(&info[num_clears++], &tex->cmask_buffer->b.b,
-                                 tex->surface.cmask_offset, tex->surface.cmask_size, 0xCCCCCCCC);
+                                 tex->surface.cmask_offset, tex->surface.cmask_size,
+                                 CMASK_MSAA_FMASK_CLEAR_0_COLOR_EXPANDED);
             clear_types |= SI_CLEAR_TYPE_CMASK;
             fmask_decompress_needed = true;
          }
@@ -858,7 +819,10 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
          /* Do the fast clear. */
          assert(num_clears < ARRAY_SIZE(info));
          si_init_buffer_clear(&info[num_clears++], &tex->cmask_buffer->b.b,
-                              cmask_offset, clear_size, 0);
+                              cmask_offset, clear_size,
+                              tex->buffer.b.b.nr_samples >= 2 ?
+                                 CMASK_MSAA_FMASK_CLEAR_0_COLOR_CLEAR_REG :
+                                 CMASK_NOAA_COLOR_CLEAR_REG);
          clear_types |= SI_CLEAR_TYPE_CMASK;
          eliminate_needed = true;
          /* If we allocated a cmask buffer for this tex we need to re-emit
@@ -1068,38 +1032,55 @@ static void si_fb_clear_via_compute(struct si_context *sctx, unsigned *buffers,
                                     const union pipe_color_union *color)
 {
    struct pipe_framebuffer_state *fb = &sctx->framebuffer.state;
-
    unsigned color_buffer_mask = (*buffers & PIPE_CLEAR_COLOR) >> util_logbase2(PIPE_CLEAR_COLOR0);
+
+   /* Don't do anything if we are clearing multiple render targets because we would wait
+    * unnecesarily between clears.
+    *
+    * TODO: Use compute for those too but don't wait between compute clears. Do all compute clears
+    *       in parallel with each other and in parallel with the gfx color/Z/S clear as well.
+    */
+   if (sctx->gfx_level >= GFX12 && util_bitcount(color_buffer_mask) > 1)
+      return;
+
    while (color_buffer_mask) {
       unsigned i = u_bit_scan(&color_buffer_mask);
-
       struct pipe_surface *surf = &fb->cbufs[i];
-      unsigned depth = surf->last_layer - surf->first_layer + 1;
       struct si_texture *tex = (struct si_texture *)surf->texture;
+      unsigned width = u_minify(tex->buffer.b.b.width0, surf->level);
+      unsigned height = u_minify(tex->buffer.b.b.height0, surf->level);
+      unsigned depth = surf->last_layer - surf->first_layer + 1;
+      bool compute_clear = false;
 
-      /* If DCC is enable (which can happen with thick tiling on gfx8, don't use compute to get
-       * compressed clears.
-       */
-      if (vi_dcc_enabled(tex, surf->level))
-         continue;
+      if (sctx->gfx_level >= GFX12) {
+         if (tex->surface.is_linear || tex->surface.thick_tiling || tex->surface.bpe <= 4 ||
+             (tex->surface.bpe == 16 && tex->buffer.b.b.nr_samples <= 2))
+            compute_clear = true;
+      } else {
+         /* If DCC is enabled (which can happen with thick tiling on gfx8, don't use compute to get
+          * compressed clears.
+          */
+         if (vi_dcc_enabled(tex, surf->level))
+            continue;
 
-      unsigned width, height;
-      pipe_surface_size(surf, &width, &height);
-      /* Clears of thick and linear layouts are fastest with compute. */
-      if (tex->surface.thick_tiling ||
-          (tex->surface.is_linear && (height > 1 || depth > 1 || width >= 8192))) {
-         struct pipe_box box;
-
-         u_box_3d(0, 0, surf->first_layer, width, height, depth, &box);
-
-         if (si_compute_clear_image(sctx, &tex->buffer.b.b, surf->format, surf->level, &box,
-                                    color, sctx->render_cond_enabled, true))
-            *buffers &= ~(PIPE_CLEAR_COLOR0 << i); /* success */
+         /* Clears of thick and linear layouts are fastest with compute. */
+         if (tex->surface.thick_tiling ||
+             (tex->surface.is_linear && (height > 1 || depth > 1 || width >= 8192)))
+            compute_clear = true;
       }
+
+      struct pipe_box box;
+      u_box_3d(0, 0, surf->first_layer, width, height, depth, &box);
+
+      if (compute_clear &&
+          si_compute_clear_image(sctx, &tex->buffer.b.b, surf->format, surf->level, &box,
+                                 color, sctx->render_cond_enabled, true))
+         *buffers &= ~(PIPE_CLEAR_COLOR0 << i); /* success */
    }
 }
 
 static void gfx6_clear(struct pipe_context *ctx, unsigned buffers,
+                       uint32_t color_clear_mask, uint8_t stencil_clear_mask,
                        const struct pipe_scissor_state *scissor_state,
                        const union pipe_color_union *color, double depth, unsigned stencil)
 {
@@ -1219,6 +1200,7 @@ static void gfx6_clear(struct pipe_context *ctx, unsigned buffers,
 }
 
 static void gfx12_clear(struct pipe_context *ctx, unsigned buffers,
+                        uint32_t color_clear_mask, uint8_t stencil_clear_mask,
                         const struct pipe_scissor_state *scissor_state,
                         const union pipe_color_union *color, double depth, unsigned stencil)
 {
@@ -1235,6 +1217,10 @@ static void gfx12_clear(struct pipe_context *ctx, unsigned buffers,
       buffers &= ~PIPE_CLEAR_DEPTHSTENCIL;
    else if (!util_format_has_stencil(util_format_description(fb->zsbuf.format)))
       buffers &= ~PIPE_CLEAR_STENCIL;
+
+   si_fb_clear_via_compute(sctx, &buffers, color);
+   if (!buffers)
+      return; /* all buffers have been cleared */
 
    if (unlikely(sctx->sqtt_enabled)) {
       if (buffers & PIPE_CLEAR_COLOR)
@@ -1261,8 +1247,9 @@ static bool si_try_normal_clear(struct si_context *sctx, struct pipe_surface *ds
                                 const union pipe_color_union *color,
                                 float depth, unsigned stencil)
 {
-   unsigned surf_width, surf_height;
-   pipe_surface_size(dst, &surf_width, &surf_height);
+   unsigned surf_width = u_minify(dst->texture->width0, dst->level);
+   unsigned surf_height = u_minify(dst->texture->height0, dst->level);
+
    /* This is worth it only if it's a whole image clear. */
    if (dstx == 0 && dsty == 0 &&
        width == surf_width &&
@@ -1288,7 +1275,7 @@ static bool si_try_normal_clear(struct si_context *sctx, struct pipe_surface *ds
       fb.height = surf_height;
 
       ctx->set_framebuffer_state(ctx, &fb);
-      ctx->clear(ctx, buffers, NULL, color, depth, stencil);
+      ctx->clear(ctx, buffers, 0xf, 0, NULL, color, depth, stencil);
       ctx->set_framebuffer_state(ctx, &saved_fb);
 
       util_copy_framebuffer_state(&saved_fb, NULL);
@@ -1349,12 +1336,13 @@ bool si_compute_fast_clear_image(struct si_context *sctx, struct pipe_resource *
       num_clears++;
    }
 
-   /* DCC fast clear with MSAA should clear CMASK to 0xC. */
+   /* DCC fast clear with MSAA should clear CMASK to CMASK_MSAA_FMASK_CLEAR_0_COLOR_EXPANDED. */
    if (dst->nr_samples >= 2 && sdst->cmask_buffer) {
       assert(sctx->gfx_level < GFX11); /* no FMASK/CMASK on GFX11 */
       assert(num_clears < ARRAY_SIZE(info));
       si_init_buffer_clear(&info[num_clears++], &sdst->cmask_buffer->b.b,
-                           sdst->surface.cmask_offset, sdst->surface.cmask_size, 0xCCCCCCCC);
+                           sdst->surface.cmask_offset, sdst->surface.cmask_size,
+                           CMASK_MSAA_FMASK_CLEAR_0_COLOR_EXPANDED);
       clear_types |= SI_CLEAR_TYPE_CMASK;
 
       if (!(sdst->dirty_level_mask & BITFIELD_BIT(level))) {

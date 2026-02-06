@@ -214,9 +214,10 @@ run_vs(brw_shader &s)
    if (s.failed)
       return false;
 
-   s.emit_urb_writes();
-
    brw_calculate_cfg(s);
+
+   ASSERTED bool eot = s.mark_last_urb_write_with_eot();
+   assert(eot);
 
    brw_optimize(s);
 
@@ -253,7 +254,14 @@ brw_compile_vs(const struct brw_compiler *compiler,
     */
    assert(!key->no_vf_slot_compaction || key->vf_component_packing);
 
-   brw_debug_archive_nir(params->base.archiver, nir, dispatch_width, "first");
+   brw_pass_tracker pt_ = {
+      .nir = nir,
+      .dispatch_width = dispatch_width,
+      .compiler = compiler,
+      .archiver = params->base.archiver,
+   }, *pt = &pt_;
+
+   BRW_NIR_SNAPSHOT("first");
 
    brw_prog_data_init(&prog_data->base.base, &params->base);
 
@@ -271,7 +279,7 @@ brw_compile_vs(const struct brw_compiler *compiler,
                        &prog_data->base.vue_map, nir->info.outputs_written,
                        key->base.vue_layout, pos_slots);
 
-   brw_nir_apply_key(nir, compiler, &key->base, dispatch_width);
+   brw_nir_apply_key(pt, &key->base, dispatch_width);
 
    prog_data->inputs_read = nir->info.inputs_read;
    prog_data->double_inputs_read = nir->info.vs.double_inputs;
@@ -279,6 +287,7 @@ brw_compile_vs(const struct brw_compiler *compiler,
 
    brw_nir_lower_vs_inputs(nir);
    brw_nir_lower_vue_outputs(nir);
+   BRW_NIR_SNAPSHOT("after_lower_io");
 
    memset(prog_data->vf_component_packing, 0,
           sizeof(prog_data->vf_component_packing));
@@ -286,9 +295,11 @@ brw_compile_vs(const struct brw_compiler *compiler,
    if (key->vf_component_packing)
       nr_packed_regs = brw_nir_pack_vs_input(nir, prog_data);
 
-   brw_postprocess_nir(nir, compiler, dispatch_width,
-                       params->base.archiver, debug_enabled,
+   brw_postprocess_nir(pt, debug_enabled,
                        key->base.robust_flags);
+
+   BRW_NIR_PASS(brw_nir_lower_deferred_urb_writes, compiler->devinfo,
+                &prog_data->base.vue_map, 0, 0);
 
    unsigned nr_attribute_slots = util_bitcount64(prog_data->inputs_read);
    /* gl_VertexID and gl_InstanceID are system values, but arrive via an

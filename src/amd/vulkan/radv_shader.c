@@ -841,6 +841,22 @@ radv_shader_spirv_to_nir(struct radv_device *device, const struct radv_shader_st
    if (progress)
       nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
+   if (pdev->info.has_cs_regalloc_hang_bug &&
+       mesa_shader_stage_is_compute(nir->info.stage)) {
+      const uint32_t wg_size = nir->info.workgroup_size[0] *
+                               nir->info.workgroup_size[1] *
+                               nir->info.workgroup_size[2];
+
+      if (wg_size > 256) {
+         NIR_PASS(progress, nir, nir_lower_workgroup_size, 256);
+
+         if (!stage->key.optimisations_disabled)
+            radv_optimize_nir(nir, false);
+
+         nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+      }
+   }
+
    return nir;
 }
 
@@ -3803,7 +3819,7 @@ radv_get_tess_wg_info(const struct radv_physical_device *pdev, const ac_nir_tess
 
 VkResult
 radv_dump_shader_stats(struct radv_device *device, struct radv_pipeline *pipeline, struct radv_shader *shader,
-                       mesa_shader_stage stage, FILE *output)
+                       FILE *output)
 {
    VkPipelineExecutablePropertiesKHR *props = NULL;
    uint32_t prop_count = 0;
@@ -3826,7 +3842,8 @@ radv_dump_shader_stats(struct radv_device *device, struct radv_pipeline *pipelin
       goto fail;
 
    for (unsigned exec_idx = 0; exec_idx < prop_count; exec_idx++) {
-      if (!(props[exec_idx].stages & mesa_to_vk_shader_stage(stage)))
+      mesa_shader_stage stage;
+      if (radv_get_shader_from_executable_index(pipeline, exec_idx, &stage) != shader)
          continue;
 
       VkPipelineExecutableStatisticKHR *stats = NULL;

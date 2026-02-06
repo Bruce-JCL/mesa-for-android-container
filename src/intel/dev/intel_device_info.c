@@ -35,6 +35,7 @@
 #include "intel_wa.h"
 #include "i915/intel_device_info.h"
 #include "xe/intel_device_info.h"
+#include "virtio/intel_virtio.h"
 
 #include "common/intel_gem.h"
 #include "util/u_debug.h"
@@ -1181,19 +1182,19 @@ static const struct intel_device_info intel_device_info_arl_h = {
  *
  * (both 10 and 12 map to different compressed L3UC entries)
  */
-#define XE2_PAT_ENTRIES                                         \
-   /* BSpec 71582 (r59285) */                                   \
-   .pat = {                                                     \
-      /* CPU: WB, GPU: PAT 1 => WB, 1WAY */                     \
-      .cached_coherent = PAT_ENTRY(1, WB),                      \
-      /* CPU: WC, GPU: PAT 6 => XD */                           \
-      .scanout = PAT_ENTRY(6, WC),                              \
-      /* CPU: WC, GPU: PAT 0 => WB */                           \
-      .writecombining = PAT_ENTRY(0, WC),                       \
-      /* CPU: WC, GPU: PAT 11 => XD, compressed */              \
-      .compressed_scanout = PAT_ENTRY(11, WC),                  \
-      /* CPU: WC, GPU: PAT 9 => WB, compressed */               \
-      .compressed = PAT_ENTRY(9, WC)                            \
+#define XE2_PAT_ENTRIES                                              \
+   /* BSpec 71582 (r59285) */                                        \
+   .pat = {                                                          \
+      /* CPU: WB, GPU: PAT 1 => WB, 1WAY */                          \
+      .cached_coherent = PAT_ENTRY(1, WB),                           \
+      /* CPU: WC, GPU: PAT 6 => WB+display transient */              \
+      .scanout = PAT_ENTRY(6, WC),                                   \
+      /* CPU: WC, GPU: PAT 0 => WB */                                \
+      .writecombining = PAT_ENTRY(0, WC),                            \
+      /* CPU: WC, GPU: PAT 11 => WB+display transient+compressed */  \
+      .compressed_scanout = PAT_ENTRY(11, INVALID),                  \
+      /* CPU: WC, GPU: PAT 9 => WB+compressed */                     \
+      .compressed = PAT_ENTRY(9, INVALID)                            \
    }
 
 #define XE2_CONFIG(platform_suffix)                             \
@@ -1866,29 +1867,39 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo, int min
     * rely on an ioctl to get PCI device id for the next step when skipping
     * this drm query.
     */
-   drmDevicePtr drmdev = NULL;
-   if (drmGetDevice2(fd, DRM_DEVICE_GET_PCI_REVISION, &drmdev)) {
-      mesa_loge("Failed to query drm device.");
-      return false;
-   }
-   if (!intel_device_info_init_common(drmdev->deviceinfo.pci->device_id,
-                                      false, devinfo)) {
+   if (is_intel_virtio_fd(fd)) {
+      if (!intel_virtio_get_pci_device_info(fd, devinfo))
+         return false;
+
+      if (!intel_device_info_init_common(devinfo->pci_device_id,
+                                         false, devinfo))
+         return false;
+
+      devinfo->is_virtio = true;
+   } else {
+      drmDevicePtr drmdev = NULL;
+      if (drmGetDevice2(fd, DRM_DEVICE_GET_PCI_REVISION, &drmdev)) {
+         mesa_loge("Failed to query drm device.");
+         return false;
+      }
+      if (!intel_device_info_init_common(drmdev->deviceinfo.pci->device_id,
+                                         false, devinfo)) {
+         drmFreeDevice(&drmdev);
+         return false;
+      }
+
+      devinfo->pci_domain = drmdev->businfo.pci->domain;
+      devinfo->pci_bus = drmdev->businfo.pci->bus;
+      devinfo->pci_dev = drmdev->businfo.pci->dev;
+      devinfo->pci_func = drmdev->businfo.pci->func;
+      devinfo->pci_device_id = drmdev->deviceinfo.pci->device_id;
+      devinfo->pci_revision_id = drmdev->deviceinfo.pci->revision_id;
       drmFreeDevice(&drmdev);
-      return false;
    }
 
-   if ((min_ver > 0 && devinfo->ver < min_ver) || (max_ver > 0 && devinfo->ver > max_ver)) {
-      drmFreeDevice(&drmdev);
+   if ((min_ver > 0 && devinfo->ver < min_ver) || (max_ver > 0 && devinfo->ver > max_ver))
       return false;
-   }
 
-   devinfo->pci_domain = drmdev->businfo.pci->domain;
-   devinfo->pci_bus = drmdev->businfo.pci->bus;
-   devinfo->pci_dev = drmdev->businfo.pci->dev;
-   devinfo->pci_func = drmdev->businfo.pci->func;
-   devinfo->pci_device_id = drmdev->deviceinfo.pci->device_id;
-   devinfo->pci_revision_id = drmdev->deviceinfo.pci->revision_id;
-   drmFreeDevice(&drmdev);
    devinfo->no_hw = debug_get_bool_option("INTEL_NO_HW", false);
 
    devinfo->kmd_type = intel_get_kmd_type(fd);

@@ -194,6 +194,13 @@ lower_sysvals(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *_data)
          bit_size, num_comps);
       break;
 
+   case nir_intrinsic_load_ro_sink_address_poly:
+      /* Any address with the top bit set is treated as OOB by the hardware
+       * and any reads return zero.
+       */
+      val = nir_imm_int64(b, PAN_SHADER_OOB_ADDRESS);
+      break;
+
    case nir_intrinsic_load_printf_buffer_address:
       val = load_sysval_from_push_const(
          b,
@@ -411,13 +418,6 @@ main(int argc, const char **argv)
 
          NIR_PASS(_, s, nir_lower_vars_to_explicit_types, nir_var_mem_shared,
                   glsl_get_cl_type_size_align);
-
-         /* Unroll loops before lowering indirects */
-         bool progress = false;
-         do {
-            progress = false;
-            NIR_PASS(progress, s, nir_opt_loop);
-         } while (progress);
 
          pan_preprocess_nir(s, inputs.gpu_id);
          pan_nir_lower_texture_early(s, inputs.gpu_id);

@@ -374,9 +374,9 @@ emit_interp_instr_gfx11(isel_context* ctx, unsigned idx, unsigned component, Tem
    Builder bld(ctx->program, ctx->block);
 
    if (ctx->cf_info.in_divergent_cf || ctx->cf_info.had_divergent_discard) {
-      bld.pseudo(aco_opcode::p_interp_gfx11, Definition(dst), Operand(v1.as_linear()),
-                 Operand::c32(idx), Operand::c32(component), Operand::c32(high_16bits), coord1,
-                 coord2, bld.m0(prim_mask));
+      bld.pseudo(aco_opcode::p_interp_gfx11, Definition(dst), Operand(lv1), Operand::c32(idx),
+                 Operand::c32(component), Operand::c32(high_16bits), coord1, coord2,
+                 bld.m0(prim_mask));
       return;
    }
 
@@ -450,9 +450,8 @@ emit_interp_mov_instr(isel_context* ctx, unsigned idx, unsigned component, unsig
    if (ctx->options->gfx_level >= GFX11) {
       uint16_t dpp_ctrl = dpp_quad_perm(vertex_id, vertex_id, vertex_id, vertex_id);
       if (ctx->cf_info.in_divergent_cf || ctx->cf_info.had_divergent_discard) {
-         bld.pseudo(aco_opcode::p_interp_gfx11, Definition(tmp), Operand(v1.as_linear()),
-                    Operand::c32(idx), Operand::c32(component), Operand::c32(dpp_ctrl),
-                    bld.m0(prim_mask));
+         bld.pseudo(aco_opcode::p_interp_gfx11, Definition(tmp), Operand(lv1), Operand::c32(idx),
+                    Operand::c32(component), Operand::c32(dpp_ctrl), bld.m0(prim_mask));
       } else {
          Temp p =
             bld.ldsdir(aco_opcode::lds_param_load, bld.def(v1), bld.m0(prim_mask), idx, component);
@@ -672,7 +671,7 @@ build_end_with_regs(isel_context* ctx, std::vector<Operand>& regs)
 Instruction*
 add_startpgm(struct isel_context* ctx, bool is_callee)
 {
-   ctx->program->scratch_arg_size += ctx->callee_info.scratch_param_size;
+   ctx->program->scratch_arg_size += ctx->callee_info.scratch_param_size * ctx->program->wave_size;
 
    unsigned def_count = 0;
    for (unsigned i = 0; i < ctx->args->arg_count; i++) {
@@ -1034,8 +1033,7 @@ find_param_regs(Program* program, const ABI& abi, callee_info& info,
 
             param_demand += Temp(0, it2->rc);
 
-            it2->dst_info->needs_explicit_preservation =
-               regs == clobbered_regs && !it2->dst_info->discardable;
+            it2->dst_info->needs_explicit_preservation = regs == clobbered_regs;
             it2->dst_info->def.setPrecolored(*next_reg);
             for (unsigned i = 0; i < it2->rc.size(); ++i)
                BITSET_CLEAR(regs, next_reg->reg() + i);
@@ -1051,8 +1049,7 @@ find_param_regs(Program* program, const ABI& abi, callee_info& info,
             next_reg = next_reg->advance(required_padding * 4);
       }
       if (next_reg) {
-         params.back().dst_info->needs_explicit_preservation =
-            regs == clobbered_regs && !params.back().dst_info->discardable;
+         params.back().dst_info->needs_explicit_preservation = regs == clobbered_regs;
          param_demand += Temp(0, params.back().rc);
          params.back().dst_info->def.setPrecolored(*next_reg);
          BITSET_CLEAR_COUNT(regs, next_reg->reg(), params.back().rc.size());

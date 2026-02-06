@@ -179,6 +179,9 @@ anv_shader_init_uuid(struct anv_physical_device *device)
       device->instance->large_workgroup_non_coherent_image_workaround;
    _mesa_sha1_update(&ctx, &large_wg_wa, sizeof(large_wg_wa));
 
+   const bool lto_disable = device->instance->disable_lto;
+   _mesa_sha1_update(&ctx, &lto_disable, sizeof(lto_disable));
+
    uint8_t sha1[SHA1_DIGEST_LENGTH];
    _mesa_sha1_final(&ctx, sha1);
    memcpy(device->shader_binary_uuid, sha1, sizeof(device->shader_binary_uuid));
@@ -1561,8 +1564,7 @@ anv_shader_lower_nir(struct anv_device *device,
       }
    }
 
-   if (mesa_shader_stage_is_compute(nir->info.stage) ||
-       mesa_shader_stage_is_mesh(nir->info.stage)) {
+   if (mesa_shader_stage_is_compute(nir->info.stage)) {
       NIR_PASS(_, nir, brw_nir_lower_cs_intrinsics, compiler->devinfo,
                &shader_data->prog_data.cs);
    }
@@ -2112,30 +2114,6 @@ end:
    return result;
 }
 
-static void
-anv_write_rt_shader_group(struct vk_device *vk_device,
-                          VkRayTracingShaderGroupTypeKHR type,
-                          const struct vk_shader **shaders,
-                          uint32_t shader_count,
-                          void *output)
-{
-   struct anv_device *device =
-      container_of(vk_device, struct anv_device, vk);
-
-   anv_genX(device->info, write_rt_shader_group)(device, type,
-                                                 shaders, shader_count,
-                                                 output);
-}
-
-static void
-anv_write_rt_shader_group_replay_handle(struct vk_device *device,
-                                        const struct vk_shader **shaders,
-                                        uint32_t shader_count,
-                                        void *output)
-{
-   UNREACHABLE("Unimplemented");
-}
-
 struct vk_device_shader_ops anv_device_shader_ops = {
    .get_nir_options                = anv_shader_get_nir_options,
    .get_spirv_options              = anv_shader_get_spirv_options,
@@ -2144,6 +2122,7 @@ struct vk_device_shader_ops anv_device_shader_ops = {
    .hash_state                     = anv_shader_hash_state,
    .compile                        = anv_shader_compile,
    .deserialize                    = anv_shader_deserialize,
+   .replay_rt_shader_group         = anv_replay_rt_shader_group,
    .write_rt_shader_group          = anv_write_rt_shader_group,
    .write_rt_shader_group_replay_handle = anv_write_rt_shader_group_replay_handle,
    .cmd_bind_shaders               = anv_cmd_buffer_bind_shaders,

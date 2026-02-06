@@ -90,6 +90,8 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
          case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+         case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
+         case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
             /* Textures and UBO's needs a packet for each stage */
             count = stage_count;
             break;
@@ -219,7 +221,8 @@ tu6_emit_load_state(struct tu_device *device,
             }
             break;
          }
-         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
+         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+         case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM: {
             tu_foreach_stage(stage, stages) {
                /* TODO: We could emit less CP_LOAD_STATE6 if we used
                 * struct-of-arrays instead of array-of-structs.
@@ -510,21 +513,19 @@ tu6_setup_streamout(struct tu_cs *cs,
 
    for (unsigned i = 0; i < info->num_outputs; i++) {
       const struct ir3_stream_output *out = &info->output[i];
-      unsigned k = out->register_index;
+      gl_varying_slot slot = (gl_varying_slot) out->location;
       unsigned idx;
-
-      /* Skip it, if it's an output that was never assigned a register. */
-      if (k >= v->outputs_count || v->outputs[k].regid == INVALID_REG)
-         continue;
 
       /* linkage map sorted by order frag shader wants things, so
        * a bit less ideal here..
        */
       for (idx = 0; idx < l->cnt; idx++)
-         if (l->var[idx].slot == v->outputs[k].slot)
+         if (l->var[idx].slot == slot)
             break;
 
-      assert(idx < l->cnt);
+      /* Skip it, if it's an output that was never assigned a register. */
+      if (idx >= l->cnt)
+         continue;
 
       for (unsigned j = 0; j < out->num_components; j++) {
          unsigned c   = j + out->start_component;
@@ -1279,9 +1280,9 @@ tu6_emit_patch_control_points(struct tu_cs *cs,
                          tcs->variant->tess.tcs_vertices_out);
    }
 
-   uint32_t patches_per_wave =
-      MIN2(vs_hs_local_mem_size / (patch_local_mem_size_16b * 16),
-           max_patches_per_wave);
+   uint32_t patches_per_wave = patch_local_mem_size_16b == 0
+                                  ? 0
+                                  : MIN2(vs_hs_local_mem_size / (patch_local_mem_size_16b * 16), max_patches_per_wave);
 
    uint32_t wave_input_size = DIV_ROUND_UP(
       patches_per_wave * patch_local_mem_size_16b * 16, 256);
@@ -2416,10 +2417,13 @@ tu_emit_program_state(struct tu_cs *sub_cs,
 
    prog->per_view_viewport =
       !last_variant->writes_viewport &&
-      shaders[MESA_SHADER_FRAGMENT]->fs.has_fdm &&
-      dev->physical_device->info->props.has_per_view_viewport;
+      (dev->vk.enabled_features.multiviewPerViewViewports ||
+       (shaders[MESA_SHADER_FRAGMENT]->fs.has_fdm &&
+       dev->physical_device->info->props.has_per_view_viewport));
    prog->per_layer_viewport = last_shader->per_layer_viewport;
-   prog->fake_single_viewport = prog->per_view_viewport ||
+   prog->fake_single_viewport =
+      (prog->per_view_viewport &&
+       !dev->vk.enabled_features.multiviewPerViewViewports) ||
       prog->per_layer_viewport;
    prog->writes_shading_rate = last_variant->writes_shading_rate;
    prog->reads_shading_rate = fs->reads_shading_rate;
@@ -2891,7 +2895,7 @@ fdm_apply_scissors(struct tu_cmd_buffer *cmd, struct tu_cs *cs, void *data,
 
       VkOffset2D min = {
          scissor.offset.x / frag_area.width + offset.x,
-         scissor.offset.y / frag_area.width + offset.y,
+         scissor.offset.y / frag_area.height + offset.y,
       };
       VkOffset2D max = {
          DIV_ROUND_UP(scissor.offset.x + scissor.extent.width, frag_area.width) + offset.x,
@@ -3556,7 +3560,6 @@ static const enum mesa_vk_dynamic_graphics_state tu_ds_state[] = {
    MESA_VK_DYNAMIC_DS_STENCIL_COMPARE_MASK,
    MESA_VK_DYNAMIC_DS_STENCIL_WRITE_MASK,
    MESA_VK_DYNAMIC_DS_STENCIL_REFERENCE,
-   MESA_VK_DYNAMIC_DS_DEPTH_BOUNDS_TEST_BOUNDS,
 };
 
 template <chip CHIP>
@@ -3565,7 +3568,7 @@ tu6_ds_size(struct tu_device *dev,
                  const struct vk_depth_stencil_state *ds,
                  const struct vk_render_pass_state *rp)
 {
-   return 13;
+   return 10;
 }
 
 template <chip CHIP>
@@ -3615,10 +3618,6 @@ tu6_emit_ds(struct tu_cs *cs,
    tu_cs_emit_regs(cs, A6XX_RB_STENCIL_REF_CNTL(
       .ref = ds->stencil.front.reference,
       .bfref = ds->stencil.back.reference));
-
-   tu_cs_emit_regs(cs,
-                   A6XX_RB_DEPTH_BOUND_MIN(ds->depth.bounds_test.min),
-                   A6XX_RB_DEPTH_BOUND_MAX(ds->depth.bounds_test.max));
 }
 
 static const enum mesa_vk_dynamic_graphics_state tu_rb_depth_cntl_state[] = {
@@ -3626,6 +3625,7 @@ static const enum mesa_vk_dynamic_graphics_state tu_rb_depth_cntl_state[] = {
    MESA_VK_DYNAMIC_DS_DEPTH_WRITE_ENABLE,
    MESA_VK_DYNAMIC_DS_DEPTH_COMPARE_OP,
    MESA_VK_DYNAMIC_DS_DEPTH_BOUNDS_TEST_ENABLE,
+   MESA_VK_DYNAMIC_DS_DEPTH_BOUNDS_TEST_BOUNDS,
    MESA_VK_DYNAMIC_RS_DEPTH_CLAMP_ENABLE,
 };
 
@@ -3636,7 +3636,7 @@ tu6_rb_depth_cntl_size(struct tu_device *dev,
                        const struct vk_render_pass_state *rp,
                        const struct vk_rasterization_state *rs)
 {
-   return 4;
+   return 7;
 }
 
 template <chip CHIP>
@@ -3676,9 +3676,15 @@ tu6_emit_rb_depth_cntl(struct tu_cs *cs,
          .o_depth_01_clamp_en = CHIP >= A8XX,
       ));
       tu_cs_emit_regs(cs, GRAS_SU_DEPTH_CNTL(CHIP, depth_test));
+      tu_cs_emit_regs(cs,
+                      A6XX_RB_DEPTH_BOUND_MIN(ds->depth.bounds_test.min),
+                      A6XX_RB_DEPTH_BOUND_MAX(ds->depth.bounds_test.max));
    } else {
       tu_cs_emit_regs(cs, A6XX_RB_DEPTH_CNTL());
       tu_cs_emit_regs(cs, GRAS_SU_DEPTH_CNTL(CHIP));
+      tu_cs_emit_regs(cs,
+                      A6XX_RB_DEPTH_BOUND_MIN(),
+                      A6XX_RB_DEPTH_BOUND_MAX());
    }
 }
 
@@ -4044,6 +4050,15 @@ tu_pipeline_builder_emit_state(struct tu_pipeline_builder *builder,
 
    /* Vertex buffer state needs to know the max valid binding */
    BITSET_SET(keep, MESA_VK_DYNAMIC_VI_BINDINGS_VALID);
+
+   /* We might re-emit TU_DYNAMIC_STATE_DS or TU_DYNAMIC_STATE_RB_DEPTH_CNTL
+    * depending on render pass attachments. Some of these overlap with the
+    * state needed by LRZ above.
+    */
+   for (unsigned i = 0; i < ARRAY_SIZE(tu_ds_state); i++)
+      BITSET_SET(keep, tu_ds_state[i]);
+   for (unsigned i = 0; i < ARRAY_SIZE(tu_rb_depth_cntl_state); i++)
+      BITSET_SET(keep, tu_rb_depth_cntl_state[i]);
 
    /* Remove state which has been emitted and we no longer need to set when
     * binding the pipeline by making it "dynamic".
@@ -5072,7 +5087,7 @@ tu_GetPipelineExecutablePropertiesKHR(
          VK_COPY_STR(props->description, _mesa_shader_stage_to_string(stage));
 
          props->subgroupSize =
-            dev->compiler->threadsize_base * (exe->stats.double_threadsize ? 2 : 1);
+            dev->compiler->info->threadsize_base * (exe->stats.double_threadsize ? 2 : 1);
       }
    }
 

@@ -26,6 +26,7 @@
 #include <sys/inotify.h>
 #endif
 
+#include "layers/radv_app_workarounds.h"
 #include "meta/radv_meta.h"
 #include "util/disk_cache.h"
 #include "util/u_debug.h"
@@ -762,6 +763,30 @@ add_entrypoints(struct dispatch_table_builder *b, const struct vk_device_entrypo
 }
 
 static void
+init_app_workarounds_entrypoints(struct radv_device *device, struct dispatch_table_builder *b)
+{
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+   struct vk_device_entrypoint_table table = {0};
+
+#define SET_ENTRYPOINT(app_layer, entrypoint) table.entrypoint = app_layer##_##entrypoint;
+   if (!strcmp(instance->drirc.debug.app_layer, "metroexodus")) {
+      SET_ENTRYPOINT(metro_exodus, GetSemaphoreCounterValue);
+   } else if (!strcmp(instance->drirc.debug.app_layer, "rage2")) {
+      SET_ENTRYPOINT(rage2, CmdBeginRenderPass);
+   } else if (!strcmp(instance->drirc.debug.app_layer, "quanticdream")) {
+      SET_ENTRYPOINT(quantic_dream, UnmapMemory2);
+   } else if (!strcmp(instance->drirc.debug.app_layer, "no_mans_sky")) {
+      SET_ENTRYPOINT(no_mans_sky, CreateImageView);
+   } else if (!strcmp(instance->drirc.debug.app_layer, "strange_brigade")) {
+      SET_ENTRYPOINT(strange_brigade, CmdPipelineBarrier2);
+   }
+#undef SET_ENTRYPOINT
+
+   add_entrypoints(b, &table, RADV_APP_DISPATCH_TABLE);
+}
+
+static void
 init_dispatch_tables(struct radv_device *device, struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
@@ -778,15 +803,7 @@ init_dispatch_tables(struct radv_device *device, struct radv_physical_device *pd
    if (radv_device_fault_detection_enabled(device) || gather_ctx_rolls)
       add_entrypoints(&b, &annotate_device_entrypoints, RADV_ANNOTATE_DISPATCH_TABLE);
 
-   if (!strcmp(instance->drirc.debug.app_layer, "metroexodus")) {
-      add_entrypoints(&b, &metro_exodus_device_entrypoints, RADV_APP_DISPATCH_TABLE);
-   } else if (!strcmp(instance->drirc.debug.app_layer, "rage2")) {
-      add_entrypoints(&b, &rage2_device_entrypoints, RADV_APP_DISPATCH_TABLE);
-   } else if (!strcmp(instance->drirc.debug.app_layer, "quanticdream")) {
-      add_entrypoints(&b, &quantic_dream_device_entrypoints, RADV_APP_DISPATCH_TABLE);
-   } else if (!strcmp(instance->drirc.debug.app_layer, "no_mans_sky")) {
-      add_entrypoints(&b, &no_mans_sky_device_entrypoints, RADV_APP_DISPATCH_TABLE);
-   }
+   init_app_workarounds_entrypoints(device, &b);
 
    if (instance->vk.trace_mode & RADV_TRACE_MODE_RGP)
       add_entrypoints(&b, &sqtt_device_entrypoints, RADV_RGP_DISPATCH_TABLE);
@@ -1239,7 +1256,13 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
 
    device->ws = pdev->ws;
    device->vk.sync = device->ws->get_sync_provider(device->ws);
-   device->vk.copy_sync_payloads = pdev->ws->copy_sync_payloads;
+
+   /* Disable unordered submits when SQTT queue events are enabled because queue present events
+    * might be missing otherwise.
+    */
+   device->vk.copy_sync_payloads = ((instance->vk.trace_mode & RADV_TRACE_MODE_RGP) && radv_sqtt_queue_events_enabled())
+                                      ? NULL
+                                      : pdev->ws->copy_sync_payloads;
 
    /* Enable the global BO list by default. */
    /* TODO: Remove the per cmdbuf BO list tracking after few Mesa releases if no blockers. */

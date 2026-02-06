@@ -628,6 +628,17 @@ init_render_queue_state(struct anv_queue *queue, bool is_companion_rcs_batch)
    }
 #endif
 
+#if GFX_VERx10 >= 300
+   /* Set value explicitly on init to override possible wrong setting. This bit
+    * default changed from Xe2 to Xe3 and is required to be zero for
+    * Wa_16020518922 as mentioned in bspec 55893.
+    */
+   anv_batch_write_reg(batch, GENX(CHICKEN_RASTER_2), reg) {
+      reg.DisableAnyMCTRresponsefix = false;
+      reg.DisableAnyMCTRresponsefixMask = true;
+   }
+#endif
+
    /* Set the "CONSTANT_BUFFER Address Offset Disable" bit, so
     * 3DSTATE_CONSTANT_XS buffer 0 is an absolute address.
     *
@@ -701,14 +712,23 @@ init_render_queue_state(struct anv_queue *queue, bool is_companion_rcs_batch)
    genX(emit_pipeline_select)(batch, _3D, device);
 #endif
 
-#if GFX_VER >= 20
+#if GFX_VERx10 >= 125
    anv_batch_emit(batch, GENX(3DSTATE_3D_MODE), p) {
-      p.DX10OGLBorderModeforYCRCB = true;
-      p.DX10OGLBorderModeforYCRCBMask = true;
+      if (device->info->verx10 > 125 ||
+          intel_device_info_is_mtl_or_arl(device->info)) {
+         p.DX10OGLBorderModeforYCRCB = true;
+         p.DX10OGLBorderModeforYCRCBMask = true;
+      }
 #if INTEL_NEEDS_WA_14019857787
       p.EnableOOOreadsinRCPB = true;
       p.EnableOOOreadsinRCPBMask = true;
 #endif
+      /* Disable RHWO optimization by default and turn it on only for MSAA draws
+       * later unless Wa_14024015672 drirc is set.
+       */
+      p.RCCRHWOOptimizationDisable =
+         intel_needs_workaround(device->info, 14024015672);
+      p.RCCRHWOOptimizationDisableMask = true;
    }
 #endif
 

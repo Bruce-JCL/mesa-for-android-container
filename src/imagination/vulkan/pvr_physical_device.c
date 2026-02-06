@@ -123,7 +123,7 @@ static void pvr_physical_device_get_supported_extensions(
 {
    *extensions = (struct vk_device_extension_table){
       .KHR_bind_memory2 = true,
-      .KHR_buffer_device_address = true,
+      .KHR_buffer_device_address = false,
       .KHR_copy_commands2 = true,
       .KHR_create_renderpass2 = true,
       .KHR_dedicated_allocation = true,
@@ -150,11 +150,13 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_maintenance3 = true,
       .KHR_map_memory2 = true,
       .KHR_multiview = true,
+      .KHR_pipeline_executable_properties = true,
       .KHR_present_id2 = PVR_USE_WSI_PLATFORM,
       .KHR_present_wait2 = PVR_USE_WSI_PLATFORM,
       .KHR_relaxed_block_layout = true,
       .KHR_robustness2 = true,
       .KHR_sampler_mirror_clamp_to_edge = true,
+      .KHR_sampler_ycbcr_conversion = true,
       .KHR_separate_depth_stencil_layouts = true,
       .KHR_shader_draw_parameters = true,
       .KHR_shader_expect_assume = false,
@@ -176,6 +178,7 @@ static void pvr_physical_device_get_supported_extensions(
       .EXT_custom_border_color = true,
       .EXT_depth_clamp_zero_one = true,
       .EXT_depth_clip_enable = true,
+      .EXT_image_drm_format_modifier = true,
       .EXT_extended_dynamic_state = true,
       .EXT_extended_dynamic_state2 = true,
       .EXT_extended_dynamic_state3 = true,
@@ -270,7 +273,7 @@ static void pvr_physical_device_get_supported_features(
       .storageInputOutput16 = false,
       .variablePointers = false,
       .protectedMemory = false,
-      .samplerYcbcrConversion = false,
+      .samplerYcbcrConversion = true,
 
       /* Vulkan 1.2 */
       .samplerMirrorClampToEdge = true,
@@ -418,7 +421,7 @@ static void pvr_physical_device_get_supported_features(
       .texelBufferAlignment = true,
 
       /* Vulkan 1.2 / VK_KHR_buffer_device_address */
-      .bufferDeviceAddress = true,
+      .bufferDeviceAddress = false,
       .bufferDeviceAddressCaptureReplay = false,
       .bufferDeviceAddressMultiDevice = false,
 
@@ -466,6 +469,9 @@ static void pvr_physical_device_get_supported_features(
 
       /* Vulkan 1.2 / VK_KHR_dynamic_rendering */
       .dynamicRendering = true,
+
+      /* VK_KHR_pipeline_executable_properties */
+      .pipelineExecutableInfo = true,
    };
 }
 

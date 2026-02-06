@@ -1,24 +1,6 @@
 /*
  * Copyright © 2010 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "brw_shader.h"
@@ -94,56 +76,6 @@ setup_imm_b(const brw_builder &bld, int8_t v)
    const brw_reg tmp = bld.vgrf(BRW_TYPE_B);
    bld.MOV(tmp, brw_imm_w(v));
    return tmp;
-}
-
-static void
-brw_from_nir_setup_outputs(nir_to_brw_state &ntb)
-{
-   brw_shader &s = ntb.s;
-
-   if (s.stage == MESA_SHADER_TESS_CTRL ||
-       s.stage == MESA_SHADER_TASK ||
-       s.stage == MESA_SHADER_MESH ||
-       s.stage == MESA_SHADER_FRAGMENT ||
-       s.stage == MESA_SHADER_COMPUTE)
-      return;
-
-   unsigned vec4s[VARYING_SLOT_TESS_MAX] = { 0, };
-
-   /* Calculate the size of output registers in a separate pass, before
-    * allocating them.  With ARB_enhanced_layouts, multiple output variables
-    * may occupy the same slot, but have different type sizes.
-    */
-   nir_foreach_shader_out_variable(var, s.nir) {
-      const int loc = var->data.driver_location;
-      const unsigned var_vec4s = nir_variable_count_slots(var, var->type);
-      vec4s[loc] = MAX2(vec4s[loc], var_vec4s);
-   }
-
-   for (unsigned loc = 0; loc < ARRAY_SIZE(vec4s);) {
-      if (vec4s[loc] == 0) {
-         loc++;
-         continue;
-      }
-
-      unsigned reg_size = vec4s[loc];
-
-      /* Check if there are any ranges that start within this range and extend
-       * past it. If so, include them in this allocation.
-       */
-      for (unsigned i = 1; i < reg_size; i++) {
-         assert(i + loc < ARRAY_SIZE(vec4s));
-         reg_size = MAX2(vec4s[i + loc] + i, reg_size);
-      }
-
-      brw_reg reg = ntb.bld.vgrf(BRW_TYPE_F, 4 * reg_size);
-      for (unsigned i = 0; i < reg_size; i++) {
-         assert(loc + i < ARRAY_SIZE(s.outputs));
-         s.outputs[loc + i] = offset(reg, ntb.bld, 4 * i);
-      }
-
-      loc += reg_size;
-   }
 }
 
 static brw_reg
@@ -2665,8 +2597,6 @@ emit_gs_vertex(nir_to_brw_state &ntb, const nir_src &vertex_count_nir_src,
       abld.emit(BRW_OPCODE_ENDIF);
    }
 
-   s.emit_urb_writes(vertex_count);
-
    /* In stream mode we have to set control data bits for all vertices
     * unless we have disabled control data bits completely (which we do
     * do for MESA_PRIM_POINTS outputs that don't use streams).
@@ -2705,6 +2635,10 @@ brw_from_nir_emit_vs_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_load_vertex_id:
    case nir_intrinsic_load_base_vertex:
       UNREACHABLE("should be lowered by nir_lower_system_values()");
+
+   case nir_intrinsic_load_urb_output_handle_intel:
+      bld.MOV(retype(dest, BRW_TYPE_UD), s.vs_payload().urb_handles);
+      break;
 
    case nir_intrinsic_load_input: {
       assert(instr->def.bit_size == 32);
@@ -3151,15 +3085,12 @@ brw_from_nir_emit_gs_intrinsic(nir_to_brw_state &ntb,
       break;
    }
 
+   case nir_intrinsic_load_urb_output_handle_intel:
+      bld.MOV(retype(dest, BRW_TYPE_UD), s.gs_payload().urb_handles);
+      break;
+
    case nir_intrinsic_emit_vertex_with_counter:
       emit_gs_vertex(ntb, instr->src[0], nir_intrinsic_stream_id(instr));
-
-      /* After an EmitVertex() call, the values of all outputs are undefined.
-       * If this is not in control flow, recreate a fresh set of output
-       * registers to keep their live ranges separate.
-       */
-      if (instr->instr.block->cf_node.parent->type == nir_cf_node_function)
-         brw_from_nir_setup_outputs(ntb);
       break;
 
    case nir_intrinsic_end_primitive_with_counter:
@@ -3810,6 +3741,22 @@ brw_from_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
 
    case nir_intrinsic_load_frag_coord_w:
       bld.MOV(dest, s.wpos_w);
+      break;
+
+   case nir_intrinsic_load_fs_start_intel: {
+      brw_reg comps[2] = { s.x_start, s.y_start };
+      bld.VEC(retype(dest, BRW_TYPE_F), comps, 2);
+      break;
+   }
+
+   case nir_intrinsic_load_fs_z_c_intel: {
+      brw_reg comps[2] = { s.z_cx, s.z_cy };
+      bld.VEC(retype(dest, BRW_TYPE_F), comps, 2);
+      break;
+   }
+
+   case nir_intrinsic_load_fs_z_c0_intel:
+      bld.MOV(dest, s.z_c0);
       break;
 
    case nir_intrinsic_load_front_face:
@@ -4859,7 +4806,7 @@ brw_from_nir_emit_task_mesh_intrinsic(nir_to_brw_state &ntb,
       UNREACHABLE("local invocation id should have been lowered earlier");
       break;
 
-   case nir_intrinsic_load_local_invocation_index:
+   case nir_intrinsic_load_local_invocation_index_intel:
       dest = retype(dest, BRW_TYPE_UD);
       bld.MOV(dest, payload.local_index);
       break;
@@ -5037,7 +4984,8 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
       srcs[URB_LOGICAL_SRC_DATA] = get_nir_src(ntb, instr->src[0], -1);
 
       if (!nir_src_is_const(instr->src[3]) ||
-          nir_src_as_uint(instr->src[3]) != 0xf) {
+          nir_src_as_uint(instr->src[3]) !=
+          nir_component_mask(nir_src_num_components(instr->src[0]))) {
          srcs[URB_LOGICAL_SRC_CHANNEL_MASK] =
             retype(get_nir_src_imm(ntb, instr->src[3]), BRW_TYPE_UD);
       }
@@ -5045,6 +4993,8 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
       brw_urb_inst *urb = bld.URB_WRITE(srcs, ARRAY_SIZE(srcs));
       urb->components = instr->src[0].ssa->num_components;
       urb->offset = urb_global_offset;
+
+      assert(urb->components == 4 || urb->components == 8);
       break;
    }
 
@@ -5508,22 +5458,6 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
             c += count;
          }
       }
-      break;
-   }
-
-   case nir_intrinsic_store_output: {
-      assert(nir_src_bit_size(instr->src[0]) == 32);
-      brw_reg src = get_nir_src(ntb, instr->src[0], -1);
-
-      unsigned store_offset = nir_src_as_uint(instr->src[1]);
-      unsigned num_components = instr->num_components;
-      unsigned first_component = nir_intrinsic_component(instr);
-
-      brw_reg new_dest = retype(offset(s.outputs[instr->const_index[0]], bld,
-                                      4 * store_offset), src.type);
-
-      brw_combine_with_vec(bld, offset(new_dest, bld, first_component),
-                           src, num_components);
       break;
    }
 
@@ -6312,7 +6246,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
          bld.emit_uniformize(srcs[MEMORY_LOGICAL_ADDRESS]);
 
       const brw_builder ubld = bld.uniform();
-      unsigned total, done;
+      unsigned total;
       unsigned first_read_component = 0;
 
       if (convergent_block_load) {
@@ -6341,10 +6275,9 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
 
       brw_reg src = srcs[MEMORY_LOGICAL_DATA0];
 
-      unsigned block_comps = components;
-
-      for (done = 0; done < total; done += block_comps) {
-         block_comps = choose_block_size_dwords(devinfo, total - done);
+      unsigned done = 0;
+      while (done < total) {
+         unsigned block_comps = choose_block_size_dwords(devinfo, total - done);
          const unsigned block_bytes = block_comps * (nir_bit_size / 8);
 
          brw_reg dst_offset = is_store ? brw_reg() :
@@ -6368,14 +6301,18 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
          mem->alignment = alignment;
          mem->flags = flags;
 
-         if (brw_type_size_bits(srcs[MEMORY_LOGICAL_ADDRESS].type) == 64) {
-            srcs[MEMORY_LOGICAL_ADDRESS] =
-               increment_a64_address(ubld, srcs[MEMORY_LOGICAL_ADDRESS],
-                                     block_bytes, no_mask_handle);
-         } else {
-            srcs[MEMORY_LOGICAL_ADDRESS] =
-               ubld.ADD(retype(srcs[MEMORY_LOGICAL_ADDRESS], BRW_TYPE_UD),
-                        brw_imm_ud(block_bytes));
+         done += block_comps;
+
+         if (done < total) {
+            if (brw_type_size_bits(srcs[MEMORY_LOGICAL_ADDRESS].type) == 64) {
+               srcs[MEMORY_LOGICAL_ADDRESS] =
+                  increment_a64_address(ubld, srcs[MEMORY_LOGICAL_ADDRESS],
+                                        block_bytes, no_mask_handle);
+            } else {
+               srcs[MEMORY_LOGICAL_ADDRESS] =
+                  ubld.ADD(retype(srcs[MEMORY_LOGICAL_ADDRESS], BRW_TYPE_UD),
+                           brw_imm_ud(block_bytes));
+            }
          }
       }
       assert(done == total);
@@ -6937,7 +6874,6 @@ brw_from_nir(brw_shader *s)
    /* emit the arrays used for inputs and outputs - load/store intrinsics will
     * be converted to reads/writes of these arrays
     */
-   brw_from_nir_setup_outputs(ntb);
    brw_from_nir_emit_system_values(ntb);
    ntb.s.last_scratch = align(ntb.nir->scratch_size, 4) * ntb.s.dispatch_width;
 
