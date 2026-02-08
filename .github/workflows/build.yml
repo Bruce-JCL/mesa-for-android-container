@@ -428,7 +428,7 @@ jobs:
           retention-days: 90
 
   draft-release:
-    if: ${{ github.event.inputs.draft_release }}
+    if: ${{ github.event.inputs.draft_release == 'true' }}
     needs:
       - debian-trixie
       - ubuntu-noble
