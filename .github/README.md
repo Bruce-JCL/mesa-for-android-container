@@ -23,6 +23,7 @@ Experimental support (by [**whitebelyash**](https://github.com/whitebelyash)): *
 ## Installation
 This project's Releases provide two types of installation packages: one installable via the Linux distribution's package manager, and another that must be installed by direct extraction. The first type is recommended; however, if you need the latest Mesa features (such as **Adreno 8xx support**), use the second type.  
 If the Turnip driver from the standard release (whose release title doesn't have the `turnip-` prefix) fails to work properly, you can use the **unpatched Turnip driver** (whose release title does have the `turnip-` prefix) by directly installing it over the standard one.  
+**PS:** The term "unpatched" mentioned in this project refers to the original patches from xMeM not being applied; however, some necessary patches (such as those for additional GPU support) will still be applied.  
 ### Using the Package Manager
 Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download all corresponding packages for a specific release, then follow the installation instructions provided in the release notes. Below are the latest releases for some popular Linux distributions:  
 
@@ -77,6 +78,29 @@ MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
 ```
 ## Building
+### GitHub Actions
+This project supports building using [GitHub Actions](https://github.com/lfdevs/mesa-for-android-container/actions). You can fork this repository and then enable Actions in your fork. 
+#### Workflows
+There are five workflows in this repository, briefly introduced below:  
+
+|         File         |          Name           |                             Applicable Branches                             |          Build Target           |
+| :----------------: | :-------------------: | :----------------------------------------------------------: | :---------------------: |
+|    `build.yml`     |         Build         |                        `adreno-main`, etc.                        |        Latest standard installation packages         |
+| `build-turnip.yml` |     Build Turnip      |                        `turnip-main`, etc.                        |   Latest unpatched Turnip drivers    |
+| `build-debian.yml` | Build Debian Packages |        `adreno-debian-trixie`, `turnip-debian-trixie`, etc.        | Debian installation packages installable via `apt` |
+| `build-ubuntu.yml` | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`, `turnip-ubuntu-noble-updates`, etc. | Ubuntu installation packages installable via `apt` |
+| `build-fedora.yml` | Build Fedora Packages |           `adreno-fedora-f43`, `turnip-fedora-f43`, etc.           | Fedora installation packages installable via `dnf` |
+
+**PS:** Due to the "rolling release" nature of Arch Linux, Arch Linux installation packages that can be installed using `pacman` are directly built by `build.yml` and `build-turnip.yml`.  
+#### Input Parameters
+All workflows have two input parameters when manually triggered, briefly introduced as follows:  
+
+|    Parameter    |        Name         |                                    Description                                     |
+| :-------------: | :-----------------: | :--------------------------------------------------------------------------------: |
+|      `tag`      |    Branch or tag    |             Build target, supports branches or tags under that branch              |
+| `draft_release` | Draft a new release | Automatically generate a draft release (applicable when the build target is a tag) |
+
+### Local Build
 For detailed building procedures, please refer to the official Mesa documentation ([Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)). Key commands for building installable packages compatible with package managers (e.g., `apt`, `dnf`, `pacman`) can be found in [this document](docs/common/build-for-distros.md). Below are the key steps for building Mesa in a Debian 13 arm64 environment:  
 
 1.  Check if the source code repositories are enabled. If you are using the traditional format for software sources (`/etc/apt/sources.list`), check for a configuration similar to the following.  

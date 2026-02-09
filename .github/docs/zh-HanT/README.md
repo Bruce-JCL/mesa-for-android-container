@@ -23,6 +23,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 ## 安裝
 本專案的 Releases 有兩種形式的安裝包，一種可以使用 Linux 發行版的套件管理器安裝，另一種只能直接解壓來安裝。推薦使用第一種安裝包，若需要最新的 Mesa 功能（例如 **Adreno 8xx 的支援**），則可以使用第二種。  
 若常規的 Release（標題不帶 `turnip-` 前綴）中的 Turnip 驅動無法正常運作，可使用**未打補丁的 Turnip 驅動**（標題帶 `turnip-` 前綴），直接覆蓋安裝即可。  
+**PS:** 本專案所提及的「未打補丁」指的是未套用 xMeM 的原始補丁，但仍會套用一些必要的補丁（例如新增更多 GPU 支援）。  
 ### 使用套件管理器
 根據所使用的 Linux 發行版，前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下載對應 Release 的所有套件，並依照 Release 說明中的安裝指示進行安裝。以下為一些主流 Linux 發行版對應的最新 Release：  
 
@@ -77,7 +78,29 @@ MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
 ```
 ## 建置
+### GitHub Actions
+本專案支援使用 [GitHub Actions](https://github.com/lfdevs/mesa-for-android-container/actions) 進行建置。你可以 Fork 本儲存庫，然後在 Fork 中啟用 Actions。 
+#### 工作流程
+本儲存庫共有五條工作流程，簡單介紹如下：  
 
+|         檔案         |          名稱           |                             適用分支                             |           建置目標            |
+| :----------------: | :-------------------: | :----------------------------------------------------------: | :-----------------------: |
+|    `build.yml`     |         Build         |                        `adreno-main`等                        |         最新的標準安裝包          |
+| `build-turnip.yml` |     Build Turnip      |                        `turnip-main`等                        |    最新的未打補丁的 Turnip 驅動     |
+| `build-debian.yml` | Build Debian Packages |        `adreno-debian-trixie`、`turnip-debian-trixie`等        | 能夠使用 `apt` 安裝的 Debian 安裝包 |
+| `build-ubuntu.yml` | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`、`turnip-ubuntu-noble-updates`等 | 能夠使用 `apt` 安裝的 Ubuntu 安裝包 |
+| `build-fedora.yml` | Build Fedora Packages |           `adreno-fedora-f43`、`turnip-fedora-f43`等           | 能夠使用 `dnf` 安裝的 Fedora 安裝包 |
+
+**PS:** 由於 Arch Linux 「滾動更新」的特性，能夠使用 `pacman` 安裝的 Arch Linux 安裝包直接由 `build.yml`、`build-turnip.yml` 進行建置。  
+#### 輸入參數
+所有工作流程手動觸發時均有兩個輸入參數，簡單介紹如下：  
+
+|       參數        |         名稱          |              說明               |
+| :-------------: | :-----------------: | :---------------------------: |
+|      `tag`      |    Branch or tag    |       建置目標，支援分支或該分支下的標籤       |
+| `draft_release` | Draft a new release | 自動產生草稿 Release（適用於建置目標為標籤的情況） |
+
+### 本地建置
 詳細的建置流程請參照 Mesa 官方說明（[Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)），建構可使用套件管理器（如 `apt`、`dnf`、`pacman`）安裝的安裝包之關鍵指令可參考[此文件](../common/build-for-distros.md)。以下為在 Debian 13 arm64 環境下建置的關鍵步驟：  
 
 1.  檢查是否已啟用原始碼軟體來源。若使用傳統格式（`/etc/apt/sources.list`）的軟體來源，可檢查是否有類似於以下的設定。  
