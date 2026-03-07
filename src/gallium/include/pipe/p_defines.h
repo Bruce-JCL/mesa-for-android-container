@@ -470,7 +470,7 @@ enum pipe_flush_flags
 #define PIPE_BIND_GLOBAL               (1 << 13) /* set_global_binding */
 #define PIPE_BIND_SHADER_BUFFER        (1 << 14) /* set_shader_buffers */
 #define PIPE_BIND_SHADER_IMAGE         (1 << 15) /* set_shader_images */
-/* gap */
+#define PIPE_BIND_OPENCL               (1 << 16) /* potentially higher precision reqs */
 #define PIPE_BIND_COMMAND_ARGS_BUFFER  (1 << 17) /* pipe_draw_info.indirect */
 #define PIPE_BIND_QUERY_BUFFER         (1 << 18) /* get_query_result_resource */
 
@@ -551,6 +551,9 @@ enum pipe_tess_spacing {
 
 /**
  * Query object types
+ *
+ * Note, PIPE_QUERY_x has somehow become ABI between virgl (guest) and
+ * virglrenderer (host).  Mistakes were made, now we live with it.
  */
 enum pipe_query_type {
    PIPE_QUERY_OCCLUSION_COUNTER,
@@ -567,6 +570,7 @@ enum pipe_query_type {
    PIPE_QUERY_GPU_FINISHED,
    PIPE_QUERY_PIPELINE_STATISTICS,
    PIPE_QUERY_PIPELINE_STATISTICS_SINGLE,
+   PIPE_QUERY_TIMESTAMP_RAW,
    PIPE_QUERY_TYPES,
    /* start of driver queries, see pipe_screen::get_driver_query_info */
    PIPE_QUERY_DRIVER_SPECIFIC = 256,
@@ -1058,6 +1062,7 @@ struct pipe_caps {
    bool mesh_shader;
    bool representative_fragment_test;
    bool prefer_persp;
+   bool blit_3d;
 
    int accelerated;
    int min_texel_offset;

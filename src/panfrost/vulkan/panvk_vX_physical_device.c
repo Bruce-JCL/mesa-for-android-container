@@ -118,6 +118,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_present_wait = true,
       .KHR_present_wait2 = true,
       .KHR_swapchain = true,
+      .KHR_swapchain_mutable_format = true,
 #endif
       .KHR_synchronization2 = true,
       .KHR_timeline_semaphore = true,
@@ -132,8 +133,10 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_buffer_device_address = true,
       .EXT_calibrated_timestamps =
          device->kmod.dev->props.gpu_can_query_timestamp,
+      .EXT_color_write_enable = true,
       .EXT_custom_border_color = true,
       .EXT_depth_bias_control = true,
+      .EXT_depth_clamp_control = true,
       .EXT_depth_clamp_zero_one = true,
       .EXT_depth_clip_enable = true,
       .EXT_depth_clip_control = true,
@@ -156,9 +159,12 @@ panvk_per_arch(get_physical_device_extensions)(
       /* EXT_image_drm_format_modifier depends on KHR_sampler_ycbcr_conversion */
       .EXT_image_drm_format_modifier = true,
       .EXT_image_robustness = true,
+      .EXT_image_view_min_lod = true,
       .EXT_index_type_uint8 = true,
+      .EXT_legacy_dithering = true,
       .EXT_line_rasterization = true,
       .EXT_load_store_op_none = true,
+      .EXT_nested_command_buffer = PAN_ARCH >= 10,
       .EXT_non_seamless_cube_map = true,
       .EXT_mutable_descriptor_type = PAN_ARCH >= 9,
       .EXT_multisampled_render_to_single_sampled = true,
@@ -181,10 +187,12 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_shader_module_identifier = true,
       .EXT_shader_demote_to_helper_invocation = true,
       .EXT_shader_replicated_composites = true,
+      .EXT_shader_stencil_export = true,
       .EXT_shader_subgroup_ballot = true,
       .EXT_shader_subgroup_vote = true,
       .EXT_subgroup_size_control = has_vk1_1,
       .EXT_texel_buffer_alignment = true,
+      .EXT_astc_decode_mode = PAN_ARCH >= 9,
       .EXT_texture_compression_astc_hdr = true,
       .EXT_tooling_info = true,
       .EXT_vertex_attribute_divisor = true,
@@ -199,8 +207,11 @@ panvk_per_arch(get_physical_device_extensions)(
       .GOOGLE_hlsl_functionality1 = true,
       .GOOGLE_user_type = true,
 
+      .VALVE_mutable_descriptor_type = PAN_ARCH >= 9,
+
       .ARM_shader_core_builtins = true,
       .ARM_shader_core_properties = has_vk1_1,
+      .ARM_scheduling_controls = PAN_ARCH >= 10,
    };
 }
 
@@ -374,7 +385,9 @@ panvk_per_arch(get_physical_device_features)(
       .hostQueryReset = true,
       .timelineSemaphore = true,
       .bufferDeviceAddress = true,
-      .bufferDeviceAddressCaptureReplay = false,
+      /* only expose for CSF/panthor, and if we have extended VA ranges */
+      .bufferDeviceAddressCaptureReplay =
+         (PAN_ARCH >= 10) && (device->memory.max_supported_va > (1ull << 32)),
       .bufferDeviceAddressMultiDevice = false,
       .vulkanMemoryModel = true,
       .vulkanMemoryModelDeviceScope = true,
@@ -396,6 +409,10 @@ panvk_per_arch(get_physical_device_features)(
       .synchronization2 = true,
       .textureCompressionASTC_HDR = has_texture_compression_astc_hdr(device),
       .shaderZeroInitializeWorkgroupMemory = true,
+
+      /* VK_EXT_astc_decode_mode */
+      .decodeModeSharedExponent = false,
+
       .dynamicRendering = true,
       .shaderIntegerDotProduct = true,
       .maintenance4 = true,
@@ -447,6 +464,9 @@ panvk_per_arch(get_physical_device_features)(
       .floatRepresentation = false,
       .depthBiasExact = true,
 
+      /* VK_EXT_depth_clamp_control */
+      .depthClampControl = true,
+
       /* VK_EXT_depth_clip_control */
       .depthClipControl = true,
 
@@ -465,6 +485,9 @@ panvk_per_arch(get_physical_device_features)(
       .formatA4R4G4B4 = true,
       .formatA4B4G4R4 = true,
 
+      /* VK_EXT_color_write_enable */
+      .colorWriteEnable = true,
+
       /* VK_EXT_custom_border_color */
       .customBorderColors = true,
 
@@ -475,6 +498,9 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_EXT_image_2d_view_of_3d */
       .image2DViewOf3D = true,
       .sampler2DViewOf3D = true,
+
+      /* VK_EXT_image_view_min_lod */
+      .minLod = true,
 
       /* VK_EXT_primitive_topology_list_restart */
       .primitiveTopologyListRestart = true,
@@ -533,6 +559,14 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_EXT_ycbcr_image_arrays */
       .ycbcrImageArrays = PAN_ARCH >= 10,
 
+      /* VK_EXT_legacy_dithering */
+      .legacyDithering = true,
+
+      /* VK_EXT_nested_command_buffer */
+      .nestedCommandBuffer = PAN_ARCH >= 10,
+      .nestedCommandBufferRendering = PAN_ARCH >= 10,
+      .nestedCommandBufferSimultaneousUse = PAN_ARCH >= 10,
+
       /* VK_EXT_non_seamless_cube_map */
       .nonSeamlessCubeMap = true,
 
@@ -566,6 +600,9 @@ panvk_per_arch(get_physical_device_features)(
 
       /* VK_ARM_shader_core_builtins */
       .shaderCoreBuiltins = PAN_ARCH >= 9,
+
+      /* VK_ARM_scheduling_controls */
+      .schedulingControls = PAN_ARCH >= 10,
 
       /* VK_EXT_multisampled_render_to_single_sampled */
       .multisampledRenderToSingleSampled = true,
@@ -1078,6 +1115,9 @@ panvk_per_arch(get_physical_device_properties)(
       .graphicsPipelineLibraryFastLinking = true,
       .graphicsPipelineLibraryIndependentInterpolationDecoration = true,
 
+      /* VK_EXT_nested_command_buffer */
+      .maxCommandBufferNestingLevel = 5,
+
       /* VK_EXT_provoking_vertex */
       .provokingVertexModePerPipeline = false,
       .transformFeedbackPreservesTriangleFanProvokingVertex = false,
@@ -1095,6 +1135,10 @@ panvk_per_arch(get_physical_device_properties)(
       .shaderCoreCount = util_bitcount(device->kmod.dev->props.shader_present),
       .shaderWarpsPerCore = device->kmod.dev->props.max_threads_per_core /
                             (pan_subgroup_size(PAN_ARCH) * 2),
+
+      /* VK_ARM_scheduling_controls */
+      .schedulingControlsFlags =
+         VK_PHYSICAL_DEVICE_SCHEDULING_CONTROLS_SHADER_CORE_COUNT_ARM,
    };
 
    snprintf(properties->deviceName, sizeof(properties->deviceName), "%s",

@@ -148,6 +148,7 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_maintenance1 = true,
       .KHR_maintenance2 = true,
       .KHR_maintenance3 = true,
+      .KHR_maintenance4 = true,
       .KHR_map_memory2 = true,
       .KHR_multiview = true,
       .KHR_pipeline_executable_properties = true,
@@ -327,6 +328,9 @@ static void pvr_physical_device_get_supported_features(
       .multiview = true,
       .multiviewGeometryShader = false,
       .multiviewTessellationShader = false,
+
+      /* Vulkan 1.3 / VK_KHR_maintenance4 */
+      .maintenance4 = true,
 
       /* Vulkan 1.1 / VK_KHR_shader_draw_parameters */
       .shaderDrawParameters = true,
@@ -804,6 +808,9 @@ static bool pvr_physical_device_get_properties(
       .uniformTexelBufferOffsetAlignmentBytes = PVR_TEXEL_BUFFER_OFFSET_ALIGNMENT,
       .uniformTexelBufferOffsetSingleTexelAlignment = false,
 
+      /* Vulkan 1.3 / VK_KHR_maintenance4 */
+      .maxBufferSize = max_memory_alloc_size,
+
       /* Vulkan 1.4 / VK_EXT_vertex_attribute_divisor / VK_KHR_vertex_attribute_divisor */
       .maxVertexAttribDivisor = UINT32_MAX,
       .supportsNonZeroFirstInstance = true,
@@ -812,8 +819,8 @@ static bool pvr_physical_device_get_properties(
       .maxCustomBorderColorSamplers =
          get_custom_border_color_samplers(&pdevice->dev_info),
 
-      /* VkPhysicalDeviceDrmPropertiesEXT */
-      .drmHasPrimary = true,
+      /* VK_EXT_physical_device_drm */
+      .drmHasPrimary = pdevice->has_primary,
       .drmPrimaryMajor = (int64_t) major(pdevice->primary_devid),
       .drmPrimaryMinor = (int64_t) minor(pdevice->primary_devid),
       .drmHasRender = true,
@@ -1007,14 +1014,12 @@ VkResult pvr_physical_device_init(struct pvr_physical_device *pdevice,
    }
 
    primary_path = drm_render_device->nodes[DRM_NODE_PRIMARY];
-   if (stat(primary_path, &primary_stat) != 0) {
-      result = vk_errorf(instance,
-                         VK_ERROR_INITIALIZATION_FAILED,
-                         "failed to stat DRM primary node %s",
-                         primary_path);
-      goto err_vk_free_display_path;
+   pdevice->has_primary = false;
+   pdevice->primary_devid = 0;
+   if (!stat(primary_path, &primary_stat)) {
+      pdevice->has_primary = true;
+      pdevice->primary_devid = primary_stat.st_rdev;
    }
-   pdevice->primary_devid = primary_stat.st_rdev;
 
    if (stat(render_path, &render_stat) != 0) {
       result = vk_errorf(instance,

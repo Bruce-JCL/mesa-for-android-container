@@ -8,13 +8,13 @@
 #include "si_pipe.h"
 
 #include "driver_ddebug/dd_util.h"
-#include "radeon_uvd.h"
 #include "si_public.h"
 #include "sid.h"
 #include "ac_shader_util.h"
 #include "ac_shadowed_regs.h"
 #include "compiler/nir/nir.h"
 #include "util/disk_cache.h"
+#include "util/helpers.h"
 #include "util/hex.h"
 #include "util/u_cpu_detect.h"
 #include "util/u_memory.h"
@@ -23,6 +23,7 @@
 #include "util/u_upload_mgr.h"
 #include "util/xmlconfig.h"
 #include "si_utrace.h"
+#include "si_video.h"
 
 #include "aco_interface.h"
 
@@ -145,7 +146,6 @@ static const struct debug_named_value test_options[] = {
    {"clearbuffer", DBG(TEST_CLEAR_BUFFER), "Test correctness of the clear_buffer compute shader"},
    {"copybuffer", DBG(TEST_COPY_BUFFER), "Test correctness of the copy_buffer compute shader"},
    {"imagecopy", DBG(TEST_IMAGE_COPY), "Invoke resource_copy_region tests with images and exit."},
-   {"cbresolve", DBG(TEST_CB_RESOLVE), "Invoke MSAA resolve tests and exit."},
    {"computeblit", DBG(TEST_COMPUTE_BLIT), "Invoke blits tests and exit."},
    {"testvmfaultcp", DBG(TEST_VMFAULT_CP), "Invoke a CP VM fault test and exit."},
    {"testvmfaultshader", DBG(TEST_VMFAULT_SHADER), "Invoke a shader VM fault test and exit."},
@@ -210,6 +210,9 @@ static void si_destroy_context(struct pipe_context *context)
 {
    struct si_context *sctx = (struct si_context *)context;
 
+   util_queue_finish(&sctx->screen->shader_compiler_queue);
+   util_queue_finish(&sctx->screen->shader_compiler_queue_opt_variants);
+
    if (context->set_debug_callback)
       context->set_debug_callback(context, NULL);
 
@@ -258,8 +261,6 @@ static void si_destroy_context(struct pipe_context *context)
 
    if (sctx->custom_dsa_flush)
       sctx->b.delete_depth_stencil_alpha_state(&sctx->b, sctx->custom_dsa_flush);
-   if (sctx->custom_blend_resolve)
-      sctx->b.delete_blend_state(&sctx->b, sctx->custom_blend_resolve);
    if (sctx->custom_blend_fmask_decompress)
       sctx->b.delete_blend_state(&sctx->b, sctx->custom_blend_fmask_decompress);
    if (sctx->custom_blend_eliminate_fastclear)
@@ -634,7 +635,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
    }
 
    /* Border colors. */
-   if (sscreen->info.has_3d_cube_border_color_mipmap) {
+   if (sscreen->info.compiler_info.has_3d_cube_border_color_mipmap) {
       sctx->border_color_table = malloc(SI_MAX_BORDER_COLORS * sizeof(*sctx->border_color_table));
       if (!sctx->border_color_table) {
          mesa_loge("can't create border_color_table");
@@ -673,21 +674,26 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
    sctx->b.set_device_reset_callback = si_set_device_reset_callback;
    sctx->b.set_frontend_noop = si_set_frontend_noop;
 
+#ifdef HAVE_GFX_COMPUTE
    si_init_all_descriptors(sctx);
    si_init_barrier_functions(sctx);
-   si_init_buffer_functions(sctx);
    si_init_clear_functions(sctx);
    si_init_blit_functions(sctx);
    si_init_compute_functions(sctx);
    si_init_compute_blit_functions(sctx);
    si_init_debug_functions(sctx);
-   si_init_fence_functions(sctx);
    si_init_query_functions(sctx);
    si_init_state_compute_functions(sctx);
+#else
+   list_inithead(&sctx->active_queries);
+#endif
+   si_init_buffer_functions(sctx);
+   si_init_fence_functions(sctx);
    si_init_context_texture_functions(sctx);
 
    /* Initialize graphics-only context functions. */
    if (sctx->is_gfx_queue) {
+#ifdef HAVE_GFX_COMPUTE
       if (sctx->gfx_level >= GFX10)
          si_gfx11_init_query(sctx);
       si_init_msaa_functions(sctx);
@@ -747,6 +753,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
       default:
          UNREACHABLE("unhandled gfx level");
       }
+#endif
    }
 
    if (screen->caps.mesh_shader)
@@ -761,7 +768,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
        sscreen->info.ip[AMD_IP_VCN_JPEG].num_queues || sscreen->info.ip[AMD_IP_VCE].num_queues ||
        sscreen->info.ip[AMD_IP_UVD_ENC].num_queues || sscreen->info.ip[AMD_IP_VCN_ENC].num_queues ||
        sscreen->info.ip[AMD_IP_VPE].num_queues) {
-      sctx->b.create_video_codec = si_uvd_create_decoder;
+      sctx->b.create_video_codec = si_video_codec_create;
       sctx->b.create_video_buffer = si_video_buffer_create;
       if (screen->resource_create_with_modifiers)
          sctx->b.create_video_buffer_with_modifiers = si_video_buffer_create_with_modifiers;
@@ -1351,6 +1358,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
        !(sscreen->info.userq_ip_mask & (1 << AMD_IP_GFX)))
       sscreen->info.has_kernelq_reg_shadowing = true;
 
+#ifdef HAVE_GFX_COMPUTE
    bool support_aco = aco_is_gpu_supported(&sscreen->info);
 
 #if AMD_LLVM_AVAILABLE
@@ -1367,6 +1375,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    }
 
    si_setup_force_shader_use_aco(sscreen, support_aco);
+#endif
 
    if ((sscreen->debug_flags & DBG(TMZ)) &&
        !sscreen->info.has_tmz_support) {
@@ -1394,7 +1403,9 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    sscreen->b.destroy = si_destroy_screen;
    sscreen->b.set_max_shader_compiler_threads = si_set_max_shader_compiler_threads;
    sscreen->b.is_parallel_shader_compilation_finished = si_is_parallel_shader_compilation_finished;
+#ifdef HAVE_GFX_COMPUTE
    sscreen->b.finalize_nir = si_finalize_nir;
+#endif
 
    sscreen->nir_options = CALLOC_STRUCT(nir_shader_compiler_options);
 
@@ -1485,7 +1496,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
       num_comp_lo_threads = 1;
    }
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && defined(HAVE_GFX_COMPUTE)
    nir_process_debug_variable();
 
    /* Use a single compilation thread if NIR printing is enabled to avoid
@@ -1669,7 +1680,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    if (test_flags & DBG(TEST_IMAGE_COPY))
       si_test_image_copy_region(sscreen);
 
-   if (test_flags & (DBG(TEST_CB_RESOLVE) | DBG(TEST_COMPUTE_BLIT)))
+   if (test_flags & DBG(TEST_COMPUTE_BLIT))
       si_test_blit(sscreen, test_flags);
 
    if (test_flags & DBG(TEST_DMA_PERF))

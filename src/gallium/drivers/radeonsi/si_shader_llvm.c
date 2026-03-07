@@ -116,7 +116,7 @@ static void si_llvm_context_init(struct si_shader_context *ctx, struct si_screen
    ctx->screen = sscreen;
    ctx->compiler = compiler;
 
-   ac_llvm_context_init(&ctx->ac, compiler, &sscreen->info, float_mode,
+   ac_llvm_context_init(&ctx->ac, compiler, &sscreen->info.compiler_info, float_mode,
                         wave_size, exports_color_null, exports_mrtz);
 }
 
@@ -405,7 +405,7 @@ static LLVMValueRef si_llvm_load_sampler_desc(struct ac_shader_abi *abi, LLVMVal
          break;
       case AC_DESC_FMASK:
          /* The FMASK is at [8:15]. */
-         assert(ctx->screen->info.gfx_level < GFX11);
+         assert(ctx->screen->info.compiler_info.has_fmask);
          index = ac_build_imad(&ctx->ac, index, LLVMConstInt(ctx->ac.i32, 2, 0), ctx->ac.i32_1);
          break;
       case AC_DESC_SAMPLER:
@@ -544,7 +544,6 @@ static bool si_llvm_translate_nir(struct si_shader_context *ctx, struct si_shade
 
    ctx->abi.clamp_shadow_reference = true;
    ctx->abi.robust_buffer_access = true;
-   ctx->abi.load_grid_size_from_user_sgpr = true;
    ctx->abi.clamp_div_by_zero = ctx->screen->options.clamp_div_by_zero ||
                                 info->options & SI_PROFILE_CLAMP_DIV_BY_ZERO;
    ctx->abi.disable_aniso_single_level = true;

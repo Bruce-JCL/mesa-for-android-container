@@ -297,6 +297,8 @@ validate_alu_instr(nir_alu_instr *instr, validate_state *state)
    }
 
    validate_def(&instr->def, state);
+
+   validate_assert(state, (instr->fp_math_ctrl & ~nir_op_infos[instr->op].valid_fp_math_ctrl) == 0);
 }
 
 static void
@@ -937,6 +939,11 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
        nir_intrinsic_has_align(instr)) {
       unsigned min_align = 1 << nir_intrinsic_offset_shift(instr);
       validate_assert(state, nir_intrinsic_align(instr) >= min_align);
+   }
+
+   if (nir_intrinsic_has_offset_shift_nv(instr)) {
+      unsigned shift = nir_intrinsic_offset_shift_nv(instr);
+      validate_assert(state, shift == 0 || (shift >= 2 && shift <= 4));
    }
 }
 

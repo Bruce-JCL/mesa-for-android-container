@@ -1493,8 +1493,10 @@ blorp_build_nir_shader(struct blorp_context *blorp,
 
       if (key->dst_samples > 1) {
          nir_def *num_layers_data =
-            nir_load_inline_data_intel(&b, 1, 32,
-               .base = BLORP_INLINE_PARAM_THREAD_GROUP_ID_Z_DIMENSION);
+            nir_load_inline_data_intel(
+               &b, 1, 32, nir_imm_int(&b, 0),
+               .base = BLORP_INLINE_PARAM_THREAD_GROUP_ID_Z_DIMENSION,
+               .range = 4);
 
          nir_def *z_pos = nir_umod(&b, nir_channel(&b, store_pos, 2),
                                    num_layers_data);
@@ -1549,7 +1551,7 @@ blorp_get_blit_kernel_fs(struct blorp_batch *batch,
    struct blorp_context *blorp = batch->blorp;
 
    if (blorp->lookup_shader(batch, key, sizeof(*key),
-                            &params->wm_prog_kernel, &params->wm_prog_data))
+                            &params->wm_prog_kernel, &params->fs_prog_data))
       return true;
 
    void *mem_ctx = ralloc_context(NULL);
@@ -1563,14 +1565,15 @@ blorp_get_blit_kernel_fs(struct blorp_batch *batch,
    const bool multisample_fbo = key->rt_samples > 1;
 
    const struct blorp_program p =
-      blorp_compile_fs(blorp, mem_ctx, nir, multisample_fbo, false, false);
+      blorp_compile_fs(blorp, mem_ctx, nir, multisample_fbo, false, false,
+                       key, sizeof(*key));
 
    bool result =
       blorp->upload_shader(batch, MESA_SHADER_FRAGMENT,
                            key, sizeof(*key),
                            p.kernel, p.kernel_size,
                            p.prog_data, p.prog_data_size,
-                           &params->wm_prog_kernel, &params->wm_prog_data);
+                           &params->wm_prog_kernel, &params->fs_prog_data);
 
    ralloc_free(mem_ctx);
    return result;
@@ -1599,7 +1602,7 @@ blorp_get_blit_kernel_cs(struct blorp_batch *batch,
    assert(batch->blorp->isl_dev->info->ver >= 30 || prog_key->rt_samples == 1);
 
    const struct blorp_program p =
-      blorp_compile_cs(blorp, mem_ctx, nir);
+      blorp_compile_cs(blorp, mem_ctx, nir, prog_key, sizeof(*prog_key));
 
    bool result =
       blorp->upload_shader(batch, MESA_SHADER_COMPUTE,

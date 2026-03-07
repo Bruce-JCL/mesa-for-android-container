@@ -291,9 +291,6 @@ typedef struct nir_shader_compiler_options {
    /* lower {slt,sge,seq,sne} to {flt,fge,feq,fneu} + b2f: */
    bool lower_scmp;
 
-   /* lower b/fall_equalN/b/fany_nequalN (ex:fany_nequal4 to sne+fdot4+fsat) */
-   bool lower_vector_cmp;
-
    /** enable rules to avoid bit ops */
    bool lower_bitops;
 
@@ -859,6 +856,12 @@ typedef struct nir_shader_compiler_options {
     *  Used by nir_lower_io_passes.
     */
    void (*lower_mediump_io)(struct nir_shader *nir);
+
+   /**
+    * If driver wishes to control which @convert_alu_types to lower, it
+    * can implement this callback.
+    */
+   bool (*lower_convert_alu_types)(nir_intrinsic_instr *convert_alu_types);
 
    /**
     * Return the maximum cost of an expression that's written to a shader

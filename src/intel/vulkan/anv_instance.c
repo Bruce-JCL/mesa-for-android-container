@@ -17,6 +17,8 @@ static const driOptionDescription anv_dri_options[] = {
       DRI_CONF_ANV_ASSUME_FULL_SUBGROUPS(0)
       DRI_CONF_ANV_ASSUME_FULL_SUBGROUPS_WITH_BARRIER(false)
       DRI_CONF_ANV_ASSUME_FULL_SUBGROUPS_WITH_SHARED_MEMORY(false)
+      DRI_CONF_ANV_BARRIER_POST_TYPED_CLEAR_SHADER(false)
+      DRI_CONF_ANV_BARRIER_POST_UNTYPED_CLEAR_SHADER(false)
       DRI_CONF_ANV_DISABLE_FCV(false)
       DRI_CONF_ANV_ENABLE_BUFFER_COMP(false)
       DRI_CONF_ANV_DISABLE_DRM_AUX_MODIFIERS(false)
@@ -28,6 +30,8 @@ static const driOptionDescription anv_dri_options[] = {
       DRI_CONF_ANV_GENERATED_INDIRECT_THRESHOLD(4)
       DRI_CONF_ANV_GENERATED_INDIRECT_RING_THRESHOLD(100)
       DRI_CONF_NO_16BIT(false)
+      DRI_CONF_INTEL_BINDING_TABLE_BLOCK_SIZE(BINDING_TABLE_POOL_DEFAULT_BLOCK_SIZE,
+                                              1024, 128 * 1024)
       DRI_CONF_INTEL_ENABLE_WA_14018912822(false)
       DRI_CONF_INTEL_ENABLE_WA_14024015672_MSAA(false)
       DRI_CONF_INTEL_SAMPLER_ROUTE_TO_LSC(false)
@@ -36,7 +40,7 @@ static const driOptionDescription anv_dri_options[] = {
       DRI_CONF_ANV_FORCE_INDIRECT_DESCRIPTORS(false)
       DRI_CONF_ANV_DISABLE_LINK_TIME_OPTIMIZATION(false)
       DRI_CONF_SHADER_SPILLING_RATE(11)
-      DRI_CONFIG_INTEL_FORCE_COMPUTE_SURFACE_PREFETCH(false)
+      DRI_CONFIG_INTEL_FORCE_COMPUTE_SURFACE_PREFETCH(true)
       DRI_CONFIG_INTEL_FORCE_SAMPLER_PREFETCH(false)
       DRI_CONFIG_INTEL_TBIMR(true)
       DRI_CONFIG_INTEL_VF_DISTRIBUTION(true)
@@ -91,6 +95,7 @@ static const struct debug_control debug_control[] = {
    { "video-encode", ANV_DEBUG_VIDEO_ENCODE},
    { "shader-hash",  ANV_DEBUG_SHADER_HASH},
    { "no-slab",      ANV_DEBUG_NO_SLAB},
+   { "desc-dirty",   ANV_DEBUG_DESCRIPTOR_DIRTY},
    { NULL,    0 }
 };
 
@@ -235,6 +240,12 @@ anv_init_dri_options(struct anv_instance *instance)
        driQueryOptionb(&instance->dri_options, "vk_lower_terminate_to_discard");
     instance->disable_xe2_drm_ccs_modifiers =
        driQueryOptionb(&instance->dri_options, "anv_disable_drm_ccs_modifiers");
+    instance->binding_table_block_size = util_next_power_of_two(
+       driQueryOptioni(&instance->dri_options, "intel_binding_table_block_size"));
+    instance->barrier_post_typed_clear_shader =
+       driQueryOptionb(&instance->dri_options, "anv_barrier_post_typed_clear_shader");
+    instance->barrier_post_untyped_clear_shader =
+       driQueryOptionb(&instance->dri_options, "anv_barrier_post_untyped_clear_shader");
 
     if (instance->vk.app_info.engine_name &&
         !strcmp(instance->vk.app_info.engine_name, "DXVK")) {

@@ -53,15 +53,10 @@ if [ -n "$VKD3D_PROTON_TAG" ]; then
   # Are we using the right vkd3d-proton version?
   ci_tag_test_time_check "VKD3D_PROTON_TAG"
 
-  export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:$INSTALL/lib/:/vkd3d-proton-tests/lib/"
   # Set environment for Wine.
   export WINEDEBUG="-all"
   export WINEPREFIX="/vkd3d-proton-wine64"
   export WINEESYNC=1
-
-  # Work around our install not using the same layout as the build tree (but
-  # vkd3d-proton.sh relies on the current layout).
-  ln -s /vkd3d-proton-tests/d3d12 /vkd3d-proton-tests/tests/d3d12
 fi
 
 
@@ -171,7 +166,7 @@ deqp-runner \
     --jobs ${FDO_CI_CONCURRENT:-4} \
     ${DEQP_RUNNER_MAX_FAILS:+--max-fails "$DEQP_RUNNER_MAX_FAILS"} \
     ${DEQP_RUNNER_SHADER_CACHE_DIR:+--shader-cache-dir "$DEQP_RUNNER_SHADER_CACHE_DIR"} \
-    ${DEQP_FORCE_ASAN:+--env LD_PRELOAD=libasan.so.8:/install/lib/libdlclose-skip.so}; DEQP_EXITCODE=$?
+    ${DEQP_FORCE_ASAN:+--env LD_PRELOAD=libasan.so.8:/install/lib/libdlclose-skip.so --env ASAN_OPTIONS=malloc_fill_byte=1}; DEQP_EXITCODE=$?
 
 { set +x; } 2>/dev/null
 
@@ -182,9 +177,20 @@ set -x
 
 report_load
 
-# Remove all but the first 50 individual XML files uploaded as artifacts, to
-# save fd.o space when you break everything.
+# Remove all but the first 50 individual XML, test log and caselist
+# files uploaded as artifacts, to save fd.o space and avoid job log spam
+# when you break everything.
+# Note that each of these pattern gets to keep 50 files, but there is nothing
+# making sure the remaining 50 files of each correspond to the same tests.
 find $RESULTS_DIR -name \*.xml | \
+    sort -n |
+    sed -n '1,+49!p' | \
+    xargs rm -f
+find $RESULTS_DIR -name 'c*.r*.caselist.txt' | \
+    sort -n |
+    sed -n '1,+49!p' | \
+    xargs rm -f
+find $RESULTS_DIR -name 'c*.r*.log' | \
     sort -n |
     sed -n '1,+49!p' | \
     xargs rm -f

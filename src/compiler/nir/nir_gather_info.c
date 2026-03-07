@@ -850,6 +850,23 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
       shader->info.outputs_written |= BITFIELD64_BIT(FRAG_RESULT_SAMPLE_MASK);
       break;
 
+   case nir_intrinsic_load_tile_pan:
+   case nir_intrinsic_load_tile_res_pan: {
+      const nir_io_semantics io = nir_intrinsic_io_semantics(instr);
+      shader->info.outputs_read |=
+         BITFIELD64_RANGE(io.location, io.num_slots);
+      break;
+   }
+
+   case nir_intrinsic_blend_pan:
+   case nir_intrinsic_blend2_pan:
+   case nir_intrinsic_store_tile_pan: {
+      const nir_io_semantics io = nir_intrinsic_io_semantics(instr);
+      shader->info.outputs_written |=
+         BITFIELD64_RANGE(io.location, io.num_slots);
+      break;
+   }
+
    case nir_intrinsic_demote_samples:
       shader->info.fs.uses_discard = true;
       break;
@@ -902,6 +919,7 @@ gather_intrinsic_info(nir_intrinsic_instr *instr, nir_shader *shader)
           instr->intrinsic == nir_intrinsic_bindless_image_levels ||
           instr->intrinsic == nir_intrinsic_bindless_image_size ||
           instr->intrinsic == nir_intrinsic_bindless_image_samples ||
+          instr->intrinsic == nir_intrinsic_get_ubo_size ||
           instr->intrinsic == nir_intrinsic_get_ssbo_size)
          shader->info.uses_resource_info_query = true;
       break;

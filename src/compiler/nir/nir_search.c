@@ -289,22 +289,14 @@ match_value(const nir_algebraic_table *table,
          if (state->variables[var->variable].src.ssa != instr->src[src].src.ssa)
             return false;
 
-         for (unsigned i = 0; i < num_components; ++i) {
-            if (state->variables[var->variable].swizzle[i] != new_swizzle[i])
-               return false;
-         }
-
-         return true;
+         return !memcmp(state->variables[var->variable].swizzle, new_swizzle, num_components);
       } else {
          state->variables_seen |= (1 << var->variable);
-         state->variables[var->variable].src = instr->src[src].src;
+         nir_alu_src *dst = &state->variables[var->variable];
+         dst->src = instr->src[src].src;
 
-         for (unsigned i = 0; i < NIR_MAX_VEC_COMPONENTS; ++i) {
-            if (i < num_components)
-               state->variables[var->variable].swizzle[i] = new_swizzle[i];
-            else
-               state->variables[var->variable].swizzle[i] = 0;
-         }
+         memcpy(dst->swizzle, new_swizzle, num_components);
+         memset(dst->swizzle + num_components, 0, NIR_MAX_VEC_COMPONENTS - num_components);
 
          return true;
       }
@@ -382,12 +374,10 @@ match_expression(const nir_algebraic_table *table, const nir_search_expression *
        instr->def.bit_size != expr->value.bit_size)
       return false;
 
-   unsigned fp_math_ctrl = instr->fp_math_ctrl & ~(expr->ignore_exact ? nir_fp_exact : 0);
-
-   if (expr->fp_math_ctrl_exclude & fp_math_ctrl)
+   if (expr->fp_math_ctrl_exclude & instr->fp_math_ctrl)
       return false;
 
-   state->fp_math_ctrl |= fp_math_ctrl;
+   state->fp_math_ctrl |= instr->fp_math_ctrl;
 
    assert(nir_op_infos[instr->op].num_inputs > 0);
 
@@ -405,10 +395,8 @@ match_expression(const nir_algebraic_table *table, const nir_search_expression *
          return false;
    } else {
       if (nir_op_infos[instr->op].output_size != 0) {
-         for (unsigned i = 0; i < num_components; i++) {
-            if (swizzle[i] != i)
-               return false;
-         }
+         if (memcmp(swizzle, identity_swizzle, num_components))
+            return false;
       }
    }
 
@@ -477,9 +465,7 @@ construct_value(nir_builder *build,
        * expression we are replacing has any exact values, the entire
        * replacement should be exact.
        */
-      alu->fp_math_ctrl = state->fp_math_ctrl;
-      if (expr->exact)
-         alu->fp_math_ctrl |= nir_fp_exact;
+      alu->fp_math_ctrl = nir_op_valid_fp_math_ctrl(op, state->fp_math_ctrl | expr->fp_math_ctrl_add);
 
       for (unsigned i = 0; i < nir_op_infos[op].num_inputs; i++) {
          /* If the source is an explicitly sized source, then we need to reset
@@ -697,11 +683,6 @@ nir_replace_instr(nir_builder *build, nir_alu_instr *instr,
                   nir_instr_worklist *algebraic_worklist,
                   struct exec_list *dead_instrs)
 {
-   uint8_t swizzle[NIR_MAX_VEC_COMPONENTS] = { 0 };
-
-   for (unsigned i = 0; i < instr->def.num_components; ++i)
-      swizzle[i] = i;
-
    struct match_state state;
    state.fp_math_ctrl = nir_fp_fast_math;
    state.state = search_state;
@@ -723,7 +704,7 @@ nir_replace_instr(nir_builder *build, nir_alu_instr *instr,
 
       if (match_expression(table, search, instr,
                            instr->def.num_components,
-                           swizzle, &state)) {
+                           identity_swizzle, &state)) {
          found = true;
          break;
       }
@@ -886,8 +867,7 @@ nir_algebraic_instr(nir_builder *build, nir_instr *instr,
           nir_replace_instr(build, alu, state, states, table,
                             &table->values[xform->search].expression,
                             &table->values[xform->replace].value, worklist, dead_instrs)) {
-         if (state->range_ht->entries)
-            _mesa_hash_table_clear(state->range_ht, NULL);
+         nir_invalidate_fp_analysis_state(state->range_ht);
          if (state->numlsb_ht->entries)
             _mesa_hash_table_clear(state->numlsb_ht, NULL);
          return true;
@@ -916,8 +896,7 @@ nir_algebraic_impl(nir_function_impl *impl,
    }
    memset(states.data, 0, states.size);
 
-   struct hash_table range_ht;
-   _mesa_pointer_hash_table_init(&range_ht, NULL);
+   nir_fp_analysis_state range_ht = nir_create_fp_analysis_state(impl);
 
    struct hash_table numlsb_ht;
    _mesa_pointer_hash_table_init(&numlsb_ht, NULL);
@@ -969,7 +948,7 @@ nir_algebraic_impl(nir_function_impl *impl,
 
    nir_instr_worklist_fini(&worklist);
    _mesa_hash_table_fini(&numlsb_ht, NULL);
-   _mesa_hash_table_fini(&range_ht, NULL);
+   nir_free_fp_analysis_state(&range_ht);
    util_dynarray_fini(&states);
 
    return nir_progress(progress, impl, nir_metadata_control_flow);

@@ -5,16 +5,12 @@
 # This is causing a binning memory overflow problem
 dEQP-GLES2.functional.fragment_ops.scissor.outside_render_line
 
-# Conformance issue: VC4 needs dynamic loops in the VS to cause a
-# shader link failure.
-#
-# The issue is that the HW doesn't have an exec mask at dispatch
-# for the VS, so the shouldn't-be-exec channels have undefined
-# contents and may cause infinite loops, leading to GPU hangs.  The
-# process of GPU hang reset causes flakes in whatever other jobs are
-# running simultaneously, so we can't even leave these in the flakes
-# list for tracking.
-dEQP-GLES2.functional.shaders.loops.*dynamic.*vertex
+# It causes GPU resets that can affect tests that are running
+# simultaneously.
+spec@arb_map_buffer_alignment.*
+
+# Bisected to b3133e250e1 ("gallium: add pipe_context::resource_release to eliminate buffer refcounting")
+spec@!opengl 1.1@longprim
 
 # Same issue mentioned above: VC4 hardware doesn't have support for
 # dynamic loops. The execution of dynamic loops can cause infinite

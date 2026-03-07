@@ -144,6 +144,7 @@ radv_get_ray_query_type()
 struct ray_query_vars {
    nir_variable *var;
 
+   bool use_bvh_stack_rtn;
    bool shared_stack;
    uint32_t shared_base;
    uint32_t stack_entries;
@@ -162,13 +163,21 @@ init_ray_query_vars(nir_shader *shader, const glsl_type *opaque_type, struct ray
    uint32_t shared_stack_entries = shader->info.ray_queries == 1 ? 16 : 8;
    /* ds_bvh_stack* instructions use a fixed stride of 32 dwords. */
    if (radv_use_bvh_stack_rtn(pdev))
-      workgroup_size = MAX2(workgroup_size, 32);
+      workgroup_size = align(workgroup_size, 32);
    uint32_t shared_stack_size = workgroup_size * shared_stack_entries * 4;
    uint32_t shared_offset = align(shader->info.shared_size, 4);
+
    if (shader->info.stage != MESA_SHADER_COMPUTE || glsl_type_is_array(opaque_type) ||
-       shared_offset + shared_stack_size > pdev->max_shared_size) {
+       shared_offset + shared_stack_size > pdev->info.lds_size_per_workgroup) {
       dst->stack_entries = MAX_SCRATCH_STACK_ENTRY_COUNT;
    } else {
+      if (radv_use_bvh_stack_rtn(pdev)) {
+         /* The hardware ds_bvh_stack_rtn address can only encode a stack base up to 8191 dwords. */
+         uint32_t num_wave32_groups = workgroup_size / 32;
+         uint32_t max_group_stack_base = (num_wave32_groups - 1) * 32 * shared_stack_entries;
+         uint32_t max_stack_base = (shared_offset / 4) + max_group_stack_base;
+         dst->use_bvh_stack_rtn = max_stack_base < 8192;
+      }
       dst->shared_stack = true;
       dst->shared_base = shared_offset;
       dst->stack_entries = shared_stack_entries;
@@ -257,7 +266,6 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
                     struct radv_device *device)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   struct radv_instance *instance = radv_physical_device_instance(pdev);
 
    nir_deref_instr *closest = rq_deref(b, rq, closest);
    nir_deref_instr *candidate = rq_deref(b, rq, candidate);
@@ -303,7 +311,7 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
 
    if (vars->shared_stack) {
       nir_def *stack_idx = nir_load_local_invocation_index(b);
-      if (radv_use_bvh_stack_rtn(pdev)) {
+      if (vars->use_bvh_stack_rtn) {
          uint32_t workgroup_size =
             b->shader->info.workgroup_size[0] * b->shader->info.workgroup_size[1] * b->shader->info.workgroup_size[2];
          nir_def *addr =
@@ -330,7 +338,7 @@ lower_rq_initialize(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query
 
    rq_store(b, rq, trav_top_stack, nir_imm_int(b, -1));
 
-   rq_store(b, rq, incomplete, nir_iand_imm(b, accel_struct_non_null, !(instance->debug_flags & RADV_DEBUG_NO_RT)));
+   rq_store(b, rq, incomplete, nir_iand_imm(b, accel_struct_non_null, !pdev->cache_key.no_rt));
 
    vars->initialize = instr;
 }
@@ -563,7 +571,7 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
    };
 
    if (vars->shared_stack) {
-      args.use_bvh_stack_rtn = radv_use_bvh_stack_rtn(pdev);
+      args.use_bvh_stack_rtn = vars->use_bvh_stack_rtn;
       if (args.use_bvh_stack_rtn) {
          args.stack_stride = 1;
          args.stack_base = 0;
@@ -583,7 +591,7 @@ lower_rq_proceed(nir_builder *b, nir_intrinsic_instr *instr, struct ray_query_va
    nir_push_if(b, rq_load(b, rq, incomplete));
    {
       nir_def *incomplete;
-      if (radv_use_bvh8(pdev))
+      if (pdev->cache_key.bvh8)
          incomplete = radv_build_ray_traversal_gfx12(device, b, &args);
       else
          incomplete = radv_build_ray_traversal(device, b, &args);

@@ -436,14 +436,22 @@ set_dirty_for_bind_map(struct anv_cmd_buffer *cmd_buffer,
                        const struct anv_pipeline_bind_map *map)
 {
    assert(stage < ARRAY_SIZE(cmd_buffer->state.surface_sha1s));
-   if (mem_update(cmd_buffer->state.surface_sha1s[stage],
-                  map->surface_sha1, sizeof(map->surface_sha1)))
-      cmd_buffer->state.descriptors_dirty |= mesa_to_vk_shader_stage(stage);
+   if (map->surface_count > 0 &&
+       mem_update(cmd_buffer->state.surface_sha1s[stage],
+                  map->surface_sha1, sizeof(map->surface_sha1))) {
+      anv_cmd_buffer_dirty_descriptors(cmd_buffer,
+                                       mesa_to_vk_shader_stage(stage),
+                                       "shader surfaces change");
+   }
 
    assert(stage < ARRAY_SIZE(cmd_buffer->state.sampler_sha1s));
-   if (mem_update(cmd_buffer->state.sampler_sha1s[stage],
-                  map->sampler_sha1, sizeof(map->sampler_sha1)))
-      cmd_buffer->state.descriptors_dirty |= mesa_to_vk_shader_stage(stage);
+   if (map->sampler_count > 0 &&
+       mem_update(cmd_buffer->state.sampler_sha1s[stage],
+                  map->sampler_sha1, sizeof(map->sampler_sha1))) {
+      anv_cmd_buffer_dirty_descriptors(cmd_buffer,
+                                       mesa_to_vk_shader_stage(stage),
+                                       "shader samplers change");
+   }
 
    assert(stage < ARRAY_SIZE(cmd_buffer->state.push_sha1s));
    if (mem_update(cmd_buffer->state.push_sha1s[stage],
@@ -646,27 +654,13 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
          pipe_state->descriptor_buffers[set_index].buffer_index = -1;
          pipe_state->descriptor_buffers[set_index].buffer_offset = set->desc_offset;
          pipe_state->descriptor_buffers[set_index].bound = true;
-         cmd_buffer->state.descriptors_dirty |= stages;
+         anv_cmd_buffer_dirty_descriptors(cmd_buffer, stages, "push descriptor bind");
          cmd_buffer->state.descriptor_buffers.offsets_dirty |= stages;
       } else {
-         /* When using indirect descriptors, stages that have access to the HW
-          * binding tables, never need to access the
-          * anv_push_constants::desc_offsets fields, because any data they
-          * need from the descriptor buffer is accessible through a binding
-          * table entry. For stages that are "bindless" (Mesh/Task/RT), we
-          * need to provide anv_push_constants::desc_offsets matching the
-          * bound descriptor so that shaders can access the descriptor buffer
-          * through A64 messages.
-          *
-          * With direct descriptors, the shaders can use the
-          * anv_push_constants::desc_offsets to build bindless offsets. So
-          * it's we always need to update the push constant data.
+         /* Plaforms with LSC will use descriptor buffer push constant
+          * offsets
           */
-         bool update_desc_sets =
-            !cmd_buffer->device->physical->indirect_descriptors ||
-            (stages & (VK_SHADER_STAGE_TASK_BIT_EXT |
-                       VK_SHADER_STAGE_MESH_BIT_EXT |
-                       ANV_RT_STAGE_BITS));
+         bool update_desc_sets = cmd_buffer->device->info->has_lsc;
 
          if (update_desc_sets) {
             struct anv_push_constants *push = &pipe_state->push_constants;
@@ -679,13 +673,14 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
             push->desc_sampler_offsets[set_index] =
                anv_address_physical(set->desc_sampler_addr) -
                cmd_buffer->device->physical->va.dynamic_state_pool.addr;
-
-            anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
-                                  set->desc_surface_addr.bo);
-            anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
-                                  set->desc_sampler_addr.bo);
          }
       }
+
+      /* Always add a reference to the buffers */
+      anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
+                            set->desc_surface_addr.bo);
+      anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
+                            set->desc_sampler_addr.bo);
 
       dirty_stages |= stages;
    }
@@ -735,7 +730,7 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
    if (set->is_push)
       cmd_buffer->state.push_descriptors_dirty |= dirty_stages;
    else
-      cmd_buffer->state.descriptors_dirty |= dirty_stages;
+      anv_cmd_buffer_dirty_descriptors(cmd_buffer, dirty_stages, "descriptor bind");
    cmd_buffer->state.push_constants_dirty |= dirty_stages;
    pipe_state->push_constants_data_dirty = true;
 }
@@ -846,7 +841,7 @@ anv_cmd_buffer_set_descriptor_buffer_offsets(struct anv_cmd_buffer *cmd_buffer,
           !pipe_state->descriptor_buffers[set_index].bound) {
          pipe_state->descriptor_buffers[set_index].buffer_index = buffer_indices[i];
          pipe_state->descriptor_buffers[set_index].buffer_offset = buffer_offsets[i];
-         cmd_buffer->state.descriptors_dirty |= stages;
+         anv_cmd_buffer_dirty_descriptors(cmd_buffer, stages, "EXT_DB offset");
          cmd_buffer->state.descriptor_buffers.offsets_dirty |= stages;
       }
       pipe_state->descriptor_buffers[set_index].bound = true;
@@ -1008,7 +1003,7 @@ anv_isl_format_for_descriptor_type(const struct anv_device *device,
    switch (type) {
    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-      return device->physical->compiler->indirect_ubos_use_sampler ?
+      return intel_indirect_ubos_use_sampler(device->info) ?
              ISL_FORMAT_R32G32B32A32_FLOAT : ISL_FORMAT_RAW;
 
    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:

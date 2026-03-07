@@ -76,23 +76,6 @@ brw_nir_ubo_surface_index_is_pushable(nir_src src)
    return nir_src_is_const(src);
 }
 
-static inline unsigned
-brw_nir_ubo_surface_index_get_push_block(nir_src src)
-{
-   if (nir_src_is_const(src))
-      return nir_src_as_uint(src);
-
-   if (!brw_nir_ubo_surface_index_is_pushable(src))
-      return UINT32_MAX;
-
-   assert(nir_src_is_intrinsic(src));
-
-   nir_intrinsic_instr *intrin = nir_def_as_intrinsic(src.ssa);
-   assert(intrin->intrinsic == nir_intrinsic_resource_intel);
-
-   return nir_intrinsic_resource_block_intel(intrin);
-}
-
 /* This helper return the binding table index of a surface access (any
  * buffer/image/etc...). It works off the source of one of the intrinsics
  * (load_ubo, load_ssbo, store_ssbo, load_image, store_image, etc...).
@@ -237,7 +220,7 @@ void brw_nir_lower_tes_inputs(nir_shader *nir,
                               const struct intel_vue_map *vue);
 void brw_nir_lower_fs_inputs(nir_shader *nir,
                              const struct intel_device_info *devinfo,
-                             const struct brw_wm_prog_key *key);
+                             const struct brw_fs_prog_key *key);
 void brw_nir_lower_vue_outputs(nir_shader *nir);
 void brw_nir_lower_tcs_inputs(nir_shader *nir,
                               const struct intel_device_info *devinfo,
@@ -248,7 +231,10 @@ void brw_nir_lower_tcs_outputs(nir_shader *nir,
                                enum tess_primitive_mode tes_primitive_mode);
 void brw_nir_lower_fs_outputs(nir_shader *nir);
 bool brw_nir_lower_fs_load_output(nir_shader *shader,
-                                  const struct brw_wm_prog_key *key);
+                                  const struct brw_fs_prog_key *key);
+
+bool brw_nir_lower_frag_coord_z(nir_shader *nir,
+                                const struct intel_device_info *devinfo);
 
 bool brw_nir_lower_frag_coord_z(nir_shader *nir,
                                 const struct intel_device_info *devinfo);
@@ -339,18 +325,7 @@ bool brw_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
                                   nir_intrinsic_instr *high,
                                   void *data);
 
-void brw_nir_analyze_ubo_ranges(const struct brw_compiler *compiler,
-                                nir_shader *nir,
-                                struct brw_ubo_range out_ranges[4]);
-
-bool brw_nir_lower_ubo_ranges(nir_shader *nir,
-                              struct brw_ubo_range out_ranges[4]);
-
 void brw_nir_optimize(struct brw_pass_tracker *pt);
-
-nir_shader *brw_nir_create_passthrough_tcs(void *mem_ctx,
-                                           const struct brw_compiler *compiler,
-                                           const struct brw_tcs_prog_key *key);
 
 #define BRW_NIR_FRAG_OUTPUT_INDEX_SHIFT 0
 #define BRW_NIR_FRAG_OUTPUT_INDEX_MASK INTEL_MASK(0, 0)
@@ -371,8 +346,7 @@ const struct glsl_type *brw_nir_get_var_type(const struct nir_shader *nir,
                                              nir_variable *var);
 
 static inline nir_variable_mode
-brw_nir_no_indirect_mask(const struct brw_compiler *compiler,
-                         mesa_shader_stage stage)
+brw_nir_no_indirect_mask(mesa_shader_stage stage)
 {
    nir_variable_mode indirect_mask = (nir_variable_mode) 0;
 
@@ -442,6 +416,9 @@ bool
 brw_nir_frag_convert_attrs_prim_to_vert_indirect(struct nir_shader *nir,
                                                  const struct intel_device_info *devinfo,
                                                  struct brw_compile_fs_params *params);
+
+unsigned
+brw_nir_pack_vs_input(nir_shader *nir, struct brw_vs_prog_data *prog_data);
 
 #ifdef __cplusplus
 }

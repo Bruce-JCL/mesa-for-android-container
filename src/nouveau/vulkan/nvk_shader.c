@@ -34,6 +34,13 @@
 #include "nv_push_clc397.h"
 #include "nv_push_clc797.h"
 
+const struct nak_constant_offset_info nak_const_offsets = {
+   .sample_info_cb = 0,
+   .sample_locations_offset = nvk_root_descriptor_offset(draw.sample_locations),
+   .sample_masks_offset = nvk_root_descriptor_offset(draw.sample_masks),
+   .printf_buffer_offset = nvk_root_descriptor_offset(printf_buffer_addr),
+};
+
 static void
 shared_var_info(const struct glsl_type *type, unsigned *size, unsigned *align)
 {
@@ -151,10 +158,6 @@ nvk_populate_fs_key(struct nak_fs_key *key,
                     const struct vk_graphics_pipeline_state *state)
 {
    memset(key, 0, sizeof(*key));
-
-   key->sample_info_cb = 0;
-   key->sample_locations_offset = nvk_root_descriptor_offset(draw.sample_locations);
-   key->sample_masks_offset = nvk_root_descriptor_offset(draw.sample_masks);
 
    /* Turn underestimate on when no state is availaible or if explicitly set */
    if (state == NULL || state->rs == NULL ||
@@ -410,7 +413,9 @@ nvk_lower_nir(struct nvk_device *dev, nir_shader *nir,
        */
       struct nir_lower_non_uniform_access_options opts = {
          .types = nir_lower_non_uniform_texture_access |
-                  nir_lower_non_uniform_image_access,
+                  nir_lower_non_uniform_texture_query |
+                  nir_lower_non_uniform_image_access |
+                  nir_lower_non_uniform_image_query,
          .callback = NULL,
       };
       /* In practice, most shaders do not have non-uniform-qualified accesses
@@ -519,6 +524,9 @@ nvk_compile_nir(struct nvk_device *dev, nir_shader *nir,
       shader->data_ptr = data;
       shader->data_size = data_size;
    }
+
+   if (dump_asm)
+      shader->nir_str = nir_shader_as_str(nir, NULL);
 
    return VK_SUCCESS;
 }
@@ -870,6 +878,7 @@ nvk_shader_destroy(struct vk_device *vk_dev,
    }
 
    free((void *)shader->data_ptr);
+   ralloc_free((void *)shader->nir_str);
 
    vk_shader_free(&dev->vk, pAllocator, &shader->vk);
 }
@@ -1272,6 +1281,15 @@ nvk_shader_get_executable_internal_representations(
    bool incomplete_text = false;
 
    assert(executable_index == 0);
+
+   if (shader->nir_str != NULL) {
+      vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR, &out, ir) {
+         WRITE_STR(ir->name, "NIR shader");
+         WRITE_STR(ir->description, "NIR shader");
+         if (!write_ir_text(ir, shader->nir_str))
+            incomplete_text = true;
+      }
+   }
 
    if (shader->nak != NULL && shader->nak->asm_str != NULL) {
       vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR, &out, ir) {

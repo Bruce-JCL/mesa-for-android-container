@@ -177,12 +177,11 @@ struct StagingInfo {
     }
 
     ~StagingInfo() {
-        for (auto stream : streams) {
-            delete stream;
-        }
-
         for (auto encoder : encoders) {
             delete encoder;
+        }
+        for (auto stream : streams) {
+            delete stream;
         }
     }
 
@@ -1809,6 +1808,7 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_EXT_host_query_reset",
         "VK_EXT_blend_operation_advanced",
         "VK_EXT_frame_boundary",
+        "VK_EXT_primitives_generated_query",
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
         "VK_KHR_external_semaphore",
         "VK_KHR_external_semaphore_fd",

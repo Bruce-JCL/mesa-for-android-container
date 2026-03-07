@@ -154,43 +154,6 @@ format_is_float32(VkFormat format)
    return channel >= 0 && desc->channel[channel].type == UTIL_FORMAT_TYPE_FLOAT && desc->channel[channel].size == 32;
 }
 
-/*
- * Ordered so that for each i,
- * radv_format_meta_fs_key(radv_fs_key_format_exemplars[i]) == i.
- */
-const VkFormat radv_fs_key_format_exemplars[NUM_META_FS_KEYS] = {
-   VK_FORMAT_R32_SFLOAT,         VK_FORMAT_R32G32_SFLOAT,           VK_FORMAT_R8G8B8A8_UNORM,
-   VK_FORMAT_R16G16B16A16_UNORM, VK_FORMAT_R16G16B16A16_SNORM,      VK_FORMAT_R16G16B16A16_UINT,
-   VK_FORMAT_R16G16B16A16_SINT,  VK_FORMAT_R32G32B32A32_SFLOAT,     VK_FORMAT_R8G8B8A8_UINT,
-   VK_FORMAT_R8G8B8A8_SINT,      VK_FORMAT_A2R10G10B10_UINT_PACK32, VK_FORMAT_A2R10G10B10_SINT_PACK32,
-};
-
-unsigned
-radv_format_meta_fs_key(struct radv_device *device, VkFormat format)
-{
-   unsigned col_format = radv_choose_spi_color_format(device, format, false, false);
-   assert(col_format != V_028714_SPI_SHADER_32_AR);
-
-   bool is_int8 = format_is_int8(format);
-   bool is_int10 = format_is_int10(format);
-
-   if (col_format == V_028714_SPI_SHADER_UINT16_ABGR && is_int8)
-      return 8;
-   else if (col_format == V_028714_SPI_SHADER_SINT16_ABGR && is_int8)
-      return 9;
-   else if (col_format == V_028714_SPI_SHADER_UINT16_ABGR && is_int10)
-      return 10;
-   else if (col_format == V_028714_SPI_SHADER_SINT16_ABGR && is_int10)
-      return 11;
-   else {
-      if (col_format >= V_028714_SPI_SHADER_32_AR)
-         --col_format; /* Skip V_028714_SPI_SHADER_32_AR  since there is no such VkFormat */
-
-      --col_format; /* Skip V_028714_SPI_SHADER_ZERO */
-      return col_format;
-   }
-}
-
 static bool
 radv_pipeline_needs_ps_epilog(const struct vk_graphics_pipeline_state *state,
                               VkGraphicsPipelineLibraryFlagBitsEXT lib_flags)
@@ -748,7 +711,7 @@ radv_pipeline_init_vertex_input_state(const struct radv_device *device, struct r
 
    if (vs->info.vs.use_per_attribute_vb_descs) {
       const enum amd_gfx_level gfx_level = pdev->info.gfx_level;
-      const bool alpha_adjust = pdev->info.cu_info.has_vtx_format_alpha_adjust_bug;
+      const bool alpha_adjust = pdev->info.compiler_info.has_vtx_format_alpha_adjust_bug;
       const struct ac_vtx_format_info *vtx_info_table = ac_get_vtx_format_info_table(gfx_level, alpha_adjust);
 
       dynamic->vertex_input.bindings_match_attrib = true;
@@ -1662,7 +1625,7 @@ radv_graphics_shaders_link_varyings(struct radv_shader_stage *stages, enum amd_g
 
       /* Scalarize all I/O, because nir_opt_varyings and nir_opt_vectorize_io expect all I/O to be scalarized. */
       nir_variable_mode sca_mode = nir_var_shader_in;
-      bool sca_progress;
+      bool sca_progress = false;
       if (s != MESA_SHADER_FRAGMENT)
          sca_mode |= nir_var_shader_out;
 
@@ -1865,8 +1828,8 @@ radv_generate_ps_epilog_key(const struct radv_device *device, const struct radv_
                                          state->alpha_to_coverage_via_mrtz);
 
    key.spi_shader_col_format = col_format;
-   key.color_is_int8 = pdev->info.has_cb_lt16bit_int_clamp_bug ? is_int8 : 0;
-   key.color_is_int10 = pdev->info.has_cb_lt16bit_int_clamp_bug ? is_int10 : 0;
+   key.color_is_int8 = pdev->info.compiler_info.has_cb_lt16bit_int_clamp_bug ? is_int8 : 0;
+   key.color_is_int10 = pdev->info.compiler_info.has_cb_lt16bit_int_clamp_bug ? is_int10 : 0;
    key.enable_mrt_output_nan_fixup = instance->drirc.debug.enable_mrt_output_nan_fixup ? is_float32 : 0;
    key.colors_written = state->colors_written;
    key.mrt0_is_dual_src = state->mrt0_is_dual_src && key.colors_needed & 0xf;
@@ -1997,8 +1960,8 @@ radv_generate_graphics_state_key(const struct radv_device *device, const struct 
             key.vi.instance_rate_inputs |= 1u << i;
          }
 
-         const struct ac_vtx_format_info *vtx_info =
-            ac_get_vtx_format_info(pdev->info.gfx_level, pdev->info.cu_info.has_vtx_format_alpha_adjust_bug, format);
+         const struct ac_vtx_format_info *vtx_info = ac_get_vtx_format_info(
+            pdev->info.gfx_level, pdev->info.compiler_info.has_vtx_format_alpha_adjust_bug, format);
          unsigned attrib_align = vtx_info->chan_byte_size ? vtx_info->chan_byte_size : vtx_info->element_size;
 
          /* If offset is misaligned, then the buffer offset must be too. Just skip updating
@@ -2052,8 +2015,7 @@ radv_generate_graphics_state_key(const struct radv_device *device, const struct 
 
    key.ps.force_vrs_enabled = device->force_vrs_enabled && !radv_is_static_vrs_enabled(state);
 
-   if ((radv_is_vrs_enabled(state) || key.ps.force_vrs_enabled) &&
-       (pdev->info.family == CHIP_NAVI21 || pdev->info.family == CHIP_NAVI22 || pdev->info.family == CHIP_VANGOGH))
+   if ((radv_is_vrs_enabled(state) || key.ps.force_vrs_enabled) && pdev->info.compiler_info.has_vrs_frag_pos_z_bug)
       key.adjust_frag_coord_z = true;
 
    if (radv_pipeline_needs_ps_epilog(state, lib_flags))
@@ -2414,8 +2376,14 @@ radv_create_gs_copy_shader(struct radv_device *device, struct vk_pipeline_cache 
    gs_copy_stage.info.user_sgprs_locs = gs_copy_stage.args.user_sgprs_locs;
    gs_copy_stage.info.inline_push_constant_mask = gs_copy_stage.args.ac.inline_push_const_mask;
 
-   NIR_PASS(_, nir, ac_nir_lower_intrinsics_to_args, pdev->info.gfx_level, pdev->info.has_ls_vgpr_init_bug,
-            AC_HW_VERTEX_SHADER, 64, 64, &gs_copy_stage.args.ac);
+   NIR_PASS(
+      _, nir, ac_nir_lower_intrinsics_to_args, &gs_copy_stage.args.ac,
+      &(ac_nir_lower_intrinsics_to_args_options){.gfx_level = pdev->info.gfx_level,
+                                                 .has_ls_vgpr_init_bug = pdev->info.compiler_info.has_ls_vgpr_init_bug,
+                                                 .hw_stage = AC_HW_VERTEX_SHADER,
+                                                 .wave_size = 64,
+                                                 .workgroup_size = 64,
+                                                 .use_llvm = radv_use_llvm_for_stage(pdev, MESA_SHADER_VERTEX)});
    NIR_PASS(_, nir, radv_nir_lower_abi, pdev->info.gfx_level, &gs_copy_stage, gfx_state, pdev->info.address32_hi);
 
    NIR_PASS(_, nir, ac_nir_lower_global_access);
@@ -2868,11 +2836,8 @@ radv_graphics_shaders_compile(struct radv_device *device, struct vk_pipeline_cac
          /* Lower FS outputs to scalar to allow dce. */
          NIR_PASS(_, stages[MESA_SHADER_FRAGMENT].nir, nir_lower_io_to_scalar, nir_var_shader_out, NULL, NULL);
 
-         /* TODO it seems like some internal shaders use render target formats with too few components. */
-         if (!stages[MESA_SHADER_FRAGMENT].nir->info.internal) {
-            NIR_PASS(update_info, stages[MESA_SHADER_FRAGMENT].nir, radv_nir_trim_fs_color_exports,
-                     gfx_state->ps.epilog.colors_needed);
-         }
+         NIR_PASS(update_info, stages[MESA_SHADER_FRAGMENT].nir, radv_nir_trim_fs_color_exports,
+                  gfx_state->ps.epilog.colors_needed);
 
          NIR_PASS(update_info, stages[MESA_SHADER_FRAGMENT].nir, nir_opt_copy_prop);
          NIR_PASS(update_info, stages[MESA_SHADER_FRAGMENT].nir, nir_opt_dce);
@@ -3295,14 +3260,11 @@ radv_get_vgt_shader_key(const struct radv_device *device, struct radv_shader **s
 
    key.tess = !!shaders[MESA_SHADER_TESS_CTRL];
    key.gs = !!shaders[MESA_SHADER_GEOMETRY];
+   key.mesh = !!shaders[MESA_SHADER_MESH];
    if (last_vgt_shader->info.is_ngg) {
       key.ngg = 1;
       key.ngg_passthrough = last_vgt_shader->info.is_ngg_passthrough;
-      key.ngg_streamout = !!last_vgt_shader->info.so.enabled_stream_buffers_mask;
-   }
-   if (shaders[MESA_SHADER_MESH]) {
-      key.mesh = 1;
-      key.mesh_scratch_ring = shaders[MESA_SHADER_MESH]->info.ms.needs_ms_scratch_ring;
+      key.ngg_wave_id_en = last_vgt_shader->info.ngg_wave_id_en;
    }
 
    key.hs_wave32 = hs_size == 32;
@@ -3342,6 +3304,8 @@ radv_pipeline_init_shader_stages_state(const struct radv_device *device, struct 
                radv_shader_need_indirect_descriptors(pipeline->base.shaders[i]);
             pipeline->base.need_push_constants_upload |=
                radv_shader_need_push_constants_upload(pipeline->base.shaders[i]);
+            pipeline->base.need_dynamic_descriptors_offset_addr |=
+               radv_shader_need_dynamic_descriptors_offset_addr(pipeline->base.shaders[i]);
          }
       }
    }
@@ -3352,13 +3316,6 @@ radv_pipeline_init_extra(struct radv_graphics_pipeline *pipeline, const VkGraphi
                          const struct vk_graphics_pipeline_state *state)
 {
    pipeline->custom_blend_mode = radv_info->custom_blend_mode;
-
-   if (radv_pipeline_has_ds_attachments(state->rp)) {
-      pipeline->db_render_control |= S_028000_DEPTH_CLEAR_ENABLE(radv_info->db_depth_clear);
-      pipeline->db_render_control |= S_028000_STENCIL_CLEAR_ENABLE(radv_info->db_stencil_clear);
-      pipeline->db_render_control |= S_028000_DEPTH_COMPRESS_DISABLE(radv_info->depth_compress_disable);
-      pipeline->db_render_control |= S_028000_STENCIL_COMPRESS_DISABLE(radv_info->stencil_compress_disable);
-   }
 }
 
 bool

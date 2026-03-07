@@ -22,7 +22,6 @@
  */
 
 #include "anv_private.h"
-#include "compiler/brw/brw_disasm.h"
 #include "genxml/gen80_pack.h"
 
 static bool
@@ -85,15 +84,6 @@ upload_blorp_shader(struct blorp_batch *batch, uint32_t stage,
     * is no need to hold a second reference.
     */
    anv_shader_internal_unref(device, bin);
-
-   if (INTEL_DEBUG(DEBUG_SHADERS_LINENO)) {
-      /* shader hash is zero in this context */
-      if (!intel_shader_dump_filter) {
-         brw_disassemble_with_lineno(&device->physical->compiler->isa,
-                                     stage, -1, 0, kernel, 0,
-                                     bin->kernel.offset, stderr);
-      }
-   }
 
    *kernel_out = bin->kernel.offset;
    *(const struct brw_stage_prog_data **)prog_data_out = bin->prog_data;
@@ -184,9 +174,6 @@ anv_blorp_batch_init(struct anv_cmd_buffer *cmd_buffer,
 
    if (!cmd_buffer->device->physical->instance->enable_vf_distribution)
       flags |= BLORP_BATCH_DISABLE_VF_DISTRIBUTION;
-
-   if (cmd_buffer->batch.engine_class == INTEL_ENGINE_CLASS_COMPUTE)
-      flags |= BLORP_BATCH_COMPUTE_ENGINE;
 
    blorp_batch_init(&cmd_buffer->device->blorp.context, batch, cmd_buffer, flags);
 }
@@ -675,9 +662,10 @@ void anv_CmdCopyImage2(
       if (dst_image->emu_plane_format != VK_FORMAT_UNDEFINED) {
          assert(!anv_cmd_buffer_is_blitter_queue(cmd_buffer));
          const enum anv_pipe_bits pipe_bits =
-            anv_cmd_buffer_is_compute_queue(cmd_buffer) ?
-            ANV_PIPE_HDC_PIPELINE_FLUSH_BIT :
-            ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT;
+            ANV_PIPE_TEXTURE_CACHE_INVALIDATE_BIT |
+            ((batch.flags & BLORP_BATCH_USE_COMPUTE) ?
+             ANV_PIPE_HDC_PIPELINE_FLUSH_BIT :
+             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT);
          anv_add_pending_pipe_bits(cmd_buffer,
                                    (batch.flags & BLORP_BATCH_USE_COMPUTE) ?
                                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT :
@@ -832,9 +820,10 @@ void anv_CmdCopyBufferToImage2(
       if (dst_image->emu_plane_format != VK_FORMAT_UNDEFINED) {
          assert(!anv_cmd_buffer_is_blitter_queue(cmd_buffer));
          const enum anv_pipe_bits pipe_bits =
-            anv_cmd_buffer_is_compute_queue(cmd_buffer) ?
-            ANV_PIPE_HDC_PIPELINE_FLUSH_BIT :
-            ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT;
+            ANV_PIPE_TEXTURE_CACHE_INVALIDATE_BIT |
+            ((batch.flags & BLORP_BATCH_USE_COMPUTE) ?
+             ANV_PIPE_HDC_PIPELINE_FLUSH_BIT :
+             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT);
          anv_add_pending_pipe_bits(cmd_buffer,
                                    (batch.flags & BLORP_BATCH_USE_COMPUTE) ?
                                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT :
@@ -2174,7 +2163,7 @@ anv_image_msaa_resolve(struct anv_cmd_buffer *cmd_buffer,
                        const struct anv_image *dst_image,
                        enum isl_format dst_format_override,
                        enum isl_aux_usage dst_aux_usage,
-                       uint32_t dst_level, uint32_t dst_base_layer,
+                       uint32_t dst_level, uint32_t dst_base_layer_or_z,
                        VkImageAspectFlagBits aspect,
                        uint32_t src_x, uint32_t src_y,
                        uint32_t dst_x, uint32_t dst_y,
@@ -2188,9 +2177,6 @@ anv_image_msaa_resolve(struct anv_cmd_buffer *cmd_buffer,
 
    assert(src_image->vk.image_type == VK_IMAGE_TYPE_2D);
    assert(src_image->vk.samples > 1);
-   assert((dst_image->vk.image_type == VK_IMAGE_TYPE_2D) ||
-          (dst_image->vk.image_type == VK_IMAGE_TYPE_3D &&
-           dst_base_layer == 0 && layer_count == 1));
    assert(dst_image->vk.samples == 1);
 
    struct blorp_surf src_surf, dst_surf;
@@ -2206,7 +2192,7 @@ anv_image_msaa_resolve(struct anv_cmd_buffer *cmd_buffer,
                                 false, &dst_surf);
    anv_cmd_buffer_mark_image_written(cmd_buffer, dst_image,
                                      aspect, dst_aux_usage,
-                                     dst_level, dst_base_layer, layer_count);
+                                     dst_level, dst_base_layer_or_z, layer_count);
 
    if (filter == BLORP_FILTER_NONE) {
       /* If no explicit filter is provided, then it's implied by the type of
@@ -2225,7 +2211,7 @@ anv_image_msaa_resolve(struct anv_cmd_buffer *cmd_buffer,
       blorp_blit(&batch,
                  &src_surf, src_level, src_base_layer + l,
                  src_format_override, ISL_SWIZZLE_IDENTITY,
-                 &dst_surf, dst_level, dst_base_layer + l,
+                 &dst_surf, dst_level, dst_base_layer_or_z + l,
                  dst_format_override, ISL_SWIZZLE_IDENTITY,
                  src_x, src_y, src_x + width, src_y + height,
                  dst_x, dst_y, dst_x + width, dst_y + height,
@@ -2444,6 +2430,11 @@ resolve_image(struct anv_cmd_buffer *cmd_buffer,
 
    const uint32_t layer_count =
       vk_image_subresource_layer_count(&dst_image->vk, &region->dstSubresource);
+
+   assert((dst_image->vk.image_type == VK_IMAGE_TYPE_2D) ||
+          (dst_image->vk.image_type == VK_IMAGE_TYPE_3D &&
+           region->dstSubresource.baseArrayLayer == 0 && layer_count == 1));
+
    const bool skip_srgb_decode =
       res_info ?
       (res_info->flags & VK_RESOLVE_IMAGE_SKIP_TRANSFER_FUNCTION_BIT_KHR) :
@@ -2486,7 +2477,8 @@ resolve_image(struct anv_cmd_buffer *cmd_buffer,
                              region->srcSubresource.baseArrayLayer,
                              dst_image, dst_format, dst_aux_usage,
                              region->dstSubresource.mipLevel,
-                             region->dstSubresource.baseArrayLayer,
+                             MAX2(region->dstSubresource.baseArrayLayer,
+                                  region->dstOffset.z),
                              aspect,
                              region->srcOffset.x,
                              region->srcOffset.y,

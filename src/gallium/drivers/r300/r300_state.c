@@ -980,6 +980,10 @@ void r300_mark_fb_state_dirty(struct r300_context *r300,
         r300_mark_atom_dirty(r300, &r300->fb_state_pipelined);
     }
 
+    if (r300->query_current) {
+        r300_mark_atom_dirty(r300, &r300->query_start);
+    }
+
     /* Now compute the fb_state atom size. */
     r300->fb_state.size = 2 + (8 * state->nr_cbufs);
 
@@ -1503,8 +1507,8 @@ static void* r300_create_rs_state(struct pipe_context* pipe,
 
     /* Build the two command buffers for polygon offset setup. */
     if (polygon_offset_enable) {
-        float scale = state->offset_scale * 12;
-        float offset = state->offset_units * 4;
+        float scale = state->offset_scale * 256 * 12;
+        float offset = state->offset_units * 256 * 2;
 
         BEGIN_CB(rs->cb_poly_offset_zb16, 5);
         OUT_CB_REG_SEQ(R300_SU_POLY_OFFSET_FRONT_SCALE, 4);
@@ -1515,6 +1519,7 @@ static void* r300_create_rs_state(struct pipe_context* pipe,
         END_CB;
 
         offset = state->offset_units * 2;
+        scale = state->offset_scale * 12;
 
         BEGIN_CB(rs->cb_poly_offset_zb24, 5);
         OUT_CB_REG_SEQ(R300_SU_POLY_OFFSET_FRONT_SCALE, 4);

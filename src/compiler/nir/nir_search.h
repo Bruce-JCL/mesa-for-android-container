@@ -26,6 +26,7 @@
 
 #include "util/u_dynarray.h"
 #include "nir.h"
+#include "nir_range_analysis.h"
 #include "nir_worklist.h"
 
 #define NIR_SEARCH_MAX_VARIABLES 24
@@ -133,11 +134,8 @@ typedef struct {
     */
    unsigned fp_math_ctrl_exclude : NIR_FP_MATH_CONTROL_BIT_COUNT;
 
-   /** In a replacement, requests that the instruction be marked exact. */
-   bool exact : 1;
-
-   /** Don't make the replacement exact if the search expression is exact. */
-   bool ignore_exact : 1;
+   /** In a replacement, add these fp_math_ctrl flags to the instruction. */
+   unsigned fp_math_ctrl_add : NIR_FP_MATH_CONTROL_BIT_COUNT;
 
    /** Whether the second source is a nir_search_value_constant */
    bool src1_is_const : 1;
@@ -193,7 +191,7 @@ typedef union {
 } nir_search_value_union;
 
 typedef struct {
-   struct hash_table *range_ht;
+   nir_fp_analysis_state *range_ht;
    struct hash_table *numlsb_ht;
 } nir_search_state;
 

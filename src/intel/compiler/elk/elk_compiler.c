@@ -31,9 +31,6 @@ elk_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 
    compiler->has_negative_rhw_bug = devinfo->verx10 == 40;
 
-   /* Default to the sampler since that's what we've done since forever */
-   compiler->indirect_ubos_use_sampler = true;
-
    /* There is no vec4 mode on Gfx10+, and we don't use it at all on Gfx8+. */
    for (int i = MESA_SHADER_VERTEX; i < MESA_ALL_SHADER_STAGES; i++) {
       compiler->scalar_stage[i] = devinfo->ver >= 8 ||
@@ -175,7 +172,7 @@ elk_prog_data_size(mesa_shader_stage stage)
       [MESA_SHADER_TESS_CTRL]    = sizeof(struct elk_tcs_prog_data),
       [MESA_SHADER_TESS_EVAL]    = sizeof(struct elk_tes_prog_data),
       [MESA_SHADER_GEOMETRY]     = sizeof(struct elk_gs_prog_data),
-      [MESA_SHADER_FRAGMENT]     = sizeof(struct elk_wm_prog_data),
+      [MESA_SHADER_FRAGMENT]     = sizeof(struct elk_fs_prog_data),
       [MESA_SHADER_COMPUTE]      = sizeof(struct elk_cs_prog_data),
    };
    assert((int)stage >= 0 && stage < ARRAY_SIZE(stage_sizes));
@@ -190,7 +187,7 @@ elk_prog_key_size(mesa_shader_stage stage)
       [MESA_SHADER_TESS_CTRL]    = sizeof(struct elk_tcs_prog_key),
       [MESA_SHADER_TESS_EVAL]    = sizeof(struct elk_tes_prog_key),
       [MESA_SHADER_GEOMETRY]     = sizeof(struct elk_gs_prog_key),
-      [MESA_SHADER_FRAGMENT]     = sizeof(struct elk_wm_prog_key),
+      [MESA_SHADER_FRAGMENT]     = sizeof(struct elk_fs_prog_key),
       [MESA_SHADER_COMPUTE]      = sizeof(struct elk_cs_prog_key),
    };
    assert((int)stage >= 0 && stage < ARRAY_SIZE(stage_sizes));

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2020 Collabora Ltd.
- * Copyright (C) 2022 Alyssa Rosenzweig <alyssa@rosenzweig.io>
+ * Copyright (C) 2022 Alyssa Rosenzweig
  * Copyright (C) 2025 Arm Ltd.
  * SPDX-License-Identifier: MIT
  */
@@ -1652,7 +1652,7 @@ bi_emit_image_store(bi_builder *b, nir_intrinsic_instr *instr)
     * instead, which will match per the OpenCL spec. Of course this does
     * not work for 16-bit stores, but those are not available in OpenCL.
     */
-   nir_alu_type T = nir_intrinsic_src_type(instr);
+   ASSERTED nir_alu_type T = nir_intrinsic_src_type(instr);
    assert(nir_alu_type_get_type_size(T) == 32);
 
    bi_st_cvt(b, bi_src_index(&instr->src[3]), a[0], a[1], a[2],
@@ -2942,9 +2942,11 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       return;
    }
 
+   case nir_op_unpack_32_4x8:
    case nir_op_unpack_32_2x16: {
       /* Should have been scalarized */
-      assert(comps == 2 && sz == 16);
+      assert(sz == 8 || sz == 16);
+      assert(comps * sz == 32);
 
       bi_index vec = bi_src_index(&instr->src[0].src);
       unsigned chan = instr->src[0].swizzle[0];
@@ -2967,6 +2969,14 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       };
 
       bi_make_vec_to(b, dst, srcs, channels, comps, 16);
+      return;
+   }
+
+   case nir_op_unpack_64_2x32: {
+      unsigned chan = (instr->src[0].swizzle[0] * 2) + 0;
+      bi_index idx = bi_src_index(&instr->src[0].src);
+      bi_collect_v2i32_to(b, dst, bi_extract(b, idx, chan + 0),
+                                  bi_extract(b, idx, chan + 1));
       return;
    }
 
@@ -3409,15 +3419,6 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       assert(b->shader->arch < 11);
 
       bi_v2f32_to_v2f16_to(b, dst, s0, s1);
-      break;
-
-   case nir_op_unpack_half_2x16_split_x:
-      assert(comps == 1);
-      bi_f16_to_f32_to(b, dst, bi_half(s0, false));
-      break;
-   case nir_op_unpack_half_2x16_split_y:
-      assert(comps == 1);
-      bi_f16_to_f32_to(b, dst, bi_half(s0, true));
       break;
 
    case nir_op_ishl:
@@ -5550,6 +5551,18 @@ bi_vectorize_filter(const nir_instr *instr, const void *data)
    const nir_alu_instr *alu = nir_instr_as_alu(instr);
 
    switch (alu->op) {
+   case nir_op_ball_fequal2:
+   case nir_op_ball_fequal3:
+   case nir_op_ball_fequal4:
+   case nir_op_bany_fnequal2:
+   case nir_op_bany_fnequal3:
+   case nir_op_bany_fnequal4:
+   case nir_op_ball_iequal2:
+   case nir_op_ball_iequal3:
+   case nir_op_ball_iequal4:
+   case nir_op_bany_inequal2:
+   case nir_op_bany_inequal3:
+   case nir_op_bany_inequal4: return 1;
    case nir_op_pack_uvec2_to_uint:
    case nir_op_pack_uvec4_to_uint:
       return 0;
@@ -5586,8 +5599,12 @@ bi_vectorize_filter(const nir_instr *instr, const void *data)
       break;
    }
 
-   int dst_bit_size = alu->def.bit_size;
-   if (dst_bit_size == 8)
+   const uint8_t bit_size = nir_alu_instr_is_comparison(alu)
+                            ? nir_src_bit_size(alu->src[0].src)
+                            : alu->def.bit_size;
+   if (bit_size == 1)
+      return 0;
+   else if (bit_size == 8)
       switch (alu->op) {
       case nir_op_imul:
       case nir_op_i2i8:
@@ -5596,7 +5613,7 @@ bi_vectorize_filter(const nir_instr *instr, const void *data)
       default:
          return 2;
       }
-   else if (dst_bit_size == 16)
+   else if (bit_size == 16)
       return 2;
    else
       return 1;
@@ -5838,7 +5855,6 @@ bi_optimize_nir(nir_shader *nir, unsigned gpu_id, nir_variable_mode robust2_mode
       vectorize_opts.modes |= nir_var_mem_ubo;
 
    NIR_PASS(_, nir, nir_opt_load_store_vectorize, &vectorize_opts);
-   NIR_PASS(_, nir, nir_lower_pack);
 
    /* nir_lower_pack can generate split operations, execute algebraic again to
     * handle them */
@@ -5858,6 +5874,7 @@ bi_optimize_nir(nir_shader *nir, unsigned gpu_id, nir_variable_mode robust2_mode
    while (late_algebraic) {
       late_algebraic = false;
       NIR_PASS(late_algebraic, nir, nir_opt_algebraic_late);
+      NIR_PASS(_, nir, nir_lower_alu_width, bi_vectorize_filter, &gpu_id);
       NIR_PASS(_, nir, nir_opt_constant_folding);
       NIR_PASS(_, nir, nir_opt_copy_prop);
       NIR_PASS(_, nir, nir_opt_dce);
@@ -5868,9 +5885,9 @@ bi_optimize_nir(nir_shader *nir, unsigned gpu_id, nir_variable_mode robust2_mode
    if (pan_arch(gpu_id) < 9)
       NIR_PASS(_, nir, bifrost_nir_opt_boolean_bitwise);
 
+   NIR_PASS(_, nir, nir_lower_bool_to_bitsize);
    NIR_PASS(_, nir, nir_lower_alu_width, bi_vectorize_filter, &gpu_id);
    NIR_PASS(_, nir, nir_opt_vectorize, bi_vectorize_filter, &gpu_id);
-   NIR_PASS(_, nir, nir_lower_bool_to_bitsize);
 
    /* Prepass to simplify instruction selection */
    bool late_algebraic_progress = true;
@@ -5884,6 +5901,7 @@ bi_optimize_nir(nir_shader *nir, unsigned gpu_id, nir_variable_mode robust2_mode
    while (late_algebraic) {
       late_algebraic = false;
       NIR_PASS(late_algebraic, nir, nir_opt_algebraic_late);
+      NIR_PASS(_, nir, nir_lower_alu_width, bi_vectorize_filter, &gpu_id);
       NIR_PASS(_, nir, nir_opt_constant_folding);
       NIR_PASS(_, nir, nir_opt_copy_prop);
       NIR_PASS(_, nir, nir_opt_dce);
@@ -6400,6 +6418,7 @@ bifrost_postprocess_nir(nir_shader *nir, unsigned gpu_id)
 
    NIR_PASS(_, nir, nir_lower_alu_width, bi_vectorize_filter, &gpu_id);
    NIR_PASS(_, nir, nir_lower_load_const_to_scalar);
+   NIR_PASS(_, nir, nir_lower_phis_to_scalar, bi_vectorize_filter, &gpu_id);
    NIR_PASS(_, nir, nir_lower_flrp, 16 | 32 | 64, false /* always_precise */);
    NIR_PASS(_, nir, nir_lower_var_copies);
    NIR_PASS(_, nir, nir_lower_alu);
@@ -6525,7 +6544,7 @@ lower_buf_image_access(nir_builder *b, nir_intrinsic_instr *intr, void *data)
        * instead, which will match per the OpenCL spec. Of course this does
        * not work for 16-bit stores, but those are not available in OpenCL.
        */
-      nir_alu_type T = nir_intrinsic_src_type(intr);
+      ASSERTED nir_alu_type T = nir_intrinsic_src_type(intr);
       assert(nir_alu_type_get_type_size(T) == 32);
 
       nir_def *value = intr->src[3].ssa;
@@ -6862,6 +6881,9 @@ bi_compile_variant_nir(nir_shader *nir,
       bi_gather_stats(ctx, binary->size - offset, &stats->bifrost);
    }
 
+   if (ctx->arch >= 13)
+      va_gather_hsr_info(ctx, pinfo);
+
    /* update info struct */
    pan_shader_update_info(pinfo, ctx->nir, inputs);
 
@@ -7099,7 +7121,7 @@ find_all_predecessors(const bi_context *ctx, bi_block *b, BITSET_WORD *out)
    assert(out);
    assert(b);
 
-   BITSET_CLEAR_RANGE(out, 0, ctx->num_blocks);
+   BITSET_CLEAR_COUNT(out, 0, ctx->num_blocks);
 
    /* If the CFG was one long chain, we would require |blocks|-1 iters to
     * propagate the in_loop info all the way through.

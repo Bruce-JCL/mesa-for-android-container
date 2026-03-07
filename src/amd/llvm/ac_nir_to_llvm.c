@@ -353,21 +353,6 @@ static LLVMValueRef emit_pack_2x16(struct ac_llvm_context *ctx, LLVMValueRef src
    return LLVMBuildBitCast(ctx->builder, pack(ctx, comp), ctx->i32, "");
 }
 
-static LLVMValueRef emit_unpack_half_2x16(struct ac_llvm_context *ctx, LLVMValueRef src0)
-{
-   LLVMValueRef const16 = LLVMConstInt(ctx->i32, 16, false);
-   LLVMValueRef temps[2], val;
-   int i;
-
-   for (i = 0; i < 2; i++) {
-      val = i == 1 ? LLVMBuildLShr(ctx->builder, src0, const16, "") : src0;
-      val = LLVMBuildTrunc(ctx->builder, val, ctx->i16, "");
-      val = LLVMBuildBitCast(ctx->builder, val, ctx->f16, "");
-      temps[i] = LLVMBuildFPExt(ctx->builder, val, ctx->f32, "");
-   }
-   return ac_build_gather_values(ctx, temps, 2);
-}
-
 static LLVMValueRef emit_ddxy(struct ac_nir_context *ctx, nir_intrinsic_op op, LLVMValueRef src0)
 {
    unsigned mask;
@@ -1024,18 +1009,6 @@ static bool visit_alu(struct ac_nir_context *ctx, const nir_alu_instr *instr)
       result = ac_build_cvt_pk_i16(&ctx->ac, comp, 16, false);
       break;
    }
-   case nir_op_unpack_half_2x16_split_x: {
-      assert(ac_get_llvm_num_components(src[0]) == 1);
-      LLVMValueRef tmp = emit_unpack_half_2x16(&ctx->ac, src[0]);
-      result = LLVMBuildExtractElement(ctx->ac.builder, tmp, ctx->ac.i32_0, "");
-      break;
-   }
-   case nir_op_unpack_half_2x16_split_y: {
-      assert(ac_get_llvm_num_components(src[0]) == 1);
-      LLVMValueRef tmp = emit_unpack_half_2x16(&ctx->ac, src[0]);
-      result = LLVMBuildExtractElement(ctx->ac.builder, tmp, ctx->ac.i32_1, "");
-      break;
-   }
    case nir_op_unpack_64_4x16: {
       result = LLVMBuildBitCast(ctx->ac.builder, src[0], ctx->ac.v4i16, "");
       break;
@@ -1180,6 +1153,21 @@ static bool visit_alu(struct ac_nir_context *ctx, const nir_alu_instr *instr)
       break;
    }
 
+  case nir_op_bfdot2_fadd: {
+      const char *name = "llvm.amdgcn.fdot2.f32.bf16";
+      LLVMTypeRef vec2_type = ctx->ac.v2bf16;
+#if LLVM_VERSION_MAJOR < 19 || (LLVM_VERSION_MAJOR == 19 && LLVM_VERSION_MINOR == 0)
+      /* Before LLVM 19.1, bf16 fdot used integer operands. */
+      vec2_type = ctx->ac.v2i16;
+#endif
+      src[0] = LLVMBuildBitCast(ctx->ac.builder, src[0], vec2_type, "");
+      src[1] = LLVMBuildBitCast(ctx->ac.builder, src[1], vec2_type, "");
+      src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], ctx->ac.f32, "");
+      src[3] = ctx->ac.i1false; /* clamp */
+      result = ac_build_intrinsic(&ctx->ac, name, ctx->ac.f32, src, 4, 0);
+      break;
+   }
+
    case nir_op_bfdot2_bfadd: {
       const char *name = "llvm.amdgcn.fdot2.bf16.bf16";
       LLVMTypeRef vec2_type = ctx->ac.v2bf16;
@@ -1193,6 +1181,44 @@ static bool visit_alu(struct ac_nir_context *ctx, const nir_alu_instr *instr)
       src[1] = LLVMBuildBitCast(ctx->ac.builder, src[1], vec2_type, "");
       src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], scalar_type, "");
       result = ac_build_intrinsic(&ctx->ac, name, scalar_type, src, 3, 0);
+      break;
+   }
+
+   case nir_op_f16dot2_fadd: {
+      src[0] = LLVMBuildBitCast(ctx->ac.builder, src[0], ctx->ac.v2f16, "");
+      src[1] = LLVMBuildBitCast(ctx->ac.builder, src[1], ctx->ac.v2f16, "");
+
+      if (instr->def.bit_size == 16) {
+         const char *name = "llvm.amdgcn.fdot2.f16.f16";
+         src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], ctx->ac.f16, "");
+         result = ac_build_intrinsic(&ctx->ac, name, ctx->ac.f16, src, 3, 0);
+      } else {
+         const char *name = "llvm.amdgcn.fdot2";
+         src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], ctx->ac.f32, "");
+         src[3] = ctx->ac.i1false; /* clamp */
+         result = ac_build_intrinsic(&ctx->ac, name, ctx->ac.f32, src, 4, 0);
+      }
+      break;
+   }
+
+   case nir_op_e4m3fn_dot4_fadd: {
+      const char *name = "llvm.amdgcn.dot4.f32.fp8.fp8";
+      src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], ctx->ac.f32, "");
+      result = ac_build_intrinsic(&ctx->ac, name, ctx->ac.f32, src, 3, 0);
+      break;
+   }
+
+   case nir_op_e5m2_dot4_fadd: {
+      const char *name = "llvm.amdgcn.dot4.f32.bf8.bf8";
+      src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], ctx->ac.f32, "");
+      result = ac_build_intrinsic(&ctx->ac, name, ctx->ac.f32, src, 3, 0);
+      break;
+   }
+
+   case nir_op_e4m3fn_e5m2_dot4_fadd: {
+      const char *name = "llvm.amdgcn.dot4.f32.fp8.bf8";
+      src[2] = LLVMBuildBitCast(ctx->ac.builder, src[2], ctx->ac.f32, "");
+      result = ac_build_intrinsic(&ctx->ac, name, ctx->ac.f32, src, 3, 0);
       break;
    }
 
@@ -1725,8 +1751,7 @@ static LLVMValueRef visit_atomic_ssbo(struct ac_nir_context *ctx, nir_intrinsic_
       }
 
       unsigned cache_flags =
-         ac_get_hw_cache_flags(ctx->ac.gfx_level,
-                               nir_intrinsic_access(instr), ac_access_type_atomic).value;
+         ac_get_llvm_cache_flags(&ctx->ac, nir_intrinsic_access(instr), ac_access_type_atomic);
 
       params[arg_count++] = data;
       params[arg_count++] = descriptor;
@@ -2194,7 +2219,7 @@ static LLVMValueRef visit_image_load(struct ac_nir_context *ctx, const nir_intri
    assert(dim != GLSL_SAMPLER_DIM_BUF);
 
    if (instr->intrinsic == nir_intrinsic_bindless_image_fragment_mask_load_amd) {
-      assert(ctx->ac.gfx_level < GFX11);
+      assert(ctx->ac.info->has_fmask);
 
       args.opcode = ac_image_load;
       args.resource = ctx->abi->load_sampler_desc(ctx->abi, dynamic_index, AC_DESC_FMASK);
@@ -2388,8 +2413,7 @@ static LLVMValueRef visit_image_atomic(struct ac_nir_context *ctx, const nir_int
          LLVMTypeRef data_type = LLVMTypeOf(params[0]);
          char type[8];
          unsigned cache_flags =
-            ac_get_hw_cache_flags(ctx->ac.gfx_level,
-                                  nir_intrinsic_access(instr), ac_access_type_atomic).value;
+            ac_get_llvm_cache_flags(&ctx->ac, nir_intrinsic_access(instr), ac_access_type_atomic);
 
          params[param_count++] = ctx->ac.i32_0; /* soffset */
          params[param_count++] = LLVMConstInt(ctx->ac.i32, cache_flags, 0);
@@ -2679,17 +2703,14 @@ static bool visit_intrinsic(struct ac_nir_context *ctx, nir_intrinsic_instr *ins
       result = ac_build_readlane(&ctx->ac, get_src(ctx, instr->src[0]), NULL);
       break;
    case nir_intrinsic_load_workgroup_id: {
+      assert(ctx->ac.gfx_level >= GFX12);
       LLVMValueRef values[3] = {ctx->ac.i32_0, ctx->ac.i32_0, ctx->ac.i32_0};
 
       for (int i = 0; i < 3; i++) {
          if (ctx->args->workgroup_ids[i].used) {
-            if (ctx->ac.gfx_level >= GFX12) {
-               char intr_name[256];
-               snprintf(intr_name, sizeof(intr_name), "llvm.amdgcn.workgroup.id.%c", "xyz"[i]);
-               values[i] = ac_build_intrinsic(&ctx->ac, intr_name, ctx->ac.i32, NULL, 0, 0);
-            } else {
-               values[i] = ac_get_arg(&ctx->ac, ctx->args->workgroup_ids[i]);
-            }
+            char intr_name[256];
+            snprintf(intr_name, sizeof(intr_name), "llvm.amdgcn.workgroup.id.%c", "xyz"[i]);
+            values[i] = ac_build_intrinsic(&ctx->ac, intr_name, ctx->ac.i32, NULL, 0, 0);
          }
       }
       result = ac_build_gather_values(&ctx->ac, values, 3);
@@ -2698,17 +2719,6 @@ static bool visit_intrinsic(struct ac_nir_context *ctx, nir_intrinsic_instr *ins
    case nir_intrinsic_load_helper_invocation:
    case nir_intrinsic_is_helper_invocation:
       result = ac_build_load_helper_invocation(&ctx->ac);
-      break;
-   case nir_intrinsic_load_num_workgroups:
-      if (ctx->abi->load_grid_size_from_user_sgpr) {
-         result = ac_get_arg(&ctx->ac, ctx->args->num_work_groups);
-      } else {
-         struct ac_llvm_pointer ptr;
-         ptr.pointee_type = ctx->ac.v3i32;
-         ptr.value = ac_get_arg(&ctx->ac, ctx->args->num_work_groups);
-
-         result = ac_build_load_invariant(&ctx->ac, ptr, ctx->ac.i32_0);
-      }
       break;
    case nir_intrinsic_load_subgroup_id:
       assert(mesa_shader_stage_is_compute(ctx->stage) && ctx->ac.gfx_level >= GFX12);
@@ -3467,7 +3477,7 @@ static void tex_fetch_ptrs(struct ac_nir_context *ctx, nir_tex_instr *instr,
       /* The fragment mask is fetched from the compressed
        * multisampled surface.
        */
-      assert(ctx->ac.gfx_level < GFX11);
+      assert(ctx->ac.info->has_fmask);
       main_descriptor = AC_DESC_FMASK;
    }
 

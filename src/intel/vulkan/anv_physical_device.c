@@ -128,20 +128,6 @@ get_device_descriptor_limits(const struct anv_physical_device *device,
 }
 
 
-static const bool
-anv_device_has_bfloat16_cooperative_matrix(const struct anv_physical_device *pdevice)
-{
-   const struct intel_device_info *devinfo = &pdevice->info;
-
-   for (int i = 0; i < ARRAY_SIZE(devinfo->cooperative_matrix_configurations); i++) {
-      const struct intel_cooperative_matrix_configuration *cfg =
-         &devinfo->cooperative_matrix_configurations[i];
-      if (cfg->a == INTEL_CMAT_BFLOAT16 || cfg->b == INTEL_CMAT_BFLOAT16)
-         return true;
-   }
-   return false;
-}
-
 static void
 get_device_extensions(const struct anv_physical_device *device,
                       struct vk_device_extension_table *ext)
@@ -161,7 +147,8 @@ get_device_extensions(const struct anv_physical_device *device,
       .KHR_buffer_device_address             = true,
       .KHR_calibrated_timestamps             = device->has_reg_timestamp,
       .KHR_compute_shader_derivatives        = true,
-      .KHR_cooperative_matrix                = anv_has_cooperative_matrix(device),
+      .KHR_cooperative_matrix                = device->has_cooperative_matrix,
+      .NV_cooperative_matrix2                = device->has_cooperative_matrix,
       .KHR_copy_commands2                    = true,
       .KHR_create_renderpass2                = true,
       .KHR_dedicated_allocation              = true,
@@ -302,6 +289,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_depth_range_unrestricted          = device->info.ver >= 20,
       .EXT_descriptor_buffer                 = true,
       .EXT_descriptor_indexing               = true,
+      .EXT_device_address_binding_report     = true,
       .EXT_device_memory_report              = true,
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
       .EXT_display_control                   = true,
@@ -895,7 +883,10 @@ get_features(const struct anv_physical_device *pdevice,
       .nestedCommandBufferSimultaneousUse = false,
 
       /* VK_KHR_cooperative_matrix */
-      .cooperativeMatrix = anv_has_cooperative_matrix(pdevice),
+      .cooperativeMatrix = pdevice->has_cooperative_matrix,
+
+      /* VK_NV_cooperative_matrix2 */
+      .cooperativeMatrixPerElementOperations = pdevice->has_cooperative_matrix,
 
       /* VK_KHR_shader_maximal_reconvergence */
       .shaderMaximalReconvergence = true,
@@ -980,8 +971,8 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_shader_bfloat16 */
       .shaderBFloat16Type = pdevice->info.has_bfloat16,
-      .shaderBFloat16CooperativeMatrix =
-         anv_device_has_bfloat16_cooperative_matrix(pdevice),
+      .shaderBFloat16CooperativeMatrix = pdevice->info.has_bfloat16 &&
+                                         pdevice->has_cooperative_matrix,
       .shaderBFloat16DotProduct = pdevice->info.has_bfloat16,
 
       /* VK_KHR_fragment_shader_barycentric */
@@ -1023,6 +1014,9 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_internally_synchronized_queues */
       .internallySynchronizedQueues = true,
+
+      /* VK_EXT_device_address_binding_report */
+      .reportAddressBinding = true,
    };
 
    /* The new DOOM and Wolfenstein games require depthBounds without
@@ -1339,7 +1333,8 @@ get_properties(const struct anv_physical_device *pdevice,
       .maxImageDimensionCube                    = (1 << 14),
       .maxImageArrayLayers                      = (1 << 11),
       .maxTexelBufferElements                   = 128 * 1024 * 1024,
-      .maxUniformBufferRange                    = pdevice->compiler->indirect_ubos_use_sampler ? (1u << 27) : (1u << 30),
+
+      .maxUniformBufferRange                    = intel_indirect_ubos_use_sampler(devinfo) ? (1u << 27) : (1u << 30),
       .maxStorageBufferRange                    = MIN3(pdevice->isl_dev.max_buffer_size, max_heap_size, UINT32_MAX),
       .maxPushConstantsSize                     = MAX_PUSH_CONSTANTS_SIZE,
       .maxMemoryAllocationCount                 = UINT32_MAX,
@@ -1688,7 +1683,7 @@ get_properties(const struct anv_physical_device *pdevice,
       props->allowSamplerImageViewPostSubmitCreation = true;
       props->descriptorBufferOffsetAlignment = ANV_SURFACE_STATE_SIZE;
 
-      if (pdevice->uses_ex_bso) {
+      if (intel_has_extended_bindless(devinfo)) {
          props->maxDescriptorBufferBindings = MAX_SETS;
          props->maxResourceDescriptorBufferBindings = MAX_SETS;
          props->maxSamplerDescriptorBufferBindings = MAX_SETS;
@@ -2773,6 +2768,7 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
       goto fail_base;
 
    device->has_cooperative_matrix =
+      (device->info.has_systolic || debug_get_bool_option("INTEL_LOWER_DPAS", false)) &&
       device->info.cooperative_matrix_configurations[0].scope != INTEL_CMAT_SCOPE_NONE;
 
    if (is_virtio) {
@@ -2792,13 +2788,8 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
 
    device->vk.pipeline_cache_import_ops = anv_cache_import_ops;
 
-   device->uses_ex_bso = device->info.verx10 >= 125;
-
-   /* For now always use indirect descriptors. We'll update this
-    * to !uses_ex_bso when all the infrastructure is built up.
-    */
    device->indirect_descriptors =
-      !device->uses_ex_bso ||
+      !intel_has_extended_bindless(&devinfo) ||
       driQueryOptionb(&instance->dri_options, "force_indirect_descriptors");
 
    device->alloc_aux_tt_mem =
@@ -2838,8 +2829,6 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
    }
    device->compiler->shader_debug_log = compiler_debug_log;
    device->compiler->shader_perf_log = compiler_perf_log;
-   device->compiler->extended_bindless_surface_offset = device->uses_ex_bso;
-   device->compiler->use_bindless_sampler_offset = false;
    device->compiler->spilling_rate =
       driQueryOptioni(&instance->dri_options, "shader_spilling_rate");
 
@@ -3321,9 +3310,10 @@ VkResult anv_GetPhysicalDeviceCooperativeMatrixPropertiesKHR(
    ANV_FROM_HANDLE(anv_physical_device, pdevice, physicalDevice);
    const struct intel_device_info *devinfo = &pdevice->info;
 
-   assert(anv_has_cooperative_matrix(pdevice));
-
    VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixPropertiesKHR, out, pProperties, pPropertyCount);
+
+   if (!pdevice->has_cooperative_matrix)
+      return vk_outarray_status(&out);
 
    for (int i = 0; i < ARRAY_SIZE(devinfo->cooperative_matrix_configurations); i++) {
       const struct intel_cooperative_matrix_configuration *cfg =
