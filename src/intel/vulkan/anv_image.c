@@ -644,31 +644,24 @@ add_aux_state_tracking_buffer(struct anv_device *device,
       }
    }
 
-   enum anv_image_memory_binding binding =
-      ANV_IMAGE_MEMORY_BINDING_PLANE_0 + plane;
-
    const struct isl_drm_modifier_info *mod_info =
       isl_drm_modifier_get_info(image->vk.drm_format_mod);
 
-   /* If an auxiliary surface is used for an externally-shareable image,
-    * we have to hide this from the memory of the image since other
-    * processes with access to the memory may not be aware of it or of
-    * its current state. So put that auxiliary data into a separate
-    * buffer (ANV_IMAGE_MEMORY_BINDING_PRIVATE).
+   /* If the image is created with a drm modifier that supports clear color,
+    * it will be exported along with main surface. Otherwise, place the
+    * aux-tracking state in a separate, suballocated buffer to achieve better
+    * memory utilization.
     *
-    * But when the image is created with a drm modifier that supports
-    * clear color, it will be exported along with main surface.
-    */
-   if (anv_image_is_externally_shared(image) &&
-       !mod_info->supports_clear_color)
-      binding = ANV_IMAGE_MEMORY_BINDING_PRIVATE;
-
-   /* The indirect clear color BO requires 64B-alignment on gfx11+. If we're
+    * The indirect clear color BO requires 64B-alignment on gfx11+. If we're
     * using a modifier with clear color, then some kernels might require a 4k
     * alignment.
     */
-   const uint32_t clear_color_alignment =
-      (mod_info && mod_info->supports_clear_color) ? 4096 : 64;
+   enum anv_image_memory_binding binding = ANV_IMAGE_MEMORY_BINDING_PRIVATE;
+   uint32_t clear_color_alignment = 64;
+   if (mod_info && mod_info->supports_clear_color) {
+      binding = ANV_IMAGE_MEMORY_BINDING_PLANE_0 + plane;
+      clear_color_alignment = 4096;
+   }
 
    return image_binding_grow(device, image, binding,
                              state_offset, state_size, clear_color_alignment,
@@ -1146,20 +1139,16 @@ check_memory_bindings(const struct anv_device *device,
       /* Check fast clear state */
       if (plane->fast_clear_memory_range.size > 0) {
          enum anv_image_memory_binding binding = primary_binding;
+         const struct isl_drm_modifier_info *mod_info =
+            isl_drm_modifier_get_info(image->vk.drm_format_mod);
 
-         /* If an auxiliary surface is used for an externally-shareable image,
-          * we have to hide this from the memory of the image since other
-          * processes with access to the memory may not be aware of it or of
-          * its current state. So put that auxiliary data into a separate
-          * buffer (ANV_IMAGE_MEMORY_BINDING_PRIVATE).
-          *
-          * But when the image is created with a drm modifier that supports
-          * clear color, it will be exported along with main surface.
+         /* If the image is created with a drm modifier that supports clear
+          * color, it will be exported along with main surface. Otherwise,
+          * place the aux-tracking state in a separate, suballocated buffer
+          * to achieve better memory utilization.
           */
-         if (anv_image_is_externally_shared(image)
-             && !isl_drm_modifier_get_info(image->vk.drm_format_mod)->supports_clear_color) {
+         if (!mod_info || !mod_info->supports_clear_color)
             binding = ANV_IMAGE_MEMORY_BINDING_PRIVATE;
-         }
 
          /* The indirect clear color BO requires 64B-alignment on gfx11+. */
          assert(plane->fast_clear_memory_range.alignment % 64 == 0);
@@ -1664,6 +1653,12 @@ alloc_private_binding(struct anv_device *device,
                                          &binding->address.bo);
    ANV_DMR_BO_ALLOC(&image->vk.base, binding->address.bo, result);
 
+   ANV_ADDR_BINDING_REPORT_ADDR_BIND(device,
+                                     &image->vk.base,
+                                     binding->address64 +
+                                     image->bindings[ANV_IMAGE_MEMORY_BINDING_PRIVATE].memory_range.offset,
+                                     image->bindings[ANV_IMAGE_MEMORY_BINDING_PRIVATE].memory_range.size);
+
    return result;
 }
 
@@ -1725,6 +1720,7 @@ anv_image_init_sparse_bindings(struct anv_image *image,
             continue;
 
          b->address = anv_address_add(base_address, b->memory_range.offset);
+         b->address64 = anv_address_physical(b->address);
       }
    } else {
       anv_image_finish_sparse_bindings(image);
@@ -1940,7 +1936,7 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
       }
 
       /* Workaround to disable XE2 CCS modifiers from drirc. */
-      if (device->info->ver == 20 &&
+      if (device->info->ver >= 20 &&
           image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
           device->physical->instance->disable_xe2_drm_ccs_modifiers)
          isl_extra_usage_flags |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
@@ -2309,6 +2305,17 @@ anv_DestroyImage(VkDevice _device, VkImage _image,
    ANV_RMV(image_destroy, device, image);
 
    assert(&device->vk == image->vk.base.device);
+
+   /* Report UNBIND events for all bindings */
+   for (uint32_t b = 0; b < ARRAY_SIZE(image->bindings); b++) {
+      if (image->bindings[b].address.bo) {
+         ANV_ADDR_BINDING_REPORT_ADDR_UNBIND(device, &image->vk.base,
+                                             image->bindings[b].address64 +
+                                             image->bindings[b].memory_range.offset,
+                                             image->bindings[b].memory_range.size);
+      }
+   }
+
    anv_image_finish(image);
 
    vk_free2(&device->vk.alloc, pAllocator, image);
@@ -2922,6 +2929,7 @@ anv_image_bind_address(struct anv_device *device,
           image->bindings[binding].memory_range.alignment == 0);
 
    image->bindings[binding].address = address;
+   image->bindings[binding].address64 = anv_address_physical(address);
 
    /* Map bindings for images with host transfer usage, so that we don't have
     * to map/unmap things at every host operation. We map cached, that means
@@ -2954,6 +2962,11 @@ anv_image_bind_address(struct anv_device *device,
          image->bindings[binding].map_size = map_size;
       }
    }
+
+   ANV_ADDR_BINDING_REPORT_ADDR_BIND(device, &image->vk.base,
+                                     image->bindings[binding].address64 +
+                                     image->bindings[binding].memory_range.offset,
+                                     image->bindings[binding].memory_range.size);
 
    ANV_RMV(image_bind, device, image, binding);
 

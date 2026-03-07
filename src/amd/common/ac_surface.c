@@ -2565,8 +2565,7 @@ static int gfx9_compute_miptree(struct ac_addrlib *addrlib, const struct radeon_
          }
       }
 
-      /* FMASK (it doesn't exist on GFX11) */
-      if (info->gfx_level <= GFX10_3 && info->has_graphics &&
+      if (info->compiler_info.has_fmask && info->has_graphics &&
           in->numSamples > 1 && !(surf->flags & RADEON_SURF_NO_FMASK)) {
          ADDR2_COMPUTE_FMASK_INFO_INPUT fin = {0};
          ADDR2_COMPUTE_FMASK_INFO_OUTPUT fout = {0};
@@ -2621,7 +2620,7 @@ static int gfx9_compute_miptree(struct ac_addrlib *addrlib, const struct radeon_
       }
 
       /* CMASK -- on GFX10 only for FMASK (and it doesn't exist on GFX11) */
-      if (info->gfx_level <= GFX10_3 && info->has_graphics &&
+      if (info->compiler_info.has_fmask && info->has_graphics &&
           in->swizzleMode != ADDR_SW_LINEAR && in->resourceType == ADDR_RSRC_TEX_2D &&
           ((info->gfx_level <= GFX9 && in->numSamples == 1 && in->flags.metaPipeUnaligned == 0 &&
             in->flags.metaRbUnaligned == 0) ||
@@ -3302,10 +3301,10 @@ static unsigned gfx12_select_swizzle_mode(struct ac_addrlib *addrlib,
       return ADDR3_LINEAR;
 }
 
-static bool gfx12_compute_hiz_his_info(struct ac_addrlib *addrlib, const struct radeon_info *info,
-                                       const struct ac_surf_config *config,
-                                       struct radeon_surf *surf, struct gfx12_hiz_his_layout *hizs,
-                                       const ADDR3_COMPUTE_SURFACE_INFO_INPUT *surf_in)
+static bool gfx12_compute_hiz_info(struct ac_addrlib *addrlib, const struct radeon_info *info,
+                                   const struct ac_surf_config *config,
+                                   struct radeon_surf *surf, struct gfx12_hiz_layout *hiz,
+                                   const ADDR3_COMPUTE_SURFACE_INFO_INPUT *surf_in)
 {
    assert(surf_in->flags.depth != surf_in->flags.stencil);
 
@@ -3337,11 +3336,11 @@ static bool gfx12_compute_hiz_his_info(struct ac_addrlib *addrlib, const struct 
    if (ret != ADDR_OK)
       return false;
 
-   hizs->size = out.surfSize;
-   hizs->width_in_tiles = in.width;
-   hizs->height_in_tiles = in.height;
-   hizs->swizzle_mode = in.swizzleMode;
-   hizs->alignment_log2 = out.baseAlign;
+   hiz->size = out.surfSize;
+   hiz->width_in_tiles = in.width;
+   hiz->height_in_tiles = in.height;
+   hiz->swizzle_mode = in.swizzleMode;
+   hiz->alignment_log2 = out.baseAlign;
    return true;
 }
 
@@ -3442,7 +3441,7 @@ static bool gfx12_compute_miptree(struct ac_addrlib *addrlib, const struct radeo
    if (in->flags.depth) {
       assert(in->swizzleMode != ADDR3_LINEAR);
 
-      return gfx12_compute_hiz_his_info(addrlib, info, config, surf, &surf->u.gfx9.zs.hiz, in);
+      return gfx12_compute_hiz_info(addrlib, info, config, surf, &surf->u.gfx9.zs.hiz, in);
    }
 
    /* Compute tile swizzle for the color surface. All swizzle modes >= 4K support it. */

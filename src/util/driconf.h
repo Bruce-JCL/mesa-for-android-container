@@ -207,6 +207,10 @@
    DRI_CONF_OPT_B(allow_glsl_120_subset_in_110, def, \
                   "Allow a subset of GLSL 1.20 in GLSL 1.10 as needed by SPECviewperf13")
 
+#define DRI_CONF_ALLOW_GLSL_EMBEDDED_STRUCTURE_DECLARATIONS(def) \
+   DRI_CONF_OPT_B(allow_glsl_embedded_structure_declarations, def, \
+                  "Allow embedded structure declarations again in GLSL 1.20+")
+
 #define DRI_CONF_ALLOW_GLSL_BUILTIN_CONST_EXPRESSION(def) \
    DRI_CONF_OPT_B(allow_glsl_builtin_const_expression, def, \
                   "Allow builtins as part of constant expressions")
@@ -349,6 +353,10 @@
 #define DRI_CONF_FAKE_SPARSE(def) \
    DRI_CONF_OPT_B(fake_sparse, def, \
                   "Advertise support for sparse binding of textures regardless of real support")
+
+#define DRI_CONF_INTEL_BINDING_TABLE_BLOCK_SIZE(def,min,max) \
+   DRI_CONF_OPT_I(intel_binding_table_block_size, def, min, max, \
+                  "Intel binding table block allocation size (3DSTATE_BINDING_TABLE_POOL_ALLOC)")
 
 #define DRI_CONFIG_INTEL_TBIMR(def) \
    DRI_CONF_OPT_B(intel_tbimr, def, "Enable TBIMR tiled rendering")
@@ -772,10 +780,6 @@
    DRI_CONF_OPT_B(radv_disable_sinking_load_input_fs, def, \
                   "Disable sinking load inputs for fragment shaders")
 
-#define DRI_CONF_RADV_DISABLE_DEPTH_STORAGE(def) \
-  DRI_CONF_OPT_B(radv_disable_depth_storage, def, \
-                 "Hides support for storage access to depth formats")
-
 #define DRI_CONF_RADV_FLUSH_BEFORE_QUERY_COPY(def) \
   DRI_CONF_OPT_B( \
       radv_flush_before_query_copy, def, \
@@ -953,6 +957,14 @@
    DRI_CONF_OPT_B(anv_disable_link_time_optimization, def, \
                   "Disable linking of graphics pipeline shaders")
 
+#define DRI_CONF_ANV_BARRIER_POST_UNTYPED_CLEAR_SHADER(def) \
+   DRI_CONF_OPT_B(anv_barrier_post_untyped_clear_shader, def, \
+                  "Insert pipeline barriers post clearing shader on untyped data")
+
+#define DRI_CONF_ANV_BARRIER_POST_TYPED_CLEAR_SHADER(def) \
+   DRI_CONF_OPT_B(anv_barrier_post_typed_clear_shader, def, \
+                  "Insert pipeline barriers post clearing shader on typed data")
+
 /**
  * \brief HASVK specific configuration options
  */
@@ -973,5 +985,11 @@
 
 #define DRI_CONF_DZN_DISABLE(def) \
    DRI_CONF_OPT_B(dzn_disable, def, "Fail instance creation")
+
+/**
+ * \brief NVK specific configuration options
+ */
+
+ #define DRI_CONF_NVK_APP_LAYER() DRI_CONF_OPT_S_NODEF(nvk_app_layer, "Select an application layer.")
 
 #endif

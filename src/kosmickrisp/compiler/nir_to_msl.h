@@ -41,6 +41,10 @@ enum msl_tex_access_flag {
 static inline enum msl_tex_access_flag
 msl_convert_access_flag(enum gl_access_qualifier qual)
 {
+   enum gl_access_qualifier readwrite =
+      (ACCESS_NON_WRITEABLE | ACCESS_NON_READABLE);
+   if ((qual & readwrite) == readwrite)
+      return MSL_ACCESS_READ_WRITE;
    if (qual & ACCESS_NON_WRITEABLE)
       return MSL_ACCESS_READ;
    if (qual & ACCESS_NON_READABLE)
@@ -66,4 +70,5 @@ bool msl_ensure_vertex_position_output(nir_shader *nir);
 bool msl_nir_fs_io_types(nir_shader *nir);
 bool msl_nir_vs_io_types(nir_shader *nir);
 bool msl_nir_fake_guard_for_discards(struct nir_shader *nir);
+bool msl_nir_lower_sample_shading(nir_shader *nir);
 void msl_lower_nir_late(nir_shader *nir);

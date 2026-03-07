@@ -359,6 +359,8 @@ etna_init_screen_caps(struct etna_screen *screen)
 
    caps->max_line_width =
    caps->max_line_width_aa =
+      VIV_FEATURE(screen, ETNA_FEATURE_WIDELINE_TRIANGLE_EMU) ? 1.0f : 8192.0f;
+
    caps->max_point_size =
    caps->max_point_size_aa = 8192.0f;
 
@@ -418,6 +420,9 @@ gpu_supports_texture_format(struct etna_screen *screen, uint32_t fmt,
        (util_format_is_pure_integer(format) || util_format_is_float(format)))
       supported = VIV_FEATURE(screen, ETNA_FEATURE_HALTI2);
 
+   if (format == PIPE_FORMAT_S8_UINT)
+      supported = VIV_FEATURE(screen, ETNA_FEATURE_S8);
+
    if (format == PIPE_FORMAT_S8X24_UINT)
       supported = VIV_FEATURE(screen, ETNA_FEATURE_HALTI5) &&
                   !DBG_ENABLED(ETNA_DBG_NO_TEXDESC);
@@ -430,6 +435,25 @@ gpu_supports_texture_format(struct etna_screen *screen, uint32_t fmt,
 
    if (texture_format_needs_swiz(format))
       return VIV_FEATURE(screen, ETNA_FEATURE_HALTI0);
+
+   return true;
+}
+
+static bool
+gpu_supports_msaa(struct etna_screen *screen, unsigned sample_count)
+{
+   if (DBG_ENABLED(ETNA_DBG_NO_MSAA))
+      return false;
+
+   if (!VIV_FEATURE(screen, ETNA_FEATURE_MSAA))
+      return false;
+
+   if (!translate_samples_to_xyscale(sample_count, NULL, NULL))
+      return false;
+
+   /* On SMALL_MSAA hardware 2x MSAA does not work. */
+   if (sample_count == 2 && VIV_FEATURE(screen, ETNA_FEATURE_SMALL_MSAA))
+      return false;
 
    return true;
 }
@@ -449,22 +473,6 @@ gpu_supports_render_format(struct etna_screen *screen, enum pipe_format format,
       return false;
 
    if (sample_count > 1) {
-      /* Explicitly disabled. */
-      if (DBG_ENABLED(ETNA_DBG_NO_MSAA))
-         return false;
-
-      /* The hardware supports it. */
-      if (!VIV_FEATURE(screen, ETNA_FEATURE_MSAA))
-         return false;
-
-      /* Number of samples must be allowed. */
-      if (!translate_samples_to_xyscale(sample_count, NULL, NULL))
-         return false;
-
-      /* On SMALL_MSAA hardware 2x MSAA does not work. */
-      if (sample_count == 2 && VIV_FEATURE(screen, ETNA_FEATURE_SMALL_MSAA))
-         return false;
-
       /* BLT/RS supports the format. */
       if (screen->specs.use_blt) {
          if (translate_blt_format(format) == ETNA_NO_MATCH)
@@ -545,6 +553,9 @@ etna_screen_is_format_supported(struct pipe_screen *pscreen,
       return false;
 
    if (MAX2(1, sample_count) != MAX2(1, storage_sample_count))
+      return false;
+
+   if (sample_count > 1 && !gpu_supports_msaa(screen, sample_count))
       return false;
 
    /* For ARB_framebuffer_no_attachments - Short-circuit the rest of the logic. */

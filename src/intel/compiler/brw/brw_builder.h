@@ -166,7 +166,10 @@ public:
    brw_builder
    uniform() const
    {
-      return exec_all().group(1, 0);
+      brw_builder bld = exec_all();
+      bld._group = 0;
+      bld._dispatch_width = 1;
+      return bld;
    }
 
    /**
@@ -846,8 +849,8 @@ public:
 
    void
    VARYING_PULL_CONSTANT_LOAD(const brw_reg &dst,
-                              const brw_reg &surface,
-                              const brw_reg &surface_handle,
+                              const brw_reg &binding_type,
+                              const brw_reg &binding,
                               const brw_reg &varying_offset,
                               uint32_t const_offset,
                               uint8_t alignment,
@@ -870,8 +873,8 @@ public:
       brw_reg vec4_result = vgrf(BRW_TYPE_F, 4);
 
       brw_reg srcs[PULL_VARYING_CONSTANT_SRCS];
-      srcs[PULL_VARYING_CONSTANT_SRC_SURFACE]        = surface;
-      srcs[PULL_VARYING_CONSTANT_SRC_SURFACE_HANDLE] = surface_handle;
+      srcs[PULL_VARYING_CONSTANT_SRC_BINDING_TYPE]   = binding_type;
+      srcs[PULL_VARYING_CONSTANT_SRC_BINDING]        = binding;
       srcs[PULL_VARYING_CONSTANT_SRC_OFFSET]         = total_offset;
       srcs[PULL_VARYING_CONSTANT_SRC_ALIGNMENT]      = brw_imm_ud(alignment);
 
@@ -1106,9 +1109,9 @@ brw_reg
 brw_fetch_barycentric_reg(const brw_builder &bld, uint8_t regs[2]);
 
 void
-brw_check_dynamic_msaa_flag(const brw_builder &bld,
-                            const struct brw_wm_prog_data *wm_prog_data,
-                            enum intel_msaa_flags flag);
+brw_check_dynamic_fs_config(const brw_builder &bld,
+                            const struct brw_fs_prog_data *fs_prog_data,
+                            enum intel_fs_config flag);
 
 inline brw_inst *
 brw_transform_inst(const brw_builder &bld, brw_inst *inst,

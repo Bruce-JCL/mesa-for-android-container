@@ -52,7 +52,6 @@ kk_get_nir_options(struct vk_physical_device *vk_pdev, mesa_shader_stage stage,
       .lower_pack_split = true,
       .lower_unpack_half_2x16 = true,
       .has_cs_global_id = true,
-      .lower_vector_cmp = true,
       .lower_fquantize2f16 = true,
       .lower_scmp = true,
       .lower_ifind_msb = true,
@@ -406,8 +405,22 @@ static void
 kk_lower_fs(struct kk_device *dev, nir_shader *nir,
             const struct vk_graphics_pipeline_state *state)
 {
+   /* msl_nir_lower_sample_shading needs to go before blending since
+    * nir_lower_blend will always set uses_sample_shading to true if there's any
+    * output read. I believe we do not need to lower it always, that is why it
+    * goes here but need to double check. */
+   if (nir->info.fs.uses_sample_shading)
+      NIR_PASS(_, nir, msl_nir_lower_sample_shading);
+
    if (state->cb)
       kk_lower_fs_blend(nir, state);
+
+   enum pipe_format rts[MAX_DRAW_BUFFERS] = {PIPE_FORMAT_NONE};
+   const struct vk_render_pass_state *rp = state->rp;
+   for (uint32_t i = 0u; i < MAX_DRAW_BUFFERS; ++i)
+      rts[i] = vk_format_to_pipe_format(rp->color_attachment_formats[i]);
+
+   NIR_PASS(_, nir, msl_nir_fs_force_output_signedness, rts);
 
    if (state->rp->depth_attachment_format == VK_FORMAT_UNDEFINED ||
        nir->info.fs.early_fragment_tests)
@@ -425,8 +438,19 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
    NIR_PASS(_, nir, msl_nir_fs_io_types);
 
    if (state->ms && state->ms->rasterization_samples &&
-       state->ms->sample_mask != UINT16_MAX)
+       state->ms->sample_mask != UINT16_MAX) {
+
+      /* KK_WORKAROUND_7 */
+      if (!(dev->disabled_workarounds & BITFIELD64_BIT(7))) {
+         if (!nir->info.fs.early_fragment_tests) {
+            nir_function_impl *entrypoint = nir_shader_get_entrypoint(nir);
+            nir_builder b = nir_builder_at(nir_after_impl(entrypoint));
+            nir_discard_if(&b,
+                           nir_ieq_imm(&b, nir_load_sample_mask_in(&b), 0u));
+         }
+      }
       NIR_PASS(_, nir, msl_lower_static_sample_mask, state->ms->sample_mask);
+   }
    /* Check https://github.com/KhronosGroup/Vulkan-Portability/issues/54 for
     * explanation on why we need this. */
    else if (nir->info.fs.needs_full_quad_helper_invocations ||
@@ -453,6 +477,11 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir,
    if (KK_DEBUG(FORCE_ROBUSTNESS))
       rs = &rs_all_supported;
 
+   const nir_opt_access_options access_options = {
+      .is_vulkan = true,
+   };
+   NIR_PASS(_, nir, nir_opt_access, &access_options);
+
    /* Massage IO related variables to please Metal */
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_, nir, kk_nir_lower_vs_multiview, state->rp->view_mask);
@@ -466,13 +495,6 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir,
 
       NIR_PASS(_, nir, msl_ensure_vertex_position_output);
    } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-      enum pipe_format rts[MAX_DRAW_BUFFERS] = {PIPE_FORMAT_NONE};
-      const struct vk_render_pass_state *rp = state->rp;
-      for (uint32_t i = 0u; i < MAX_DRAW_BUFFERS; ++i)
-         rts[i] = vk_format_to_pipe_format(rp->color_attachment_formats[i]);
-
-      NIR_PASS(_, nir, msl_nir_fs_force_output_signedness, rts);
-
       NIR_PASS(_, nir, kk_nir_lower_fs_multiview, state->rp->view_mask);
 
       if (state->rp->depth_attachment_format != VK_FORMAT_UNDEFINED &&

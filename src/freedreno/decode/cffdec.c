@@ -122,6 +122,16 @@ printl(int lvl, const char *fmt, ...)
    va_end(args);
 }
 
+static bool
+endswith(const char *name, const char *suffix)
+{
+   size_t slen = strlen(suffix);
+   size_t nlen = strlen(name);
+   if (slen > nlen)
+      return false;
+   return !strcmp(name + nlen - slen, suffix);
+}
+
 static const char *levels[] = {
    "\t",
    "\t\t",
@@ -575,7 +585,7 @@ static int
 get_tex_count(const char *name)
 {
    char count_reg[strlen(name) + 5];
-   char *p;
+   const char *p;
 
    p = strstr(name, "CONST");
    if (!p)
@@ -691,44 +701,25 @@ static struct {
       REG(CP_SCRATCH[0x5].REG, reg_dump_scratch),
       REG(CP_SCRATCH[0x6].REG, reg_dump_scratch),
       REG(CP_SCRATCH[0x7].REG, reg_dump_scratch),
-      REG(SP_VS_OBJ_START_LO, reg_gpuaddr_lo),
-      REG(SP_VS_OBJ_START_HI, reg_disasm_gpuaddr_hi),
-      REG(SP_HS_OBJ_START_LO, reg_gpuaddr_lo),
-      REG(SP_HS_OBJ_START_HI, reg_disasm_gpuaddr_hi),
-      REG(SP_DS_OBJ_START_LO, reg_gpuaddr_lo),
-      REG(SP_DS_OBJ_START_HI, reg_disasm_gpuaddr_hi),
-      REG(SP_GS_OBJ_START_LO, reg_gpuaddr_lo),
-      REG(SP_GS_OBJ_START_HI, reg_disasm_gpuaddr_hi),
-      REG(SP_FS_OBJ_START_LO, reg_gpuaddr_lo),
-      REG(SP_FS_OBJ_START_HI, reg_disasm_gpuaddr_hi),
-      REG(SP_CS_OBJ_START_LO, reg_gpuaddr_lo),
-      REG(SP_CS_OBJ_START_HI, reg_disasm_gpuaddr_hi),
-      REG(TPL1_VS_TEX_CONST_LO, reg_gpuaddr_lo),
-      REG(TPL1_VS_TEX_CONST_HI, reg_dump_tex_const_hi),
-      REG(TPL1_VS_TEX_SAMP_LO, reg_gpuaddr_lo),
-      REG(TPL1_VS_TEX_SAMP_HI, reg_dump_tex_samp_hi),
-      REG(TPL1_HS_TEX_CONST_LO, reg_gpuaddr_lo),
-      REG(TPL1_HS_TEX_CONST_HI, reg_dump_tex_const_hi),
-      REG(TPL1_HS_TEX_SAMP_LO, reg_gpuaddr_lo),
-      REG(TPL1_HS_TEX_SAMP_HI, reg_dump_tex_samp_hi),
-      REG(TPL1_DS_TEX_CONST_LO, reg_gpuaddr_lo),
-      REG(TPL1_DS_TEX_CONST_HI, reg_dump_tex_const_hi),
-      REG(TPL1_DS_TEX_SAMP_LO, reg_gpuaddr_lo),
-      REG(TPL1_DS_TEX_SAMP_HI, reg_dump_tex_samp_hi),
-      REG(TPL1_GS_TEX_CONST_LO, reg_gpuaddr_lo),
-      REG(TPL1_GS_TEX_CONST_HI, reg_dump_tex_const_hi),
-      REG(TPL1_GS_TEX_SAMP_LO, reg_gpuaddr_lo),
-      REG(TPL1_GS_TEX_SAMP_HI, reg_dump_tex_samp_hi),
-      REG(TPL1_FS_TEX_CONST_LO, reg_gpuaddr_lo),
-      REG(TPL1_FS_TEX_CONST_HI, reg_dump_tex_const_hi),
-      REG(TPL1_FS_TEX_SAMP_LO, reg_gpuaddr_lo),
-      REG(TPL1_FS_TEX_SAMP_HI, reg_dump_tex_samp_hi),
-      REG(TPL1_CS_TEX_CONST_LO, reg_gpuaddr_lo),
-      REG(TPL1_CS_TEX_CONST_HI, reg_dump_tex_const_hi),
-      REG(TPL1_CS_TEX_SAMP_LO, reg_gpuaddr_lo),
-      REG(TPL1_CS_TEX_SAMP_HI, reg_dump_tex_samp_hi),
-      REG(TPL1_TP_BORDER_COLOR_BASE_ADDR_LO, reg_gpuaddr_lo),
-      REG(TPL1_TP_BORDER_COLOR_BASE_ADDR_HI, reg_dump_gpuaddr_hi),
+      REG64(SP_VS_OBJ_START, reg_disasm_gpuaddr64),
+      REG64(SP_HS_OBJ_START, reg_disasm_gpuaddr64),
+      REG64(SP_DS_OBJ_START, reg_disasm_gpuaddr64),
+      REG64(SP_GS_OBJ_START, reg_disasm_gpuaddr64),
+      REG64(SP_FS_OBJ_START, reg_disasm_gpuaddr64),
+      REG64(SP_CS_OBJ_START, reg_disasm_gpuaddr64),
+      REG64(TPL1_VS_TEX_CONST, reg_disasm_gpuaddr64),
+      REG64(TPL1_VS_TEX_SAMP, reg_disasm_gpuaddr64),
+      REG64(TPL1_HS_TEX_CONST, reg_disasm_gpuaddr64),
+      REG64(TPL1_HS_TEX_SAMP, reg_disasm_gpuaddr64),
+      REG64(TPL1_DS_TEX_CONST, reg_disasm_gpuaddr64),
+      REG64(TPL1_DS_TEX_SAMP, reg_disasm_gpuaddr64),
+      REG64(TPL1_GS_TEX_CONST, reg_disasm_gpuaddr64),
+      REG64(TPL1_GS_TEX_SAMP, reg_disasm_gpuaddr64),
+      REG64(TPL1_FS_TEX_CONST, reg_disasm_gpuaddr64),
+      REG64(TPL1_FS_TEX_SAMP, reg_disasm_gpuaddr64),
+      REG64(TPL1_CS_TEX_CONST, reg_disasm_gpuaddr64),
+      REG64(TPL1_CS_TEX_SAMP, reg_disasm_gpuaddr64),
+      REG64(TPL1_TP_BORDER_COLOR_BASE_ADDR, reg_disasm_gpuaddr64),
 //      REG(RB_MRT_FLAG_BUFFER[0].ADDR_LO, reg_gpuaddr_lo),
 //      REG(RB_MRT_FLAG_BUFFER[0].ADDR_HI, reg_dump_gpuaddr_hi),
 //      REG(RB_MRT_FLAG_BUFFER[1].ADDR_LO, reg_gpuaddr_lo),
@@ -779,18 +770,21 @@ static struct {
       REG64(SP_PS_BASE, reg_disasm_gpuaddr64),
       REG64(SP_CS_BASE, reg_disasm_gpuaddr64),
 
-      REG64(SP_VS_TEXMEMOBJ_BASE, reg_dump_gpuaddr64),
-      REG64(SP_VS_SAMPLER_BASE, reg_dump_gpuaddr64),
-      REG64(SP_HS_TEXMEMOBJ_BASE, reg_dump_gpuaddr64),
-      REG64(SP_HS_SAMPLER_BASE, reg_dump_gpuaddr64),
-      REG64(SP_DS_TEXMEMOBJ_BASE, reg_dump_gpuaddr64),
-      REG64(SP_DS_SAMPLER_BASE, reg_dump_gpuaddr64),
-      REG64(SP_GS_TEXMEMOBJ_BASE, reg_dump_gpuaddr64),
-      REG64(SP_GS_SAMPLER_BASE, reg_dump_gpuaddr64),
-      REG64(SP_PS_TEXMEMOBJ_BASE, reg_dump_gpuaddr64),
-      REG64(SP_PS_SAMPLER_BASE, reg_dump_gpuaddr64),
-      REG64(SP_CS_TEXMEMOBJ_BASE, reg_dump_gpuaddr64),
-      REG64(SP_CS_SAMPLER_BASE, reg_dump_gpuaddr64),
+      REG64(SP_VS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_VS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_HS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_HS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_DS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_DS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_GS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_GS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_PS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_PS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_CS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_CS_SAMPLER_BASE, reg_dump_sampler64),
+
+      REG64(SP_GFX_UAV_BASE, reg_dump_uav64),
+      REG64(SP_CS_UAV_BASE, reg_dump_uav64),
 
       {NULL},
 }, reg_a7xx[] = {
@@ -800,6 +794,22 @@ static struct {
       REG64(SP_GS_BASE, reg_disasm_gpuaddr64),
       REG64(SP_PS_BASE, reg_disasm_gpuaddr64),
       REG64(SP_CS_BASE, reg_disasm_gpuaddr64),
+
+      REG64(SP_VS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_VS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_HS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_HS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_DS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_DS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_GS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_GS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_PS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_PS_SAMPLER_BASE, reg_dump_sampler64),
+      REG64(SP_CS_TEXMEMOBJ_BASE, reg_dump_texmemobj64),
+      REG64(SP_CS_SAMPLER_BASE, reg_dump_sampler64),
+
+      REG64(SP_GFX_UAV_BASE, reg_dump_uav64),
+      REG64(SP_CS_UAV_BASE, reg_dump_uav64),
 
       {NULL},
 }, reg_a8xx[] = {
@@ -831,10 +841,32 @@ static struct {
 
 static struct rnn *rnn;
 
+static bool
+reg_used(uint32_t regbase, const char *usage)
+{
+   struct rnndecaddrinfo *info = rnn_reginfo(rnn, regbase);
+   if (!info)
+      return false;
+   bool used = info->usage && strstr(info->usage, usage);
+   rnn_reginfo_free(info);
+   return used;
+}
+
+static bool
+has_query_val(int val)
+{
+   for (int i = 0; i < nqueryvals; i++)
+      if (queryvals[i] == val)
+         return true;
+   return false;
+}
+
 static void
 add_query_val(const char *querystr, int val)
 {
    printf("querystr: %s -> 0x%x\n", querystr, val);
+   if (has_query_val(val))
+      return;
    queryvals = realloc(queryvals, (nqueryvals + 1) * sizeof(!*queryvals));
    queryvals[nqueryvals] = val;
    nqueryvals++;
@@ -863,6 +895,10 @@ add_query(const char *querystr)
       const char *name = rnn_regname(rnn, off, false);
 
       if (!name)
+         continue;
+
+      /* Skip _HI regs if we are already watching the _LO: */
+      if (endswith(name, "_HI") && has_query_val(off - 1))
          continue;
 
       ret = regexec(&regex, name, 0, NULL, 0);
@@ -992,13 +1028,9 @@ enumval(const char *enumname, const char *enumval)
 }
 
 static int
-endswith(uint32_t regbase, const char *suffix)
+regname_endswith(uint32_t regbase, const char *suffix)
 {
-   const char *name = regname(regbase, 0);
-   const char *s = strstr(name, suffix);
-   if (!s)
-      return 0;
-   return (s - strlen(name) + strlen(suffix)) == name;
+   return endswith(regname(regbase, 0), suffix);
 }
 
 struct regacc
@@ -1037,7 +1069,7 @@ regacc_push(struct regacc *r, uint32_t regbase, uint32_t dword)
    r->has_dword_lo = (info->width == 64);
 
    /* Workaround for kernel devcore dump bugs: */
-   if ((info->width == 64) && endswith(regbase, "_HI")) {
+   if ((info->width == 64) && regname_endswith(regbase, "_HI")) {
       printf("WARNING: 64b discontinuity (no _LO dword for %x)\n", regbase);
       r->has_dword_lo = false;
    }
@@ -1074,9 +1106,9 @@ dump_register_val(struct regacc *r, int level)
           * We can remove this hack once a5xx.xml is converted to reg64
           * and address/waddess.
           */
-         if (endswith(r->regbase, "_HI") && endswith(r->regbase - 1, "_LO")) {
+         if (regname_endswith(r->regbase, "_HI") && regname_endswith(r->regbase - 1, "_LO")) {
             gpuaddr = (r->value << 32) | reg_val(r->regbase - 1);
-         } else if (endswith(r->regbase, "_LO") && endswith(r->regbase + 1, "_HI")) {
+         } else if (regname_endswith(r->regbase, "_LO") && regname_endswith(r->regbase + 1, "_HI")) {
             gpuaddr = (((uint64_t)reg_val(r->regbase + 1)) << 32) | r->value;
          }
       }
@@ -1271,6 +1303,16 @@ skip_query(void)
    return true;
 }
 
+static const char *
+deprefix(const char *str, const char *prefix)
+{
+   if (!str)
+      return "";
+   if (str == strstr(str, prefix))
+      str += strlen(prefix);
+   return str;
+}
+
 static void
 __do_query(const char *primtype, uint32_t num_indices)
 {
@@ -1298,12 +1340,14 @@ __do_query(const char *primtype, uint32_t num_indices)
          if (regacc_push(&r, regbase + d, reg_val(regbase + d)))
             break;
 
-      printf("%4d: %s(%u,%u-%u,%u):%u:", draw_count, primtype, bin_x1,
-             bin_y1, bin_x2, bin_y2, num_indices);
+      printf("%4d: %s(%u,%u-%u,%u):%u:", draw_count,
+             deprefix(primtype, "DI_PT_"),
+             bin_x1, bin_y1, bin_x2, bin_y2,
+             num_indices);
       if (options->info->chip >= 5)
-         printf("%s:", render_mode);
+         printf("%s:", deprefix(render_mode, "RM6_"));
       if (thread)
-         printf("%s:", thread);
+         printf("%s:", deprefix(thread, "CP_SET_THREAD_"));
       printf("\t%08"PRIx64, r.value);
       if (r.value != lastvals[regbase]) {
          printf("!");
@@ -2207,7 +2251,7 @@ cp_set_const(uint32_t *dwords, uint32_t sizedwords, int level)
    }
 }
 
-static void dump_register_summary(int level);
+static void dump_register_summary(int level, const char *usage);
 
 static void
 cp_event_write(uint32_t *dwords, uint32_t sizedwords, int level)
@@ -2221,13 +2265,13 @@ cp_event_write(uint32_t *dwords, uint32_t sizedwords, int level)
       if (!strcmp(name, "CCU_RESOLVE") || !strcmp(name, "LRZ_CLEAR")) {
          do_query(eventname, 0);
          print_mode(level);
-         dump_register_summary(level);
+         dump_register_summary(level, "resolve");
       }
    }
 }
 
 static void
-dump_register_summary(int level)
+dump_register_summary(int level, const char *usage)
 {
    uint32_t i;
    bool saved_summary = summary;
@@ -2242,21 +2286,25 @@ dump_register_summary(int level)
 
    bool changed = false;
    bool written = false;
+   bool used = false;
 
    for (i = 0; i < regcnt(); i++) {
       uint32_t regbase = i;
       uint32_t lastval = reg_val(regbase);
-      /* skip registers that haven't been updated since last draw/blit: */
-      if (!(options->allregs || reg_rewritten(regbase)))
-         continue;
       if (!reg_written(regbase))
+         continue;
+      if (reg_used(regbase, usage))
+         used |= true;
+      if (reg_rewritten(regbase))
+         written |= true;
+      /* skip registers that haven't been updated since last draw/blit
+       * and aren't used by the current usage:
+       */
+      if (!(options->allregs || written || used))
          continue;
       if (lastval != lastvals[regbase]) {
          changed |= true;
          lastvals[regbase] = lastval;
-      }
-      if (reg_rewritten(regbase)) {
-         written |= true;
       }
       if (!quiet(2)) {
          if (regacc_push(&r, regbase, lastval)) {
@@ -2270,10 +2318,18 @@ dump_register_summary(int level)
             } else {
                printl(2, " ");
             }
+            /* Older gens don't have register usage specified */
+            if (options->info->chip >= 6) {
+               if (used) {
+                  printl(2, " ");
+               } else {
+                  printl(2, "?");
+               }
+            }
             printl(2, "\t%08"PRIx64, r.value);
             dump_register(&r, level);
 
-            changed = written = false;
+            changed = written = used = false;
          }
       }
    }
@@ -2351,7 +2407,7 @@ cp_draw_indx(uint32_t *dwords, uint32_t sizedwords, int level)
    /* don't bother dumping registers for the dummy draw_indx's.. */
    if (num_indices > 0) {
       dump_bindless_descriptors(false, level);
-      dump_register_summary(level);
+      dump_register_summary(level, "draw");
    }
 
    needs_wfi = true;
@@ -2395,7 +2451,7 @@ cp_draw_indx_2(uint32_t *dwords, uint32_t sizedwords, int level)
    /* don't bother dumping registers for the dummy draw_indx's.. */
    if (num_indices > 0) {
       dump_bindless_descriptors(false, level);
-      dump_register_summary(level);
+      dump_register_summary(level, "draw");
    }
 }
 
@@ -2411,7 +2467,7 @@ cp_draw_indx_offset(uint32_t *dwords, uint32_t sizedwords, int level)
    /* don't bother dumping registers for the dummy draw_indx's.. */
    if (num_indices > 0) {
       dump_bindless_descriptors(false, level);
-      dump_register_summary(level);
+      dump_register_summary(level, "draw");
    }
 }
 
@@ -2437,7 +2493,7 @@ cp_draw_indx_indirect(uint32_t *dwords, uint32_t sizedwords, int level)
    dump_gpuaddr_size(addr, level, 0x10, 2);
 
    dump_bindless_descriptors(false, level);
-   dump_register_summary(level);
+   dump_register_summary(level, "draw");
 }
 
 static void
@@ -2453,7 +2509,7 @@ cp_draw_indirect(uint32_t *dwords, uint32_t sizedwords, int level)
    dump_gpuaddr_size(addr, level, 0x10, 2);
 
    dump_bindless_descriptors(false, level);
-   dump_register_summary(level);
+   dump_register_summary(level, "draw");
 }
 
 static void
@@ -2513,7 +2569,7 @@ cp_draw_indirect_multi(uint32_t *dwords, uint32_t sizedwords, int level)
    }
 
    dump_bindless_descriptors(false, level);
-   dump_register_summary(level);
+   dump_register_summary(level, "draw");
 }
 
 static void
@@ -2525,14 +2581,14 @@ cp_draw_auto(uint32_t *dwords, uint32_t sizedwords, int level)
    print_mode(level);
 
    dump_bindless_descriptors(false, level);
-   dump_register_summary(level);
+   dump_register_summary(level, "draw");
 }
 
 static void
 cp_run_cl(uint32_t *dwords, uint32_t sizedwords, int level)
 {
    do_query("COMPUTE", 1);
-   dump_register_summary(level);
+   dump_register_summary(level, "compute");
 }
 
 static void
@@ -2961,7 +3017,7 @@ cp_exec_cs(uint32_t *dwords, uint32_t sizedwords, int level)
    do_query("compute", 0);
    print_mode(level);
    dump_bindless_descriptors(true, level);
-   dump_register_summary(level);
+   dump_register_summary(level, "compute");
 }
 
 static void
@@ -2981,7 +3037,7 @@ cp_exec_cs_indirect(uint32_t *dwords, uint32_t sizedwords, int level)
    do_query("compute", 0);
    print_mode(level);
    dump_bindless_descriptors(true, level);
-   dump_register_summary(level);
+   dump_register_summary(level, "compute");
 }
 
 static void
@@ -3121,7 +3177,7 @@ cp_blit(uint32_t *dwords, uint32_t sizedwords, int level)
 {
    do_query(rnn_enumname(rnn, "cp_blit_cmd", dwords[0]), 0);
    print_mode(level);
-   dump_register_summary(level);
+   dump_register_summary(level, "blit");
 }
 
 static void

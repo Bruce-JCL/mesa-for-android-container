@@ -43,6 +43,7 @@
 #include "util/ralloc.h"
 #include "util/range_minimum_query.h"
 #include "util/set.h"
+#include "util/simple_mtx.h"
 #include "util/sparse_bitset.h"
 #include "util/u_math.h"
 #include "nir_defines.h"
@@ -225,6 +226,7 @@ typedef enum {
    nir_resource_intel_sampler = 1u << 2,
    nir_resource_intel_non_uniform = 1u << 3,
    nir_resource_intel_sampler_embedded = 1u << 4,
+   nir_resource_intel_internal = 1u << 5,
 } nir_resource_data_intel;
 
 /**
@@ -1480,6 +1482,8 @@ typedef struct nir_op_info {
 
    /** Whether this represents a numeric conversion opcode */
    bool is_conversion;
+
+   uint8_t valid_fp_math_ctrl;
 } nir_op_info;
 
 /** Metadata for each nir_op, indexed by opcode */
@@ -1525,10 +1529,6 @@ typedef enum {
     * it must ensure that the resulting value is bit-for-bit identical to the
     * original, with the exception of undefindness allowed by other
     * nir_fp_math_control bits and NaN patterns.
-    *
-    * TODO This is currently also used to control NaN behavior of
-    * floating point comparisons and fmin/fmax/fsat.
-    * This should be changed to only depend on nir_fp_preserve_nan.
     */
    nir_fp_exact = BITFIELD_BIT(3),
 
@@ -1578,33 +1578,39 @@ typedef struct nir_alu_instr {
 } nir_alu_instr;
 
 static inline bool
-nir_alu_instr_is_signed_zero_preserve(nir_alu_instr *alu)
+nir_alu_instr_is_signed_zero_preserve(const nir_alu_instr *alu)
 {
    return alu->fp_math_ctrl & nir_fp_preserve_signed_zero;
 }
 
 static inline bool
-nir_alu_instr_is_inf_preserve(nir_alu_instr *alu)
+nir_alu_instr_is_inf_preserve(const nir_alu_instr *alu)
 {
    return alu->fp_math_ctrl & nir_fp_preserve_inf;
 }
 
 static inline bool
-nir_alu_instr_is_nan_preserve(nir_alu_instr *alu)
+nir_alu_instr_is_nan_preserve(const nir_alu_instr *alu)
 {
    return alu->fp_math_ctrl & nir_fp_preserve_nan;
 }
 
 static inline bool
-nir_alu_instr_is_signed_zero_inf_nan_preserve(nir_alu_instr *alu)
+nir_alu_instr_is_signed_zero_inf_nan_preserve(const nir_alu_instr *alu)
 {
    return alu->fp_math_ctrl & nir_fp_preserve_sz_inf_nan;
 }
 
 static inline bool
-nir_alu_instr_is_exact(nir_alu_instr *alu)
+nir_alu_instr_is_exact(const nir_alu_instr *alu)
 {
    return alu->fp_math_ctrl & nir_fp_exact;
+}
+
+static inline unsigned
+nir_op_valid_fp_math_ctrl(nir_op op, unsigned fp_math_ctrl)
+{
+   return fp_math_ctrl & nir_op_infos[op].valid_fp_math_ctrl;
 }
 
 void nir_alu_src_copy(nir_alu_src *dest, const nir_alu_src *src);
@@ -4007,6 +4013,8 @@ typedef struct nir_shader {
    u_printf_info *printf_info;
 
    bool has_debug_info;
+   uint32_t nir_pass_depth;
+   bool nir_pass_recursed;
 } nir_shader;
 
 #define nir_foreach_function(func, shader) \
@@ -4970,24 +4978,39 @@ should_print_nir(UNUSED nir_shader *shader)
 #define NIR_STRINGIZE_INNER(x) #x
 #define NIR_STRINGIZE(x)       NIR_STRINGIZE_INNER(x)
 
+extern simple_mtx_t nir_print_lock;
+
 #define NIR_PASS(progress, nir, pass, ...) _PASS(pass, nir, {                            \
    nir_metadata_set_validation_flag(nir);                                                \
-   if (should_print_nir(nir))                                                            \
+   if (should_print_nir(nir)) {                                                          \
+      if ((nir)->nir_pass_depth++ == 0) {                                                \
+         simple_mtx_lock(&nir_print_lock);                                               \
+      } else {                                                                           \
+         (nir)->nir_pass_recursed = true;                                                \
+      }                                                                                  \
       printf("%s\n", #pass);                                                             \
+   }                                                                                     \
    static const char *when = "after " #pass " in " __FILE__ ":" NIR_STRINGIZE(__LINE__); \
    struct blob blob_before = nir_validate_progress_setup(nir);                           \
    if (pass(nir, ##__VA_ARGS__)) {                                                       \
       nir_validate_shader(nir, when);                                                    \
       UNUSED bool _;                                                                     \
       progress = true;                                                                   \
-      if (should_print_nir(nir))                                                         \
+      if (should_print_nir(nir)) {                                                       \
+         if ((nir)->nir_pass_recursed)                                                   \
+            printf("%s (finished)\n", #pass);                                            \
          nir_print_shader(nir, stdout);                                                  \
+      }                                                                                  \
       nir_metadata_check_validation_flag(nir);                                           \
       nir_validate_progress_finish(nir, &blob_before, true, when);                       \
    } else {                                                                              \
       if (NIR_DEBUG(EXTENDED_VALIDATION))                                                \
          nir_validate_shader(nir, when);                                                 \
       nir_validate_progress_finish(nir, &blob_before, false, when);                      \
+   }                                                                                     \
+   if (should_print_nir(nir) && --(nir)->nir_pass_depth == 0) {                          \
+      simple_mtx_unlock(&nir_print_lock);                                                \
+      (nir)->nir_pass_recursed = false;                                                  \
    }                                                                                     \
 })
 
@@ -5530,6 +5553,7 @@ typedef struct nir_load_store_vectorize_options {
    unsigned (*round_up_components)(unsigned);
    nir_variable_mode modes;
    nir_variable_mode robust_modes;
+   nir_variable_mode bounds_checked_modes; /* modes with per-component bounds-checking */
    void *cb_data;
    bool has_shared2_amd;
    bool round_up_store_components;
@@ -5582,10 +5606,12 @@ nir_lower_shader_calls(nir_shader *shader,
 
 int nir_get_io_offset_src_number(const nir_intrinsic_instr *instr);
 int nir_get_io_index_src_number(const nir_intrinsic_instr *instr);
+int nir_get_io_data_src_number(const nir_intrinsic_instr *instr);
 int nir_get_io_arrayed_index_src_number(const nir_intrinsic_instr *instr);
 
 nir_src *nir_get_io_offset_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_index_src(nir_intrinsic_instr *instr);
+nir_src *nir_get_io_data_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_arrayed_index_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_shader_call_payload_src(nir_intrinsic_instr *call);
 
@@ -5779,6 +5805,7 @@ typedef struct nir_lower_subgroups_options {
    uint8_t ballot_bit_size;
    uint8_t ballot_components;
    bool lower_to_scalar : 1;
+   bool lower_vote : 1;
    bool lower_vote_trivial : 1;
    bool lower_vote_feq : 1;
    bool lower_vote_ieq : 1;
@@ -6143,7 +6170,9 @@ enum nir_lower_non_uniform_access_type {
    nir_lower_non_uniform_image_access = (1 << 3),
    nir_lower_non_uniform_get_ssbo_size = (1 << 4),
    nir_lower_non_uniform_texture_offset_access = (1 << 5),
-   nir_lower_non_uniform_access_type_count = 6,
+   nir_lower_non_uniform_texture_query = (1 << 6),
+   nir_lower_non_uniform_image_query = (1 << 7),
+   nir_lower_non_uniform_access_type_count = 8,
 };
 
 typedef bool (*nir_lower_non_uniform_src_access_callback)(const nir_tex_instr *, unsigned, void *);

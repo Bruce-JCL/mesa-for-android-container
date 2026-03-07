@@ -91,11 +91,6 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 
    compiler->precise_trig = debug_get_bool_option("INTEL_PRECISE_TRIG", false);
 
-   compiler->extended_bindless_surface_offset = devinfo->verx10 >= 125;
-   compiler->use_tcs_multi_patch = devinfo->ver >= 12;
-
-   compiler->indirect_ubos_use_sampler = devinfo->ver < 12;
-
    compiler->lower_dpas = !devinfo->has_systolic ||
                           debug_get_bool_option("INTEL_LOWER_DPAS", false);
 
@@ -190,7 +185,7 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
    nir_options->lower_doubles_options = fp64_options;
    nir_options->max_samples = devinfo->ver >= 30 ? 8 : 16;
 
-   if (compiler->use_tcs_multi_patch) {
+   if (intel_use_tcs_multi_patch(devinfo)) {
       /* TCS MULTI_PATCH mode has multiple patches per subgroup */
       nir_options->divergence_analysis_options &=
          ~nir_divergence_single_patch_per_tcs_subgroup;
@@ -207,8 +202,7 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 
       stage_options->unify_interfaces = i < MESA_SHADER_FRAGMENT;
 
-      stage_options->force_indirect_unrolling |=
-         brw_nir_no_indirect_mask(compiler, i);
+      stage_options->force_indirect_unrolling |= brw_nir_no_indirect_mask(i);
    }
 
    /* Build a list of storage format compatible in component bit size &
@@ -305,7 +299,7 @@ brw_prog_data_size(mesa_shader_stage stage)
       [MESA_SHADER_TESS_CTRL]    = sizeof(struct brw_tcs_prog_data),
       [MESA_SHADER_TESS_EVAL]    = sizeof(struct brw_tes_prog_data),
       [MESA_SHADER_GEOMETRY]     = sizeof(struct brw_gs_prog_data),
-      [MESA_SHADER_FRAGMENT]     = sizeof(struct brw_wm_prog_data),
+      [MESA_SHADER_FRAGMENT]     = sizeof(struct brw_fs_prog_data),
       [MESA_SHADER_COMPUTE]      = sizeof(struct brw_cs_prog_data),
       [MESA_SHADER_TASK]         = sizeof(struct brw_task_prog_data),
       [MESA_SHADER_MESH]         = sizeof(struct brw_mesh_prog_data),
@@ -329,7 +323,7 @@ brw_prog_key_size(mesa_shader_stage stage)
       [MESA_SHADER_TESS_CTRL]    = sizeof(struct brw_tcs_prog_key),
       [MESA_SHADER_TESS_EVAL]    = sizeof(struct brw_tes_prog_key),
       [MESA_SHADER_GEOMETRY]     = sizeof(struct brw_gs_prog_key),
-      [MESA_SHADER_FRAGMENT]     = sizeof(struct brw_wm_prog_key),
+      [MESA_SHADER_FRAGMENT]     = sizeof(struct brw_fs_prog_key),
       [MESA_SHADER_COMPUTE]      = sizeof(struct brw_cs_prog_key),
       [MESA_SHADER_TASK]         = sizeof(struct brw_task_prog_key),
       [MESA_SHADER_MESH]         = sizeof(struct brw_mesh_prog_key),

@@ -27,6 +27,7 @@ import argparse
 import os
 import re
 from collections import namedtuple
+from enum import Enum, auto
 import xml.etree.ElementTree as et
 
 from mako.template import Template
@@ -69,6 +70,8 @@ NO_ENQUEUE_COMMANDS = [
     'CmdSetPerformanceMarkerINTEL',
     'CmdSetPerformanceStreamMarkerINTEL',
     'CmdSetPerformanceOverrideINTEL',
+
+    'CmdBuildAccelerationStructuresIndirectKHR',
 ]
 
 TEMPLATE_H = Template(COPYRIGHT + """\
@@ -77,6 +80,7 @@ TEMPLATE_H = Template(COPYRIGHT + """\
 #pragma once
 
 #include "util/list.h"
+#include "util/ralloc.h"
 
 #define VK_PROTOTYPES
 #include <vulkan/vulkan_core.h>
@@ -93,7 +97,7 @@ extern "C" {
 struct vk_device_dispatch_table;
 
 struct vk_cmd_queue {
-   const VkAllocationCallbacks *alloc;
+   linear_ctx *ctx;
    struct list_head cmds;
 };
 
@@ -136,7 +140,6 @@ struct vk_cmd_queue_entry;
 struct vk_cmd_queue_entry_base {
    struct list_head cmd_link;
    enum vk_cmd_type type;
-   void *driver_data;
    void (*driver_free_cb)(struct vk_cmd_queue *queue,
                           struct vk_cmd_queue_entry *cmd);
 };
@@ -145,7 +148,6 @@ struct vk_cmd_queue_entry_base {
 struct vk_cmd_queue_entry {
    struct list_head cmd_link;
    enum vk_cmd_type type;
-   void *driver_data;
    void (*driver_free_cb)(struct vk_cmd_queue *queue,
                           struct vk_cmd_queue_entry *cmd);
    union {
@@ -185,9 +187,12 @@ struct vk_cmd_queue_entry {
 void vk_free_queue(struct vk_cmd_queue *queue);
 
 static inline void
-vk_cmd_queue_init(struct vk_cmd_queue *queue, VkAllocationCallbacks *alloc)
+vk_cmd_queue_init(struct vk_cmd_queue *queue)
 {
-   queue->alloc = alloc;
+   linear_opts opts = {
+      .min_buffer_size = 64 * 1024
+   };
+   queue->ctx = linear_context_with_opts(NULL, &opts);
    list_inithead(&queue->cmds);
 }
 
@@ -195,14 +200,13 @@ static inline void
 vk_cmd_queue_reset(struct vk_cmd_queue *queue)
 {
    vk_free_queue(queue);
-   list_inithead(&queue->cmds);
+   vk_cmd_queue_init(queue);
 }
 
 static inline void
 vk_cmd_queue_finish(struct vk_cmd_queue *queue)
 {
    vk_free_queue(queue);
-   list_inithead(&queue->cmds);
 }
 
 void vk_cmd_queue_execute(struct vk_cmd_queue *queue,
@@ -225,7 +229,6 @@ TEMPLATE_C = Template(COPYRIGHT + """
 #include <vulkan/vulkan_beta.h>
 #endif
 
-#include "vk_alloc.h"
 #include "vk_cmd_enqueue_entrypoints.h"
 #include "vk_command_buffer.h"
 #include "vk_dispatch_table.h"
@@ -262,20 +265,6 @@ size_t vk_cmd_queue_type_sizes[] = {
 % if c.guard is not None:
 #ifdef ${c.guard}
 % endif
-static void
-vk_free_${to_underscore(c.name)}(struct vk_cmd_queue *queue,
-${' ' * len('vk_free_' + to_underscore(c.name) + '(')}\\
-struct vk_cmd_queue_entry *cmd)
-{
-% for p in c.params[1:]:
-% if p.len:
-   vk_free(queue->alloc, (${remove_suffix(p.decl.replace("const", ""), p.name)})cmd->u.${to_struct_field_name(c.name)}.${to_field_name(p.name)});
-% elif '*' in p.decl:
-${get_struct_free(c, p, types)}
-% endif
-% endfor
-}
-
 % if c.name not in manual_commands and c.name not in no_enqueue_commands:
 VkResult vk_enqueue_${to_underscore(c.name)}(struct vk_cmd_queue *queue
 % for p in c.params[1:]:
@@ -283,11 +272,11 @@ VkResult vk_enqueue_${to_underscore(c.name)}(struct vk_cmd_queue *queue
 % endfor
 )
 {
-   struct vk_cmd_queue_entry *cmd = vk_zalloc(queue->alloc, vk_cmd_queue_type_sizes[${to_enum_name(c.name)}], 8,
-                                              VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   struct vk_cmd_queue_entry *cmd = linear_alloc_child(queue->ctx, vk_cmd_queue_type_sizes[${to_enum_name(c.name)}]);
    if (!cmd) return VK_ERROR_OUT_OF_HOST_MEMORY;
 
    cmd->type = ${to_enum_name(c.name)};
+   cmd->driver_free_cb = NULL;
 ${get_params_copy(c, types)}}
 % endif
 % if c.guard is not None:
@@ -301,29 +290,10 @@ vk_free_queue(struct vk_cmd_queue *queue)
 {
    struct vk_cmd_queue_entry *tmp, *cmd;
    LIST_FOR_EACH_ENTRY_SAFE(cmd, tmp, &queue->cmds, cmd_link) {
-      if (cmd->driver_free_cb) {
+      if (cmd->driver_free_cb)
          cmd->driver_free_cb(queue, cmd);
-         vk_free(queue->alloc, cmd);
-         continue;
-      }
-      switch(cmd->type) {
-% for c in commands:
-% if c.guard is not None:
-#ifdef ${c.guard}
-% endif
-      case ${to_enum_name(c.name)}:
-         vk_free_${to_underscore(c.name)}(queue, cmd);
-         break;
-% if c.guard is not None:
-#endif // ${c.guard}
-% endif
-% endfor
-      case VK_CMD_TYPE_COUNT:
-         break;
-      }
-      vk_free(queue->alloc, cmd->driver_data);
-      vk_free(queue->alloc, cmd);
    }
+   linear_free_context(queue->ctx);
 }
 
 void
@@ -454,247 +424,156 @@ def to_struct_name(name):
 def get_array_len(param):
     return param.decl[param.decl.find("[") + 1:param.decl.find("]")]
 
-def get_array_copy(builder, command, param, field_name):
-    if param.type == "void":
-        field_size = "1"
-    else:
-        field_size = "sizeof(*%s)" % field_name
+class ParamCategory(Enum):
+    ASSIGNABLE = auto()
+    FLAT_ARRAY = auto()
+    UNSIZED_RAW_POINTER = auto()
+    STRING = auto()
+    NULL = auto()
+    PNEXT = auto()
+    STRUCT = auto()
 
-    builder.add("%s = vk_zalloc(queue->alloc, %s * (%s), 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);\n   if (%s == NULL) goto err;" % (
-        field_name, field_size, param.len, field_name
-    ))
-    builder.add("memcpy((void*)%s, %s, %s * (%s));" % (field_name, param.name, field_size, param.len))
+def categorize_param(types, parent_type, param):
+    if param.name == 'pNext':
+        return ParamCategory.PNEXT if not parent_type or types[parent_type].extended_by else ParamCategory.NULL
 
-def get_array_member_copy(builder, struct, src_name, member):
-    field_name = "%s->%s" % (struct, member.name)
-    if member.len == "struct-ptr":
-        field_size = "sizeof(*%s)" % (field_name)
-    else:
-        field_size = "sizeof(*%s) * %s->%s" % (field_name, struct, member.len)
+    if '[' in param.decl:
+        return ParamCategory.FLAT_ARRAY
 
-    builder.add("if (%s->%s) {" % (src_name, member.name))
-    builder.level += 1
-    builder.add("%s = vk_zalloc(queue->alloc, %s, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);" % (field_name, field_size))
-    builder.add("if (%s == NULL) goto err;" % (field_name))
-    builder.add("memcpy((void*)%s, %s->%s, %s);" % (field_name, src_name, member.name, field_size))
-    builder.level -= 1
-    builder.add("}")
+    if param.type == "void" and not param.len:
+        return ParamCategory.UNSIZED_RAW_POINTER
 
-def get_pnext_member_copy(builder, struct, src_type, member, types):
-    if not types[src_type].extended_by:
+    if param.len == 'null-terminated':
+        return ParamCategory.STRING
+    
+    if "*" not in param.decl:
+        return ParamCategory.ASSIGNABLE
+    
+    return ParamCategory.STRUCT
+
+def get_pnext_copy(builder, types, parent_type, src, dst):
+    if not types[parent_type].extended_by:
         return
 
-    field_name = "%s->%s" % (struct, member.name)
-
-    builder.add("const VkBaseInStructure *pnext = %s;" % (field_name))
-    builder.add("if (pnext) {")
+    builder.add("const VkBaseInStructure *pnext = %s;" % (src))
+    builder.add("void **dst_pnext_link = (void **)&%s;" % (dst))
+    builder.add("while (pnext) {")
     builder.level += 1
     builder.add("switch ((int32_t)pnext->sType) {")
 
-    for type in types[src_type].extended_by:
+    for type in types[parent_type].extended_by:
         if type.guard is not None:
             builder.code += "#ifdef %s\n" % (type.guard)
 
         builder.add("case %s:" % (type.enum))
         builder.level += 1
-        get_struct_copy(builder, field_name, "pnext", type.name, types)
+        member = EntrypointParam(type=type.name, name="", decl="%s *" % (type.name), len=None)
+        get_param_copy(builder, types, "pnext", "(*dst_pnext_link)", member, nullable=False)
         builder.add("break;")
         builder.level -= 1
 
         if type.guard is not None:
             builder.code += "#endif\n"
-    
+
     builder.add("}")
+    builder.add("pnext = pnext->pNext;")
+    builder.add("dst_pnext_link = (void **)&((VkBaseOutStructure *)*dst_pnext_link)->pNext;")
     builder.level -= 1
     builder.add("}")
 
-def get_pnext_member_free(builder, struct_type, types, field_name):
-    if not types[struct_type].extended_by:
-        return
+def get_param_copy(builder, types, src_parent_access, dst_parent_access, param, nullable=True, dst_initialized=False, dst_snake_case=False):
+    src = src_parent_access + param.name
+    dst = dst_parent_access + (to_field_name(param.name) if dst_snake_case else param.name)
 
-    local_pnext = builder.get_variable_name("pnext")
-
-    builder.add("const VkBaseInStructure *%s = %s;" % (local_pnext, field_name))
-    builder.add("if (%s) {" % (local_pnext))
-    builder.level += 1
-    builder.add("switch ((int32_t)%s->sType) {" % (local_pnext))
-
-    for type in types[struct_type].extended_by:
-        if type.guard is not None:
-            builder.code += "#ifdef %s\n" % (type.guard)
-
-        builder.add("case %s: {" % (type.enum))
-        builder.level += 1
-        get_struct_free(builder, "((%s *)%s)" % (type.name, local_pnext), False, type.name, types)
-        builder.add("vk_free(queue->alloc, (void*)%s);" % (local_pnext))
-        builder.add("break;")
-        builder.level -= 1
-        builder.add("}")
-
-        if type.guard is not None:
-            builder.code += "#endif\n"
-
-    builder.add("}")
-    builder.level -= 1
-    builder.add("}")
-
-def get_struct_copy(builder, dst, src_name, src_type, types, parent_name=None, len=None):
-    tmp_dst_name = builder.get_variable_name("tmp_dst")
-    tmp_src_name = builder.get_variable_name("tmp_src")
-    
-    builder.add("if (%s) {" % (src_name))
-    builder.level += 1
-
-    if src_type == "void":
-        size = "1"
-    else:
-        size = "sizeof(%s)" % src_type
-
-    if len and len != "struct-ptr":
-        size = "%s * %s->%s" % (size, parent_name, len)
-
-    builder.add("%s = vk_zalloc(queue->alloc, %s, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);" % (dst, size))
-    builder.add("if (%s == NULL) goto err;" % (dst))
-    builder.add("%s *%s = (void *)%s;" % (src_type, tmp_dst_name, dst))
-    builder.add("%s *%s = (void *)%s;" % (src_type, tmp_src_name, src_name))
-    builder.add("memcpy(%s, %s, %s);" % (tmp_dst_name, tmp_src_name, size))
-
-    struct_array_copy = len and len != "struct-ptr" and src_type != "void"
-    if struct_array_copy:
-        array_index = builder.get_variable_name("i")
-        builder.add("for (uint32_t %s = 0; %s < %s->%s; %s++) {" % (array_index, array_index, parent_name, len, array_index))
-        builder.level += 1
-        prev_tmp_dst_name = tmp_dst_name
-        prev_tmp_src_name = tmp_src_name
-        tmp_dst_name = builder.get_variable_name("tmp_dst")
-        tmp_src_name = builder.get_variable_name("tmp_src")
-        builder.add("%s *%s = %s + %s; (void)%s;" % (src_type, tmp_dst_name, prev_tmp_dst_name, array_index, tmp_dst_name))
-        builder.add("%s *%s = %s + %s; (void)%s;" % (src_type, tmp_src_name, prev_tmp_src_name, array_index, tmp_src_name))
-
-    if src_type in types:
-        for member in types[src_type].members:
-            if member.len and member.len != 'null-terminated':
-                get_struct_copy(builder, "%s->%s" % (tmp_dst_name, member.name), "%s->%s" % (
-                    tmp_src_name, member.name
-                ), member.type, types, tmp_src_name, member.len)
-            elif member.len and member.len == 'null-terminated':
-                builder.add("%s->%s = vk_strdup(queue->alloc, %s->%s, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);" % (tmp_dst_name, member.name, tmp_src_name, member.name))
-            elif member.name == 'pNext':
-                get_pnext_member_copy(builder, tmp_dst_name, src_type, member, types)
-
-    if struct_array_copy:
-        builder.level -= 1
-        builder.add("}")
-
-    builder.level -= 1
-    builder.add("} else {")
-    builder.level += 1
-    builder.add("%s = NULL;" % (dst))
-    builder.level -= 1
-    builder.add("}")
-
-def get_command_struct_free(command, param, types):
-    field_name = "cmd->u.%s.%s" % (to_struct_field_name(command.name), to_field_name(param.name))
-    builder = CodeBuilder(1)
-    get_struct_free(builder, field_name, True, param.type, types)
-    builder.add("vk_free(queue->alloc, (void*)%s);" % (field_name))
-    return builder.code
-
-def get_struct_free(builder, field_name, nullable, struct_type, types, parent_name=None, len=None):
-    if struct_type not in types:
-        return
-
-    members = types[struct_type].members
-
-    if members and nullable:
-        builder.add("if (%s) {" % (field_name))
-        builder.level += 1
-
-    struct_array_copy = len and len != "struct-ptr" and struct_type != "void"
-    if struct_array_copy:
-        array_index = builder.get_variable_name("i")
-        builder.add("for (uint32_t %s = 0; %s < %s->%s; %s++) {" % (array_index, array_index, parent_name, len, array_index))
-        builder.level += 1
-        element_name = builder.get_variable_name("element")
-        builder.add("%s *%s = %s + %s; (void)%s;" % (struct_type, element_name, field_name, array_index, element_name))
-        field_name = element_name
-
-    for member in members:
-        member_name = "%s->%s" % (field_name, member.name)
-        if member.len and member.len != 'null-terminated':
-            local_member_name = builder.get_variable_name(member.name)
-            builder.add("%s *%s = (void *)(%s);" % (member.type, local_member_name, member_name))
-
-            guard = member.len != "struct-ptr"
-            if guard:
-                builder.add("if (%s->%s) {" % (field_name, member.len))
+    match categorize_param(types, None, param):
+        case ParamCategory.ASSIGNABLE:
+            builder.add("%s = %s;" % (dst, src))
+        case ParamCategory.FLAT_ARRAY:
+            builder.add("memcpy(%s, %s, sizeof(*%s) * %s);" % (dst, src, src, get_array_len(param)))
+        case ParamCategory.UNSIZED_RAW_POINTER:
+            builder.add("%s = (%s)%s;" % (dst, remove_suffix(param.decl.replace("const", ""), param.name), src))
+        case ParamCategory.STRING:
+            builder.add("%s = linear_strdup(queue->ctx, %s);" % (dst, src))
+        case ParamCategory.STRUCT:
+            if nullable:
+                builder.add("if (%s) {" % (src))
                 builder.level += 1
 
-            get_struct_free(builder, local_member_name, not guard, member.type, types, field_name, member.len)
+            if param.type == "void":
+                size = 1
+            else:
+                size = "sizeof(%s)" % param.type
 
-            if guard:
+            is_ndarray = param.len and "," in param.len
+            if param.len and param.len != "struct-ptr" and not is_ndarray:
+                size = "%s * %s%s" % (size, src_parent_access, param.len)
+
+            builder.add("%s = linear_alloc_child(queue->ctx, %s);" % (dst, size))
+            builder.add("if (%s == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;" % (dst))
+            builder.add("memcpy((void *)%s, %s, %s);" % (dst, src, size))
+
+            if param.type in types:
+                needs_member_copy = False
+                for member in types[param.type].members:
+                    category = categorize_param(types, param.type, member)
+                    if category == ParamCategory.PNEXT or category == ParamCategory.STRUCT or category == ParamCategory.STRING:
+                        needs_member_copy = True
+
+                if needs_member_copy:
+                    tmp_dst_name = builder.get_variable_name("tmp_dst")
+                    tmp_src_name = builder.get_variable_name("tmp_src")
+
+                    builder.add("%s *%s = (void *)%s;" % (param.type, tmp_dst_name, dst))
+                    builder.add("%s *%s = (void *)%s;" % (param.type, tmp_src_name, src))
+
+                    struct_array_copy = param.len and param.len != "struct-ptr" and param.type != "void"
+                    if struct_array_copy:
+                        array_index = builder.get_variable_name("i")
+                        builder.add("for (uint32_t %s = 0; %s < %s%s; %s++) {" % (array_index, array_index, src_parent_access, param.len, array_index))
+                        builder.level += 1
+                        prev_tmp_dst_name = tmp_dst_name
+                        prev_tmp_src_name = tmp_src_name
+                        tmp_dst_name = builder.get_variable_name("tmp_dst")
+                        tmp_src_name = builder.get_variable_name("tmp_src")
+                        builder.add("%s *%s = %s + %s;" % (param.type, tmp_dst_name, prev_tmp_dst_name, array_index))
+                        builder.add("%s *%s = %s + %s;" % (param.type, tmp_src_name, prev_tmp_src_name, array_index))
+
+                    for member in types[param.type].members:
+                        category = categorize_param(types, param.type, member)
+                        if category == ParamCategory.STRUCT or category == ParamCategory.STRING:
+                            get_param_copy(builder, types, "%s->" % (tmp_src_name), "%s->" % (tmp_dst_name), member, dst_initialized=True)
+                        elif category == ParamCategory.PNEXT:
+                            get_pnext_copy(builder, types, param.type, "%s->pNext" % (tmp_src_name), "%s->pNext" % (tmp_dst_name))
+
+                    if struct_array_copy:
+                        builder.level -= 1
+                        builder.add("}")
+
+            if nullable:
                 builder.level -= 1
-                builder.add("}")
-
-            builder.add("vk_free(queue->alloc, %s);" % (local_member_name))
-        elif member.len and member.len == 'null-terminated':
-            builder.add("vk_free(queue->alloc, (void*)%s);" % (member_name))
-
-        elif member.name == 'pNext':
-            get_pnext_member_free(builder, struct_type, types, member_name)
-
-    if struct_array_copy:
-        builder.level -= 1
-        builder.add("}")
-
-    if members and nullable:
-        builder.level -= 1
-        builder.add("}")
-
-def get_param_copy(builder, command, param, types):
-    dst = "cmd->u.%s.%s" % (to_struct_field_name(command.name), to_field_name(param.name))
-
-    if param.len:
-        builder.add("if (%s) {" % (param.name))
-        builder.level += 1
-        get_array_copy(builder, command, param, dst)
-        builder.level -= 1
-        builder.add("}")
-        return True
-
-    if '[' in param.decl:
-        builder.add("memcpy(%s, %s, sizeof(*%s) * %s);" % (dst, param.name, param.name, get_array_len(param)))
-        return False
-
-    if param.type == "void":
-        builder.add("%s = (%s)%s;" % (dst, remove_suffix(param.decl.replace("const", ""), param.name), param.name))
-        return False
-
-    if '*' in param.decl:
-        get_struct_copy(builder, dst, param.name, param.type, types)
-        return True
-
-    builder.add("cmd->u.%s.%s = %s;" % (to_struct_field_name(command.name), to_field_name(param.name), param.name))
-    return False
+                if dst_initialized:
+                    builder.add("}")
+                else:
+                    builder.add("} else {")
+                    builder.level += 1
+                    builder.add("%s = NULL;" % (dst))
+                    builder.level -= 1
+                    builder.add("}")
+        case ParamCategory.NULL:
+            assert False
+        case ParamCategory.PNEXT:
+            assert False
 
 def get_params_copy(command, types):
     builder = CodeBuilder(1)
 
-    any_needs_error_handling = False
-
+    struct_access = "cmd->u.%s." % (to_struct_field_name(command.name))
     for param in command.params[1:]:
-        needs_error_handling = get_param_copy(builder, command, param, types)
-        any_needs_error_handling = any_needs_error_handling or needs_error_handling
+        get_param_copy(builder, types, "", struct_access, param, dst_snake_case=True)
 
     builder.code += "\n"
     builder.add("list_addtail(&cmd->cmd_link, &queue->cmds);")
     builder.add("return VK_SUCCESS;")
-
-    if any_needs_error_handling:
-        builder.code += "\nerr:\n"
-        builder.add("if (cmd)")
-        builder.add("   vk_free_%s(queue, cmd);" % (to_underscore(command.name)))
-        builder.add("return VK_ERROR_OUT_OF_HOST_MEMORY;")
 
     return builder.code
 
@@ -836,7 +715,6 @@ def main():
         'to_enum_name': to_enum_name,
         'to_struct_name': to_struct_name,
         'get_params_copy': get_params_copy,
-        'get_struct_free': get_command_struct_free,
         'types': types,
         'manual_commands': MANUAL_COMMANDS,
         'no_enqueue_commands': NO_ENQUEUE_COMMANDS,

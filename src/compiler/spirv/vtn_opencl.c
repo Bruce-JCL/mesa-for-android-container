@@ -738,6 +738,13 @@ handle_special(struct vtn_builder *b, uint32_t opcode,
    if (!ret)
       vtn_fail("No NIR equivalent");
 
+   /* libclc's cbrt() implementation fails to flush subnormal numbers to zero
+    * even when flush-to-zero is required. Manually flush its output.
+    */
+   if (opcode == OpenCLstd_Cbrt) {
+      ret = nir_fcanonicalize(nb, ret);
+   }
+
    return ret;
 }
 
@@ -776,7 +783,7 @@ handle_core(struct vtn_builder *b, uint32_t opcode,
        * pointers.  Fortunately, the whole function is just a barrier.
        */
       nir_barrier(&b->nb, .execution_scope = SCOPE_WORKGROUP,
-                          .memory_scope = SCOPE_WORKGROUP,
+                          .memory_scope = SCOPE_DEVICE,
                           .memory_semantics = NIR_MEMORY_ACQUIRE |
                                               NIR_MEMORY_RELEASE,
                           .memory_modes = nir_var_mem_shared |

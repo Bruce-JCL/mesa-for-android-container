@@ -43,6 +43,9 @@
 
 #define genX_call(devinfo, func, ...)             \
    switch ((devinfo)->verx10) {                   \
+   case 350:                                      \
+      gfx35_##func(__VA_ARGS__);                  \
+      break;                                      \
    case 300:                                      \
       gfx30_##func(__VA_ARGS__);                  \
       break;                                      \
@@ -480,6 +483,12 @@ iris_init_screen_caps(struct iris_screen *screen)
     * shift it right by one, so the highest valid address bit gets unset.
     */
    caps->max_vma = intel_48b_address(UINT64_MAX) >> 1;
+
+   /* We could implement two-sided color via SBE attribute swizzling but
+    * opt to use common NIR lowering instead of maintaining the complexity
+    * for a minor improvement for a long deprecated feature.
+    */
+   caps->two_sided_color = false;
 
    if (devinfo->ver >= 9) {
       caps->shader_subgroup_size = 32;

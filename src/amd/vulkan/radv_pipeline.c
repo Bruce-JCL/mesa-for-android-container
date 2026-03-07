@@ -233,6 +233,7 @@ radv_shader_layout_init(const struct radv_pipeline_layout *pipeline_layout, mesa
 
    layout->use_dynamic_descriptors = pipeline_layout->dynamic_offset_count &&
                                      (pipeline_layout->dynamic_shader_stages & mesa_to_vk_shader_stage(stage));
+   layout->independent_sets = pipeline_layout->independent_sets;
 }
 
 static nir_component_mask_t
@@ -248,7 +249,6 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
                      struct radv_shader_stage *stage)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    enum amd_gfx_level gfx_level = pdev->info.gfx_level;
    bool progress;
 
@@ -284,6 +284,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
       .callback = ac_nir_mem_vectorize_callback,
       .cb_data = &(struct ac_nir_config){gfx_level, !use_llvm},
       .robust_modes = 0,
+      .bounds_checked_modes = nir_var_mem_ssbo | nir_var_mem_ubo | nir_var_mem_shared,
       /* Only vectorize shared2 during late optimizations. */
       .has_shared2_amd = false,
    };
@@ -300,7 +301,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
       NIR_PASS(progress, stage->nir, nir_opt_load_store_vectorize, &vectorize_opts);
       if (progress) {
          NIR_PASS(_, stage->nir, nir_opt_copy_prop);
-         NIR_PASS(_, stage->nir, nir_opt_shrink_stores, !instance->drirc.debug.disable_shrink_image_store);
+         NIR_PASS(_, stage->nir, nir_opt_shrink_stores, !pdev->cache_key.disable_shrink_image_store);
 
          constant_fold_for_push_const = true;
       }
@@ -308,7 +309,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
 
    enum nir_lower_non_uniform_access_type lower_non_uniform_access_types =
       nir_lower_non_uniform_ubo_access | nir_lower_non_uniform_ssbo_access | nir_lower_non_uniform_texture_access |
-      nir_lower_non_uniform_image_access;
+      nir_lower_non_uniform_image_access | nir_lower_non_uniform_texture_query | nir_lower_non_uniform_image_query;
 
    /* In practice, most shaders do not have non-uniform-qualified
     * accesses (see
@@ -339,7 +340,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
             &(ac_nir_lower_image_tex_options){
                .gfx_level = gfx_level,
                .lower_array_layer_round_even =
-                  !pdev->info.conformant_trunc_coord || instance->drirc.debug.disable_trunc_coord,
+                  !pdev->info.compiler_info.conformant_trunc_coord || pdev->cache_key.disable_trunc_coord,
                .fix_derivs_in_divergent_cf =
                   stage->stage == MESA_SHADER_FRAGMENT && !radv_use_llvm_for_stage(pdev, stage->stage),
                .max_wqm_vgprs = 64, // TODO: improve spiller and RA support for linear VGPRs
@@ -424,7 +425,6 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
    } else if (stage->stage == MESA_SHADER_FRAGMENT) {
       ac_nir_lower_ps_late_options late_options = {
          .gfx_level = gfx_level,
-         .family = pdev->info.family,
          .use_aco = !radv_use_llvm_for_stage(pdev, stage->stage),
          .bc_optimize_for_persp = G_0286CC_PERSP_CENTER_ENA(stage->info.ps.spi_ps_input_ena) &&
                                   G_0286CC_PERSP_CENTROID_ENA(stage->info.ps.spi_ps_input_ena),
@@ -438,7 +438,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
       };
 
       if (!late_options.no_color_export) {
-         late_options.dual_src_blend_swizzle = gfx_state->ps.epilog.mrt0_is_dual_src && gfx_level >= GFX11;
+         late_options.dual_src_blend = gfx_state->ps.epilog.mrt0_is_dual_src;
          late_options.color_is_int8 = gfx_state->ps.epilog.color_is_int8;
          late_options.color_is_int10 = gfx_state->ps.epilog.color_is_int10;
          late_options.enable_mrt_output_nan_fixup =
@@ -488,10 +488,17 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
                .allow_fp16 = gfx_level >= GFX9,
             });
 
-   NIR_PASS(_, stage->nir, ac_nir_lower_intrinsics_to_args, gfx_level,
-            pdev->info.has_ls_vgpr_init_bug && gfx_state && !gfx_state->vs.has_prolog,
-            radv_select_hw_stage(&stage->info, gfx_level), stage->info.wave_size, stage->info.workgroup_size,
-            &stage->args.ac);
+   NIR_PASS(_, stage->nir, ac_nir_lower_intrinsics_to_args, &stage->args.ac,
+            &(ac_nir_lower_intrinsics_to_args_options){
+               .gfx_level = gfx_level,
+               .has_ls_vgpr_init_bug =
+                  pdev->info.compiler_info.has_ls_vgpr_init_bug && gfx_state && !gfx_state->vs.has_prolog,
+               .hw_stage = radv_select_hw_stage(&stage->info, gfx_level),
+               .wave_size = stage->info.wave_size,
+               .workgroup_size = stage->info.workgroup_size,
+               .use_llvm = radv_use_llvm_for_stage(pdev, stage->stage),
+               .load_grid_size_from_user_sgpr = device->load_grid_size_from_user_sgpr,
+            });
    NIR_PASS(_, stage->nir, radv_nir_lower_abi, gfx_level, stage, gfx_state, pdev->info.address32_hi);
 
    if (!stage->key.optimisations_disabled) {
@@ -511,6 +518,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
          .callback = ac_nir_mem_vectorize_callback,
          .cb_data = &(struct ac_nir_config){gfx_level, !use_llvm},
          .robust_modes = 0,
+         .bounds_checked_modes = nir_var_mem_ssbo | nir_var_mem_ubo | nir_var_mem_shared,
          .has_shared2_amd = true,
       };
       NIR_PASS(_, stage->nir, nir_opt_load_store_vectorize, &late_vectorize_opts);
@@ -522,6 +530,12 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
 
    if (pdev->cache_key.mitigate_smem_oob)
       NIR_PASS(_, stage->nir, ac_nir_fixup_mem_access_gfx6, &stage->args.ac, 4096, true, true);
+
+   bool opt_intrinsics = false;
+   if (gfx_level >= GFX11)
+      NIR_PASS(opt_intrinsics, stage->nir, ac_nir_opt_flip_if_for_mem_loads);
+   if (opt_intrinsics) /* optimize inot(inverse_ballot) */
+      NIR_PASS(_, stage->nir, nir_opt_intrinsics);
 
    radv_optimize_nir_algebraic(
       stage->nir, io_to_mem || lowered_ngg || stage->stage == MESA_SHADER_COMPUTE || stage->stage == MESA_SHADER_TASK,
@@ -609,11 +623,10 @@ bool
 radv_shader_should_clear_lds(const struct radv_device *device, const nir_shader *shader)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
    return (shader->info.stage == MESA_SHADER_COMPUTE || shader->info.stage == MESA_SHADER_MESH ||
            shader->info.stage == MESA_SHADER_TASK) &&
-          shader->info.shared_size > 0 && instance->drirc.misc.clear_lds;
+          shader->info.shared_size > 0 && pdev->cache_key.clear_lds;
 }
 
 static uint32_t
@@ -625,6 +638,8 @@ radv_get_executable_count(struct radv_pipeline *pipeline)
       struct radv_ray_tracing_pipeline *rt_pipeline = radv_pipeline_to_ray_tracing(pipeline);
       for (uint32_t i = 0; i < rt_pipeline->stage_count; i++)
          ret += rt_pipeline->stages[i].shader ? 1 : 0;
+      for (uint32_t i = 0; i < rt_pipeline->group_count; i++)
+         ret += rt_pipeline->groups[i].ahit_isec_shader ? 1 : 0;
    }
 
    for (int i = 0; i < MESA_VULKAN_SHADER_STAGES; ++i) {
@@ -653,6 +668,19 @@ radv_get_shader_from_executable_index(struct radv_pipeline *pipeline, int index,
          if (!index) {
             *stage = rt_stage->stage;
             return rt_stage->shader;
+         }
+
+         index--;
+      }
+      for (uint32_t i = 0; i < rt_pipeline->group_count; i++) {
+         struct radv_ray_tracing_group *rt_group = &rt_pipeline->groups[i];
+         if (!rt_group->ahit_isec_shader)
+            continue;
+
+         if (!index) {
+            *stage =
+               rt_group->intersection_shader != VK_SHADER_UNUSED_KHR ? MESA_SHADER_INTERSECTION : MESA_SHADER_ANY_HIT;
+            return rt_group->ahit_isec_shader;
          }
 
          index--;

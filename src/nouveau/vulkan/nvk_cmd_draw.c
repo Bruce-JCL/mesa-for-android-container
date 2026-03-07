@@ -14,12 +14,14 @@
 #include "nvk_shader.h"
 
 #include "util/bitpack_helpers.h"
+#include "util/compiler.h"
 #include "vk_format.h"
 #include "vk_render_pass.h"
 #include "vk_standard_sample_locations.h"
 
 #include "nv_push_cl902d.h"
 #include "nv_push_cl9097.h"
+#include "nv_push_cl9297.h"
 #include "nv_push_cl90b5.h"
 #include "nv_push_cl90c0.h"
 #include "nv_push_cla097.h"
@@ -474,8 +476,15 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
    P_NV9097_SET_WINDOW_OFFSET_X(p, 0);
    P_NV9097_SET_WINDOW_OFFSET_Y(p, 0);
 
-   P_IMMD(p, NV9097, SET_ACTIVE_ZCULL_REGION, 0x3f);
-   P_IMMD(p, NV9097, SET_MME_SHADOW_SCRATCH(NVK_MME_SCRATCH_WINDOW_CLIP_ENABLED), 0);
+   P_IMMD(p, NV9097, SET_ZCULL_BOUNDS, {
+      .z_min_unbounded_enable = false,
+      .z_max_unbounded_enable = false,
+   });
+   P_IMMD(p, NV9097, SET_ZCULL, {
+      .z_enable = true,
+      .stencil_enable = false,
+   });
+
    P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_UPDATE_WINDOW_CLIP));
    P_INLINE_DATA(p, 1);
    P_IMMD(p, NV9097, SET_CLIP_ID_TEST, ENABLE_FALSE);
@@ -1011,13 +1020,39 @@ get_depth_stencil_plane_params(struct nvk_image_view *iview,
    *image_out = nil_image;
 }
 
+static struct nvk_zcull_plane*
+nvk_get_zcull_plane(struct nvk_rendering_state *render) {
+   if (render->depth_att.iview) {
+      struct nvk_image *img = (struct nvk_image*) render->depth_att.iview->vk.image;
+      if (img->zcull.nil.size_B > 0) {
+         return &img->zcull;
+      }
+   }
+   return NULL;
+}
+
+static uint32_t
+nvk_vk_format_to_zcull_format(VkFormat format) {
+   switch (format) {
+      case VK_FORMAT_D32_SFLOAT:
+      case VK_FORMAT_D32_SFLOAT_S8_UINT:
+         return NV9097_SET_ZCULL_DIR_FORMAT_ZFORMAT_ZF32_1;
+      case VK_FORMAT_D16_UNORM:
+      case VK_FORMAT_D24_UNORM_S8_UINT:
+      case VK_FORMAT_X8_D24_UNORM_PACK32:
+         return NV9097_SET_ZCULL_DIR_FORMAT_ZFORMAT_FP;
+      default:
+         assert(!"Unknown depth format");
+         return NV9097_SET_ZCULL_DIR_FORMAT_ZFORMAT_ZF32_1;
+   }
+}
 
 VKAPI_ATTR void VKAPI_CALL
 nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                       const VkRenderingInfo *pRenderingInfo)
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
-   struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+   const struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
    const struct nvk_physical_device *pdev = nvk_device_physical(dev);
    struct nvk_rendering_state *render = &cmd->state.gfx.render;
 
@@ -1066,7 +1101,10 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
    nvk_cmd_buffer_dirty_render_pass(cmd);
 
-   struct nv_push *p = nvk_cmd_buffer_push(cmd, NVK_MAX_RTS * 12 + 44);
+   const size_t zcull_count = 51;
+   struct nv_push *p = nvk_cmd_buffer_push(
+      cmd, NVK_MAX_RTS * 12 + 44 + zcull_count
+   );
 
    P_IMMD(p, NV9097, SET_MME_SHADOW_SCRATCH(NVK_MME_SCRATCH_VIEW_MASK),
           render->view_mask);
@@ -1327,6 +1365,132 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
       P_IMMD(p, NV9097, SET_ZT_SELECT, 0 /* target_count */);
    }
 
+   /* TODO: zcull for depth-stencil */
+   struct nvk_zcull_plane *zcull_plane = nvk_get_zcull_plane(render);
+   bool use_zcull = pdev->info.has_zcull_info &&
+      pRenderingInfo->pDepthAttachment != NULL &&
+      pRenderingInfo->pDepthAttachment->imageView != VK_NULL_HANDLE &&
+      pRenderingInfo->pDepthAttachment->loadOp != VK_ATTACHMENT_LOAD_OP_NONE &&
+      (zcull_plane ||
+       pRenderingInfo->pDepthAttachment->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR);
+
+   if (use_zcull) {
+      uint32_t start_count = nv_push_dw_count(p);
+      struct nil_zcull zcull_info;
+      uint64_t addr_begin, addr_end;
+
+      if (zcull_plane) {
+         zcull_info = zcull_plane->nil;
+         addr_begin = zcull_plane->addr;
+         addr_end = zcull_plane->addr + zcull_plane->nil.size_B;
+      } else {
+         zcull_info = nil_zcull_new(
+            &pdev->info.zcull_info,
+            render->area.offset.x,
+            render->area.offset.y,
+            render->area.extent.width,
+            render->area.extent.height
+         );
+         addr_begin = 0;
+         addr_end = 0;
+      }
+
+      P_IMMD(p, NV9097, SET_ACTIVE_ZCULL_REGION, 0);
+
+      P_MTHD(p, NV9097, SET_ZCULL_REGION_LOCATION);
+      P_NV9097_SET_ZCULL_REGION_LOCATION(p, {
+         .start_aliquot = 0,
+         .aliquot_count = zcull_info.aliquot_count,
+      });
+      P_NV9097_SET_ZCULL_REGION_ALIQUOTS(p, zcull_info.aliquot_count);
+
+      P_MTHD(p, NV9097, SET_ZCULL_STORAGE_A);
+      P_NV9097_SET_ZCULL_STORAGE_A(p, addr_begin >> 32);
+      P_NV9097_SET_ZCULL_STORAGE_B(p, addr_begin & UINT32_MAX);
+      P_NV9097_SET_ZCULL_STORAGE_C(p, addr_end >> 32);
+      P_NV9097_SET_ZCULL_STORAGE_D(p, addr_end & UINT32_MAX);
+
+      P_IMMD(p, NV9097, SET_ZCULL_REGION_FORMAT, TYPE_Z_4X4);
+
+      P_MTHD(p, NV9097, SET_ZCULL_REGION_SIZE_A);
+      P_NV9097_SET_ZCULL_REGION_SIZE_A(p, zcull_info.width);
+      P_NV9097_SET_ZCULL_REGION_SIZE_B(p, zcull_info.height);
+      P_NV9097_SET_ZCULL_REGION_SIZE_C(p, 1);
+      P_NV9097_SET_ZCULL_REGION_PIXEL_OFFSET_C(p, 0);
+
+      P_MTHD(p, NV9097, SET_ZCULL_REGION_PIXEL_OFFSET_A);
+      P_NV9097_SET_ZCULL_REGION_PIXEL_OFFSET_A(p, zcull_info.x);
+      P_NV9097_SET_ZCULL_REGION_PIXEL_OFFSET_B(p, zcull_info.y);
+
+      P_IMMD(p, NV9297, SET_ZCULL_SUBREGION, {
+         .enable = true,
+         .normalized_aliquots = zcull_info.normalized_aliquots,
+      });
+
+      P_IMMD(p, NV9097, SET_ZCULL_CRITERION, {
+         .sfunc = SFUNC_NEVER,  /* stencil func */
+         .no_invalidate = false,
+         .force_match = false,
+         .sref = 0,
+         .smask = 0,
+      });
+
+      VkFormat fmt = render->depth_att.iview->vk.format;
+      P_IMMD(p, NV9097, SET_ZCULL_DIR_FORMAT, {
+         /* I've tried a variety of depthCompareOp values and depth clear
+          * values, but the blob seems to always use ZDIR_LESS
+          */
+         .zdir = ZDIR_LESS,
+         .zformat = nvk_vk_format_to_zcull_format(fmt),
+      });
+
+      P_0INC(p, NV9297, SET_ZCULL_SUBREGION_ALLOCATION);
+      for (int i = 0; i < zcull_info.subregion_count; i++) {
+         nv_push_val(p, NV9297_SET_ZCULL_SUBREGION_ALLOCATION,
+                     zcull_info.subregions[i]);
+      }
+
+      P_IMMD(p, NV9297, ASSIGN_ZCULL_SUBREGIONS,
+             zcull_info.subregion_algorithm);
+
+      P_IMMD(p, NV9297, SET_ZCULL_SUBREGION_REPORT_TYPE, {
+         .enable = true,
+         .type = TYPE_DEPTH_TEST,
+      });
+
+      float depth = 0.0f;
+      switch (pRenderingInfo->pDepthAttachment->loadOp) {
+         case VK_ATTACHMENT_LOAD_OP_CLEAR:
+            depth =
+               pRenderingInfo->pDepthAttachment->clearValue.depthStencil.depth;
+            FALLTHROUGH;
+         case VK_ATTACHMENT_LOAD_OP_DONT_CARE:
+            P_IMMD(p, NV9097, SET_Z_CLEAR_VALUE, fui(depth));
+
+            P_IMMD(p, NV9097, CLEAR_ZCULL_REGION, {
+               .z_enable = true,
+               .stencil_enable = false,
+               .use_clear_rect = false,
+               .use_rt_array_index = false,
+               .make_conservative = true,
+            });
+            break;
+
+         case VK_ATTACHMENT_LOAD_OP_LOAD:
+            assert(zcull_plane);
+            P_IMMD(p, NV9097, LOAD_ZCULL, 0);
+            break;
+
+         default:
+            assert(!"Unhandled loadOp");
+            break;
+      }
+      uint32_t end_count = nv_push_dw_count(p);
+      assert(end_count - start_count <= zcull_count);
+   } else {
+      P_IMMD(p, NV9097, SET_ACTIVE_ZCULL_REGION, 0x3f);
+   }
+
    if (nvk_cmd_buffer_3d_cls(cmd) < TURING_A) {
       assert(render->fsr_att.iview == NULL);
    } else if (render->fsr_att.iview != NULL) {
@@ -1494,6 +1658,13 @@ nvk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    struct nvk_rendering_state *render = &cmd->state.gfx.render;
+
+   struct nvk_zcull_plane* zcull_plane = nvk_get_zcull_plane(render);
+   if (zcull_plane &&
+       render->depth_att.store_op == VK_ATTACHMENT_STORE_OP_STORE) {
+      struct nv_push *p = nvk_cmd_buffer_push(cmd, 2);
+      P_IMMD(p, NV9097, STORE_ZCULL, 0);
+   }
 
    if (!(render->flags & VK_RENDERING_SUSPENDING_BIT)) {
       for (uint32_t i = 0; i < render->color_att_count; i++) {
@@ -2168,17 +2339,9 @@ nvk_flush_ia_state(struct nvk_cmd_buffer *cmd)
       &cmd->vk.dynamic_graphics_state;
 
    if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_IA_PRIMITIVE_TOPOLOGY)) {
-      uint32_t begin;
-      V_NV9097_BEGIN(begin, {
-         .op = vk_to_nv9097_primitive_topology(dyn->ia.primitive_topology),
-         .primitive_id = NV9097_BEGIN_PRIMITIVE_ID_FIRST,
-         .instance_id = NV9097_BEGIN_INSTANCE_ID_FIRST,
-         .split_mode = SPLIT_MODE_NORMAL_BEGIN_NORMAL_END,
-      });
-
       struct nv_push *p = nvk_cmd_buffer_push(cmd, 2);
-      P_MTHD(p, NV9097, SET_MME_SHADOW_SCRATCH(NVK_MME_SCRATCH_DRAW_BEGIN));
-      P_INLINE_DATA(p, begin);
+      P_MTHD(p, NV9097, SET_MME_SHADOW_SCRATCH(NVK_MME_SCRATCH_DRAW_TOPOLOGY));
+      P_INLINE_DATA(p, vk_to_nv9097_primitive_topology(dyn->ia.primitive_topology));
    }
 
    if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_IA_PRIMITIVE_RESTART_ENABLE)) {
@@ -3958,6 +4121,9 @@ nvk_cmd_flush_gfx_state(struct nvk_cmd_buffer *cmd)
    nvk_cmd_flush_gfx_dynamic_state(cmd);
    nvk_cmd_flush_gfx_shaders(cmd);
    nvk_cmd_flush_gfx_cbufs(cmd);
+
+   if (NAK_CAN_PRINTF)
+      nvk_cmd_buffer_flush_printf_buffer(cmd, &cmd->state.gfx.descriptors);
 }
 
 void
@@ -4305,32 +4471,49 @@ nvk_mme_build_draw_loop(struct mme_builder *b,
                         struct mme_value first_vertex,
                         struct mme_value vertex_count)
 {
-   struct mme_value begin = nvk_mme_load_scratch(b, DRAW_BEGIN);
 
-   if (b->devinfo->cls_eng3d < PASCAL_B) {
-      mme_start_loop(b, instance_count);
-   } else {
-      mme_mthd(b, NVC197_SET_INSTANCE_COUNT);
+   if (b->devinfo->cls_eng3d >= TURING_A) {
+      struct mme_value draw_control_a = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+      mme_set_field_enum(b, draw_control_a, NVC597_SET_DRAW_CONTROL_A_INSTANCE_ITERATE_ENABLE, TRUE);
+
+      mme_mthd(b, NVC597_SET_DRAW_CONTROL_A);
+      mme_emit(b, draw_control_a);
       mme_emit(b, instance_count);
-      mme_set_field_enum(b, begin, NVC197_BEGIN_INSTANCE_ITERATE_ENABLE, TRUE);
+
+      mme_mthd(b, NVC597_DRAW_VERTEX_ARRAY_BEGIN_END_A);
+      mme_emit(b, first_vertex);
+      mme_emit(b, vertex_count);
+
+      mme_free_reg(b, draw_control_a);
+   } else {
+      struct mme_value begin = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+
+      if (b->devinfo->cls_eng3d < PASCAL_B) {
+         mme_start_loop(b, instance_count);
+      } else {
+         mme_mthd(b, NVC197_SET_INSTANCE_COUNT);
+         mme_emit(b, instance_count);
+         mme_set_field_enum(b, begin, NVC197_BEGIN_INSTANCE_ITERATE_ENABLE, TRUE);
+      }
+
+      mme_mthd(b, NV9097_BEGIN);
+      mme_emit(b, begin);
+
+      mme_mthd(b, NV9097_SET_VERTEX_ARRAY_START);
+      mme_emit(b, first_vertex);
+      mme_emit(b, vertex_count);
+
+      mme_mthd(b, NV9097_END);
+      mme_emit(b, mme_zero());
+
+      if (b->devinfo->cls_eng3d < PASCAL_B) {
+         mme_set_field_enum(b, begin, NV9097_BEGIN_INSTANCE_ID, SUBSEQUENT);
+         mme_end_loop(b);
+      }
+
+      mme_free_reg(b, begin);
    }
 
-   mme_mthd(b, NV9097_BEGIN);
-   mme_emit(b, begin);
-
-   mme_mthd(b, NV9097_SET_VERTEX_ARRAY_START);
-   mme_emit(b, first_vertex);
-   mme_emit(b, vertex_count);
-
-   mme_mthd(b, NV9097_END);
-   mme_emit(b, mme_zero());
-
-   if (b->devinfo->cls_eng3d < PASCAL_B) {
-      mme_set_field_enum(b, begin, NV9097_BEGIN_INSTANCE_ID, SUBSEQUENT);
-      mme_end_loop(b);
-   }
-
-   mme_free_reg(b, begin);
 }
 
 static void
@@ -4408,6 +4591,9 @@ nvk_CmdDraw(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
 
+   if (unlikely(!vertexCount || !instanceCount))
+      return;
+
    nvk_cmd_flush_gfx_state(cmd);
 
    struct nv_push *p = nvk_cmd_buffer_push(cmd, 6);
@@ -4428,6 +4614,9 @@ nvk_CmdDrawMultiEXT(VkCommandBuffer commandBuffer,
                     uint32_t stride)
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+
+   if (unlikely(!drawCount || !pVertexInfo->vertexCount || !instanceCount))
+      return;
 
    nvk_cmd_flush_gfx_state(cmd);
 
@@ -4450,32 +4639,46 @@ nvk_mme_build_draw_indexed_loop(struct mme_builder *b,
                                 struct mme_value first_index,
                                 struct mme_value index_count)
 {
-   struct mme_value begin = nvk_mme_load_scratch(b, DRAW_BEGIN);
 
-   if (b->devinfo->cls_eng3d < PASCAL_B) {
-      mme_start_loop(b, instance_count);
-   } else {
-      mme_mthd(b, NVC197_SET_INSTANCE_COUNT);
+   if (b->devinfo->cls_eng3d >= TURING_A) {
+      struct mme_value draw_control_a = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+      mme_set_field_enum(b, draw_control_a, NVC597_SET_DRAW_CONTROL_A_INSTANCE_ITERATE_ENABLE, TRUE);
+
+      mme_mthd(b, NVC597_SET_DRAW_CONTROL_A);
+      mme_emit(b, draw_control_a);
       mme_emit(b, instance_count);
-      mme_set_field_enum(b, begin, NVC197_BEGIN_INSTANCE_ITERATE_ENABLE, TRUE);
+      mme_emit(b, first_index);
+      mme_emit(b, index_count);
+
+      mme_free_reg(b, draw_control_a);
+   } else {
+      struct mme_value begin = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+
+      if (b->devinfo->cls_eng3d < PASCAL_B) {
+         mme_start_loop(b, instance_count);
+      } else {
+         mme_mthd(b, NVC197_SET_INSTANCE_COUNT);
+         mme_emit(b, instance_count);
+         mme_set_field_enum(b, begin, NVC197_BEGIN_INSTANCE_ITERATE_ENABLE, TRUE);
+      }
+
+      mme_mthd(b, NV9097_BEGIN);
+      mme_emit(b, begin);
+
+      mme_mthd(b, NV9097_SET_INDEX_BUFFER_F);
+      mme_emit(b, first_index);
+      mme_emit(b, index_count);
+
+      mme_mthd(b, NV9097_END);
+      mme_emit(b, mme_zero());
+
+      if (b->devinfo->cls_eng3d < PASCAL_B) {
+         mme_set_field_enum(b, begin, NV9097_BEGIN_INSTANCE_ID, SUBSEQUENT);
+         mme_end_loop(b);
+      }
+
+      mme_free_reg(b, begin);
    }
-
-   mme_mthd(b, NV9097_BEGIN);
-   mme_emit(b, begin);
-
-   mme_mthd(b, NV9097_SET_INDEX_BUFFER_F);
-   mme_emit(b, first_index);
-   mme_emit(b, index_count);
-
-   mme_mthd(b, NV9097_END);
-   mme_emit(b, mme_zero());
-
-   if (b->devinfo->cls_eng3d < PASCAL_B) {
-      mme_set_field_enum(b, begin, NV9097_BEGIN_INSTANCE_ID, SUBSEQUENT);
-      mme_end_loop(b);
-   }
-
-   mme_free_reg(b, begin);
 }
 
 static void
@@ -4557,6 +4760,9 @@ nvk_CmdDrawIndexed(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
 
+   if (unlikely(!indexCount || !instanceCount))
+      return;
+
    nvk_cmd_flush_gfx_state(cmd);
 
    struct nv_push *p = nvk_cmd_buffer_push(cmd, 7);
@@ -4579,6 +4785,9 @@ nvk_CmdDrawMultiIndexedEXT(VkCommandBuffer commandBuffer,
                            const int32_t *pVertexOffset)
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+
+   if (unlikely(!drawCount || !pIndexInfo->indexCount || !instanceCount))
+      return;
 
    nvk_cmd_flush_gfx_state(cmd);
 
@@ -4647,6 +4856,9 @@ nvk_CmdDrawIndirect(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_buffer, buffer, _buffer);
+
+   if (unlikely(!drawCount))
+      return;
 
    /* From the Vulkan 1.3.238 spec:
     *
@@ -4928,7 +5140,7 @@ nvk_mme_xfb_draw_indirect_loop(struct mme_builder *b,
                                struct mme_value instance_count,
                                struct mme_value counter)
 {
-   struct mme_value begin = nvk_mme_load_scratch(b, DRAW_BEGIN);
+   struct mme_value begin = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
 
    /* NVC197_BEGIN_INSTANCE_ITERATE_ENABLE seems to be incompatible with xfb.
     * Always use an mme loop instead.
@@ -5012,6 +5224,9 @@ nvk_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_buffer, counter_buffer, counterBuffer);
+
+   if (unlikely(!instanceCount))
+      return;
 
    nvk_cmd_flush_gfx_state(cmd);
 

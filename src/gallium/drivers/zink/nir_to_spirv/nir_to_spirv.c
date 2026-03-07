@@ -1075,6 +1075,7 @@ emit_output(struct ntv_context *ctx, struct nir_variable *var)
 static void
 emit_shader_temp(struct ntv_context *ctx, struct nir_variable *var)
 {
+   assert(!var->constant_initializer);
    SpvId var_type = get_glsl_type(ctx, var->type, true);
 
    SpvId pointer_type = spirv_builder_type_pointer(&ctx->builder,
@@ -1094,6 +1095,7 @@ emit_shader_temp(struct ntv_context *ctx, struct nir_variable *var)
 static void
 emit_temp(struct ntv_context *ctx, struct nir_variable *var)
 {
+   assert(!var->constant_initializer);
    SpvId var_type = get_glsl_type(ctx, var->type, true);
 
    SpvId pointer_type = spirv_builder_type_pointer(&ctx->builder,
@@ -1501,7 +1503,7 @@ emit_bo(struct ntv_context *ctx, struct nir_variable *var, bool aliased)
 
    unsigned idx = bitsize >> 4;
    assert(idx < ARRAY_SIZE(ctx->ssbos));
-   if (ssbo) {
+   if (ssbo && !ctx->sinfo->is_native_vulkan) {
       assert(!ctx->ssbos[idx]);
       ctx->ssbos[idx] = var_id;
       if (bitsize == 32)
@@ -2297,33 +2299,27 @@ emit_alu(struct ntv_context *ctx, nir_alu_instr *alu)
    }
 
    if (ctx->sinfo->have_float_controls2) {
-      bool any_float = nir_alu_type_get_base_type(atype) == nir_type_float;
-      for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++)
-         any_float |= nir_alu_type_get_base_type(stype[i]) == nir_type_float;
+      SpvFPFastMathModeMask fp_mode = 0;
 
-      if (any_float) {
-         SpvFPFastMathModeMask fp_mode = 0;
+      if (!nir_alu_instr_is_signed_zero_preserve(alu))
+         fp_mode |= SpvFPFastMathModeNSZMask;
 
-         if (!nir_alu_instr_is_signed_zero_preserve(alu))
-            fp_mode |= SpvFPFastMathModeNSZMask;
+      if (!nir_alu_instr_is_inf_preserve(alu))
+         fp_mode |= SpvFPFastMathModeNotInfMask;
 
-         if (!nir_alu_instr_is_inf_preserve(alu))
-            fp_mode |= SpvFPFastMathModeNotInfMask;
+      if (!nir_alu_instr_is_nan_preserve(alu))
+         fp_mode |= SpvFPFastMathModeNotNaNMask;
 
-         if (!nir_alu_instr_is_nan_preserve(alu))
-            fp_mode |= SpvFPFastMathModeNotNaNMask;
-
-         if (!nir_alu_instr_is_exact(alu)) {
-            fp_mode |=
-               SpvFPFastMathModeAllowRecipMask |
-               SpvFPFastMathModeAllowContractMask |
-               SpvFPFastMathModeAllowReassocMask |
-               SpvFPFastMathModeAllowTransformMask;
-         }
-
-         if (fp_mode != default_fp_mode)
-            spirv_builder_emit_fp_fast_math_mode(&ctx->builder, result, fp_mode);
+      if (!nir_alu_instr_is_exact(alu)) {
+         fp_mode |=
+            SpvFPFastMathModeAllowRecipMask |
+            SpvFPFastMathModeAllowContractMask |
+            SpvFPFastMathModeAllowReassocMask |
+            SpvFPFastMathModeAllowTransformMask;
       }
+
+      if (fp_mode != default_fp_mode)
+         spirv_builder_emit_fp_fast_math_mode(&ctx->builder, result, fp_mode);
    } else {
       if (nir_alu_instr_is_exact(alu))
          spirv_builder_emit_decoration(&ctx->builder, result, SpvDecorationNoContraction);
@@ -3013,6 +3009,7 @@ emit_global_atomic_intrinsic(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 static void
 emit_get_ssbo_size(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 {
+   assert(!ctx->sinfo->is_native_vulkan);
    SpvId uint_type = get_uvec_type(ctx, 32, 1);
    nir_variable *var = ctx->ssbo_vars;
    const struct glsl_type *bare_type = glsl_without_array(var->type);
@@ -3572,6 +3569,28 @@ emit_subgroup_quad(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 }
 
 static void
+emit_subgroup_rotate(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   SpvOp op = SpvOpGroupNonUniformRotateKHR;
+   spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniformRotateKHR);
+
+   nir_alu_type atype, unused;
+   SpvId src0 = get_src(ctx, &intr->src[0], &atype);
+   SpvId src1 = get_src(ctx, &intr->src[1], &unused);
+
+   unsigned cluster_size = nir_intrinsic_cluster_size(intr);
+   SpvId result;
+   if (cluster_size > 0) {
+      SpvId src2 = emit_uint_const(ctx, 32, cluster_size);
+      result = spirv_builder_emit_triop_subgroup(&ctx->builder, op, get_def_type(ctx, intr->src[0].ssa, atype), src0, src1, src2);
+   } else {
+      result = spirv_builder_emit_binop_subgroup(&ctx->builder, op, get_def_type(ctx, intr->src[0].ssa, atype), src0, src1);
+   }
+
+   store_def(ctx, intr->def.index, result, atype);
+}
+
+static void
 emit_shuffle(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 {
    SpvOp op;
@@ -3816,6 +3835,7 @@ emit_intrinsic(struct ntv_context *ctx, nir_intrinsic_instr *intr)
       break;
 
    case nir_intrinsic_load_base_vertex:
+   case nir_intrinsic_load_first_vertex:
       emit_load_uint_input(ctx, intr, &ctx->base_vertex_var, "gl_BaseVertex", SpvBuiltInBaseVertex);
       break;
 
@@ -4048,6 +4068,10 @@ emit_intrinsic(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    case nir_intrinsic_quad_swap_vertical:
    case nir_intrinsic_quad_swap_diagonal:
       emit_subgroup_quad(ctx, intr);
+      break;
+
+   case nir_intrinsic_rotate:
+      emit_subgroup_rotate(ctx, intr);
       break;
 
    case nir_intrinsic_shuffle:
@@ -4603,7 +4627,10 @@ emit_deref_array(struct ntv_context *ctx, nir_deref_instr *deref)
       /* this is either the array<buffers> deref or the array<uint> deref */
       if (glsl_type_is_struct_or_ifc(deref->type)) {
          /* array<buffers> */
-         type = get_bo_struct_type(ctx, var);
+         bool is_zink_bo = !ctx->sinfo->is_native_vulkan;
+         type = is_zink_bo ?
+                get_bo_struct_type(ctx, var) :
+                get_glsl_type(ctx, deref->type, false);
          break;
       }
       /* array<uint> */
@@ -5008,6 +5035,7 @@ nir_to_spirv(struct nir_shader *s, const struct ntv_info *sinfo)
       if (BITSET_TEST(s->info.system_values_read, SYSTEM_VALUE_INSTANCE_ID) ||
           BITSET_TEST(s->info.system_values_read, SYSTEM_VALUE_DRAW_ID) ||
           BITSET_TEST(s->info.system_values_read, SYSTEM_VALUE_BASE_INSTANCE) ||
+          BITSET_TEST(s->info.system_values_read, SYSTEM_VALUE_FIRST_VERTEX) ||
           BITSET_TEST(s->info.system_values_read, SYSTEM_VALUE_BASE_VERTEX)) {
          if (sinfo->spirv_version < SPIRV_VERSION(1, 3))
             spirv_builder_emit_extension(&ctx.builder, "SPV_KHR_shader_draw_parameters");
@@ -5570,6 +5598,15 @@ optimize_nir(struct nir_shader *nir)
       NIR_PASS(progress, nir, nir_opt_undef);
       NIR_PASS(progress, nir, nir_opt_loop);
    } while (progress);
+   do {
+      progress = false;
+      NIR_PASS(progress, nir, nir_opt_algebraic_late);
+      if (progress) {
+         NIR_PASS(_, nir, nir_opt_copy_prop);
+         NIR_PASS(_, nir, nir_opt_dce);
+         NIR_PASS(_, nir, nir_opt_cse);
+      }
+   } while (progress);
 
    NIR_PASS(progress, nir, nir_opt_shrink_vectors, true);
 }
@@ -5636,6 +5673,17 @@ lower_vri_to_var(nir_shader *nir)
                                        nir_metadata_control_flow, NULL);
 }
 
+static void
+shared_type_info(const struct glsl_type *type, unsigned *size, unsigned *align)
+{
+   assert(glsl_type_is_vector_or_scalar(type));
+
+   uint32_t comp_size = glsl_type_is_boolean(type)
+      ? 4 : glsl_get_bit_size(type) / 8;
+   unsigned length = glsl_get_vector_elements(type);
+   *size = comp_size * length,
+   *align = comp_size * (length == 3 ? 4 : length);
+}
 /* this is the bare minimum required to make vtn shaders work with ntv */
 void
 ntv_shader_prepare(nir_shader *nir)
@@ -5647,7 +5695,17 @@ ntv_shader_prepare(nir_shader *nir)
    NIR_PASS(_, nir, nir_split_per_member_structs);
    NIR_PASS(_, nir, nir_lower_returns);
    NIR_PASS(_, nir, nir_inline_functions);
+   if (nir->info.stage == MESA_SHADER_COMPUTE ||
+       nir->info.stage == MESA_SHADER_TASK ||
+       nir->info.stage == MESA_SHADER_MESH) {
+      nir_variable_mode modes = nir_var_mem_shared | nir_var_mem_task_payload;
+      NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, modes, shared_type_info);
+      NIR_PASS(_, nir, nir_lower_explicit_io, modes, nir_address_format_32bit_offset);
+   }
+   nir_cleanup_functions(nir);
    optimize_nir(nir);
+   NIR_PASS(_, nir, nir_lower_variable_initializers, nir_var_shader_temp);
+   NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_shader_temp, NULL);
    /* required until phi support is complete */
    NIR_PASS(_, nir, nir_convert_from_ssa, true, false);
    nir_foreach_variable_in_shader(var, nir) {
@@ -5665,4 +5723,5 @@ ntv_shader_prepare(nir_shader *nir)
          var->data.driver_location = var->data.binding;
       }
    }
+   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 }

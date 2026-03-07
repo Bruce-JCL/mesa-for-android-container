@@ -23,7 +23,6 @@ libintel_compiler_brw_files = files(
   'brw_compile_vs.cpp',
   'brw_compiler.c',
   'brw_compiler.h',
-  'brw_debug_recompile.c',
   'brw_disasm.c',
   'brw_disasm_info.cpp',
   'brw_disasm_info.h',
@@ -53,7 +52,6 @@ libintel_compiler_brw_files = files(
   'brw_lower_subgroup_ops.cpp',
   'brw_nir.h',
   'brw_nir.c',
-  'brw_nir_analyze_ubo_ranges.c',
   'brw_nir_lower_cooperative_matrix.c',
   'brw_nir_lower_cs_intrinsics.c',
   'brw_nir_lower_alpha_to_coverage.c',
@@ -159,6 +157,7 @@ if with_tests
     executable(
       'intel_compiler_brw_tests',
       files(
+        'test_def_analysis.cpp',
         'test_eu_compact.cpp',
         'test_eu_validate.cpp',
         'test_helpers.cpp',

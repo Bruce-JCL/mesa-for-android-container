@@ -149,7 +149,6 @@ static bool
 is_input(nir_intrinsic_instr *intrin)
 {
    return intrin->intrinsic == nir_intrinsic_load_input ||
-          intrin->intrinsic == nir_intrinsic_load_per_primitive_input ||
           intrin->intrinsic == nir_intrinsic_load_per_vertex_input ||
           intrin->intrinsic == nir_intrinsic_load_interpolated_input;
 }
@@ -545,7 +544,7 @@ elk_nir_lower_load_frag_coord_w_gfx4(nir_shader *shader)
 void
 elk_nir_lower_fs_inputs(nir_shader *nir,
                         const struct intel_device_info *devinfo,
-                        const struct elk_wm_prog_key *key)
+                        const struct elk_fs_prog_key *key)
 {
    nir_foreach_shader_in_variable(var, nir) {
       var->data.driver_location = var->data.location;
@@ -1583,8 +1582,12 @@ elk_postprocess_nir(nir_shader *nir, const struct elk_compiler *compiler,
       };
       OPT(nir_lower_subgroups, &subgroups_options);
 
-      if (OPT(nir_lower_int64))
+      if (OPT(nir_lower_int64)) {
          elk_nir_optimize(nir, is_scalar, devinfo);
+
+         /* elk_nir_optimize undoes late lowerings. */
+         OPT(nir_opt_algebraic_late);
+      }
    }
 
    /* Do this only after the last opt_gcm. GCM will undo this lowering. */

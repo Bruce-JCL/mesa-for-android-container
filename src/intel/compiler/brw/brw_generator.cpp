@@ -753,6 +753,7 @@ brw_generator::generate_code(const brw_shader &s,
       if (inst->eot && intel_needs_workaround(devinfo, 14013672992)) {
          if (tgl_swsb_src_dep(swsb).mode) {
             brw_set_default_exec_size(p, BRW_EXECUTE_1);
+            brw_set_default_group(p, 0);
             brw_set_default_mask_control(p, BRW_MASK_DISABLE);
             brw_set_default_predicate_control(p, BRW_PREDICATE_NONE);
             brw_set_default_flag_reg(p, 0, 0);
@@ -1009,7 +1010,7 @@ brw_generator::generate_code(const brw_shader &s,
          generate_send(inst->as_send(), dst, src[SEND_SRC_DESC], src[SEND_SRC_EX_DESC],
                        src[SEND_SRC_PAYLOAD1], src[SEND_SRC_PAYLOAD2],
                        inst->as_send()->bindless_surface &&
-                       compiler->extended_bindless_surface_offset);
+                       intel_has_extended_bindless(devinfo));
          send_count++;
          break;
 
@@ -1018,7 +1019,7 @@ brw_generator::generate_code(const brw_shader &s,
                        src[SEND_GATHER_SRC_DESC], src[SEND_GATHER_SRC_EX_DESC],
                        src[SEND_GATHER_SRC_SCALAR], brw_null_reg(),
                        inst->as_send()->bindless_surface &&
-                       compiler->extended_bindless_surface_offset);
+                       intel_has_extended_bindless(devinfo));
          send_count++;
          break;
 

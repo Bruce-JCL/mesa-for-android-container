@@ -83,10 +83,10 @@ blt_compute_dest_img_config_bits(const struct blt_imginfo *img)
           COND(img->use_ts && img->ts_compress_fmt >= 0, BLT_DEST_IMAGE_CONFIG_COMPRESSION) |
           BLT_DEST_IMAGE_CONFIG_COMPRESSION_FORMAT(img->ts_compress_fmt) |
           BLT_DEST_IMAGE_CONFIG_UNK22 |
-          BLT_DEST_IMAGE_CONFIG_SWIZ_R(0) | /* not used? */
-          BLT_DEST_IMAGE_CONFIG_SWIZ_G(1) |
-          BLT_DEST_IMAGE_CONFIG_SWIZ_B(2) |
-          BLT_DEST_IMAGE_CONFIG_SWIZ_A(3) |
+          BLT_DEST_IMAGE_CONFIG_SWIZ_R(img->swizzle[0]) |
+          BLT_DEST_IMAGE_CONFIG_SWIZ_G(img->swizzle[1]) |
+          BLT_DEST_IMAGE_CONFIG_SWIZ_B(img->swizzle[2]) |
+          BLT_DEST_IMAGE_CONFIG_SWIZ_A(img->swizzle[3]) |
           COND(img->tiling == ETNA_LAYOUT_SUPER_TILED, BLT_DEST_IMAGE_CONFIG_TO_SUPER_TILED);
 }
 
@@ -97,10 +97,10 @@ blt_compute_src_img_config_bits(const struct blt_imginfo *img)
           COND(img->use_ts, BLT_SRC_IMAGE_CONFIG_TS) |
           COND(img->use_ts && img->ts_compress_fmt >= 0, BLT_SRC_IMAGE_CONFIG_COMPRESSION) |
           BLT_SRC_IMAGE_CONFIG_COMPRESSION_FORMAT(img->ts_compress_fmt) |
-          BLT_SRC_IMAGE_CONFIG_SWIZ_R(0) | /* not used? */
-          BLT_SRC_IMAGE_CONFIG_SWIZ_G(1) |
-          BLT_SRC_IMAGE_CONFIG_SWIZ_B(2) |
-          BLT_SRC_IMAGE_CONFIG_SWIZ_A(3) |
+          BLT_SRC_IMAGE_CONFIG_SWIZ_R(img->swizzle[0]) |
+          BLT_SRC_IMAGE_CONFIG_SWIZ_G(img->swizzle[1]) |
+          BLT_SRC_IMAGE_CONFIG_SWIZ_B(img->swizzle[2]) |
+          BLT_SRC_IMAGE_CONFIG_SWIZ_A(img->swizzle[3]) |
           COND(img->tiling == ETNA_LAYOUT_SUPER_TILED, BLT_SRC_IMAGE_CONFIG_FROM_SUPER_TILED);
 }
 
@@ -304,7 +304,7 @@ etna_calculate_clear_bits(enum pipe_format format, unsigned clear_mask)
 
    for (unsigned i = 0; i < desc->nr_channels; i++) {
       if (clear_mask & (1 << desc->swizzle[i])) {
-         const unsigned mask = (1 << desc->channel[i].size) - 1;
+         const uint64_t mask = (1ull << desc->channel[i].size) - 1;
          clear_bits |= mask << desc->channel[i].shift;
       }
    }
@@ -788,6 +788,20 @@ etna_try_blt_blit(struct pipe_context *pctx,
       for (unsigned x=0; x<4; ++x)
          op.dest.swizzle[x] = x;
 
+      /* For transfer blits of RB_SWAP formats, apply R<->B swizzle on the
+       * linear side to convert between GPU-internal BGRA and CPU RGBA. */
+      if (ctx->in_transfer_blit &&
+          translate_pe_format_rb_swap(blit_info->src.format)) {
+         bool src_linear = src->layout == ETNA_LAYOUT_LINEAR;
+         bool dst_linear = dst->layout == ETNA_LAYOUT_LINEAR;
+
+         if (src_linear != dst_linear) {
+            uint8_t *swiz = src_linear ? op.src.swizzle : op.dest.swizzle;
+            swiz[0] = 2; /* R from B position */
+            swiz[2] = 0; /* B from R position */
+         }
+      }
+
       op.dest_x = blit_info->dst.box.x;
       op.dest_y = blit_info->dst.box.y;
       op.src_x = blit_info->src.box.x;
@@ -845,6 +859,8 @@ etna_try_blt_blit(struct pipe_context *pctx,
     */
    if (src != dst || src_lev->ts_compress_fmt >= 0)
       etna_resource_level_ts_mark_invalid(dst_lev);
+
+   ctx->dirty |= ETNA_DIRTY_DERIVE_TS;
 
    return true;
 }

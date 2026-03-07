@@ -92,13 +92,13 @@ static const struct test {
    INSTR_6XX(2400c205_04030201, "sct.f16u32 r1.y, r0.z, r0.w, r1.x, hr0.y"),
 
    INSTR_6XX(20510005_0000ffff, "mov.s16s16 hr1.y, -1"),
-   INSTR_6XX(20400005_00003900, "mov.f16f16 hr1.y, h(0.625000)"),
-   INSTR_6XX(20400006_00003800, "mov.f16f16 hr1.z, h(0.500000)"),
+   INSTR_6XX(20400005_00003900, "mov.f16f16 hr1.y, h(0.625)"),
+   INSTR_6XX(20400006_00003800, "mov.f16f16 hr1.z, h(0.5)"),
    INSTR_6XX(204880f5_00000000, "mova1 a1.x, 0"),
 
    INSTR_6XX(201108f4_00000000, "mova.u a0.x, (r)hr0.x"),
    INSTR_6XX(204888f5_00000000, "mova1.u a1.x, 0"),
-   INSTR_8XX(20130cf4_008000c0, "mova.u.r (sat)a0.x, hr48.x, 0, 1"),
+   INSTR_8XX(20130cf4_008000c0, "mova.r.u (sat)a0.x, hr48.x, 0, 1"),
 
    INSTR_7XX(2004c005_00000405, "cov.f32u32 r1.y, (last)r1.y"),
 
@@ -119,7 +119,7 @@ static const struct test {
    INSTR_6XX(438000f8_20010009, "and.b p0.x, hr2.y, h(1)"),
    INSTR_6XX(438000f9_00020001, "and.b p0.y, hr0.y, hr0.z"),
    INSTR_6XX(40080902_50200006, "(rpt1)add.f hr0.z, (r)hr1.z, (neg)(r)hc8.x"),
-   INSTR_6XX(42380c01_00040001, "(sat)(nop3) add.s r0.y, r0.y, r1.x"),
+   INSTR_6XX(42380c01_00040001, "(nop3) add.s (sat)r0.y, r0.y, r1.x"),
    INSTR_6XX(42480000_48801086, "(nop2) sub.u hr0.x, hc33.z, (neg)hr<a0.x + 128>"),
    INSTR_6XX(46b00001_00001020, "clz.b r0.y, c8.x"),
    INSTR_6XX(46700009_00000009, "bfrev.b r2.y, r2.y"),
@@ -151,7 +151,7 @@ static const struct test {
    INSTR_6XX(67018c02_1002e003, "(nop3) wmm.accu hr0.z, (neg)hr0.w, hr0.w, 2"),
    INSTR_6XX(6701c802_9002a003, "(nop3) wmm r0.z, r0.w, r0.w, 2"), /* (nop3) wmm.f32f32 r0.z, (r)r0.w, (r)r0.w, 2 */
    /* custom test with qcom_dot8 function from cl_qcom_dot_product8 */
-   INSTR_6XX(66818c02_0002e003, "(sat)(nop3) dp2acc.mixed.low r0.z, r0.w, r0.w, r0.z"), /* (nop3) dp2acc (sat)r0.z, (signed)(low)(r)r0.w, (low)(r)r0.w, r0.z */
+   INSTR_6XX(66818c02_0002e003, "(nop3) dp2acc.mixed.low (sat)r0.z, r0.w, r0.w, r0.z"), /* (nop3) dp2acc (sat)r0.z, (signed)(low)(r)r0.w, (low)(r)r0.w, r0.z */
    INSTR_6XX(6681c802_8002a003, "(nop3) dp4acc.unsigned.low r0.z, r0.w, r0.w, (neg)r0.z"), /* (nop3) dp4acc r0.z, (unsigned)(r)r0.w, (r)r0.w, (neg)r0.z */
    INSTR_6XX(7681c002_00002002, "(sy)dp4acc.unsigned.low r0.z, r0.z, r0.w, r0.x"),
 
@@ -410,12 +410,12 @@ static const struct test {
    INSTR_6XX(50600004_2c090004, "(sy)mul.f hr1.x, hr1.x, h(1/log2(10))"),
    INSTR_6XX(50600004_2c0a0004, "(sy)mul.f hr1.x, hr1.x, h(log2(10))"),
    INSTR_6XX(50600004_2c0b0004, "(sy)mul.f hr1.x, hr1.x, h(4.0)"),
-   INSTR_6XX(20444000_00000000, "mov.f32f32 r0.x, (0.000000)"),
-   INSTR_6XX(20444000_3f000000, "mov.f32f32 r0.x, (0.500000)"),
-   INSTR_6XX(20444000_3f800000, "mov.f32f32 r0.x, (1.000000)"),
-   INSTR_6XX(20444000_40000000, "mov.f32f32 r0.x, (2.000000)"),
-   INSTR_6XX(20444000_40400000, "mov.f32f32 r0.x, (3.000000)"),
-   INSTR_6XX(20444000_40800000, "mov.f32f32 r0.x, (4.000000)"),
+   INSTR_6XX(20444000_00000000, "mov.f32f32 r0.x, (0.0)"),
+   INSTR_6XX(20444000_3f000000, "mov.f32f32 r0.x, (0.5)"),
+   INSTR_6XX(20444000_3f800000, "mov.f32f32 r0.x, (1.0)"),
+   INSTR_6XX(20444000_40000000, "mov.f32f32 r0.x, (2.0)"),
+   INSTR_6XX(20444000_40400000, "mov.f32f32 r0.x, (3.0)"),
+   INSTR_6XX(20444000_40800000, "mov.f32f32 r0.x, (4.0)"),
 
    /* LDC.  Our disasm differs greatly from qcom here, and we've got some
     * important info they lack(?!), but same goes the other way.
@@ -549,7 +549,7 @@ static const struct test {
    INSTR_7XX(fbc21000_00000000, "(sy)(ss)(jp)lock"),
 
    /* dEQP-VK.pipeline.monolithic.sampler.border_swizzle.r4g4b4a4_unorm_pack16.rg1a.opaque_white.gather_1.no_swizzle_hint */
-   INSTR_7XX(e41401a0_bfba7736, "alias.tex.f32.1 r40.x, (-1.456763)"),
+   INSTR_7XX(e41401a0_bfba7736, "alias.tex.f32.1 r40.x, (-1.45676303)"),
    /* dEQP-VK.synchronization.op.single_queue.event.write_draw_indexed_read_image_geometry.image_128x128_r32g32b32a32_sfloat */
    INSTR_7XX(e40c0009_00000007, "alias.tex.f32.0 r2.y, c1.w"),
    /* dEQP-VK.binding_model.shader_access.primary_cmd_buf.storage_image.geometry.single_descriptor.2d_base_mip */
@@ -558,14 +558,14 @@ static const struct test {
    INSTR_7XX(e41100a0_00000002, "alias.tex.b16.0 hr40.x, h(0x2)"),
 
    /* dEQP-VK.glsl.derivate.dfdx.constant.float */
-   INSTR_7XX(e4108003_00003c00, "alias.rt.f16.0 rt0.w, h(1.000000)"),
+   INSTR_7XX(e4108003_00003c00, "alias.rt.f16.0 rt0.w, h(1.0)"),
    INSTR_7XX(f4088000_00000000, "(sy)alias.rt.f16.0 rt0.x, hc0.x"),
 
    /* dEQP-VK.glsl.opaque_type_indexing.ubo.const_literal_fragment */
    INSTR_7XX(e40c8008_00000010, "alias.rt.f32.0 rt2.x, c4.x"),
 
    /* dEQP-VK.dynamic_rendering.primary_cmd_buff.suballocation.multisample_resolve.layers_3.r16g16_unorm.samples_4_resolve_level_4 */
-   INSTR_7XX(e4148008_3f800000, "alias.rt.f32.0 rt2.x, (1.000000)"),
+   INSTR_7XX(e4148008_3f800000, "alias.rt.f32.0 rt2.x, (1.0)"),
 
    /* dEQP-VK.renderpass.suballocation.multisample_resolve.layers_3.r8g8b8a8_uint.samples_2_baseLayer1 */
    INSTR_7XX(e4158007_000000ff, "alias.rt.b32.0 rt1.w, (0xff)"),

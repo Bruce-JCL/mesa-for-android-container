@@ -925,7 +925,7 @@ static void si_emit_shader_gs(struct si_context *sctx, unsigned index)
    radeon_end();
 }
 
-static void si_shader_gs(struct si_screen *sscreen, struct si_shader *shader)
+static void si_shader_gs_legacy(struct si_screen *sscreen, struct si_shader *shader)
 {
    struct si_shader_selector *sel = shader->selector;
    const uint8_t *num_components = shader->info.legacy_gs.num_components_per_stream;
@@ -1720,6 +1720,7 @@ static void gfx10_shader_ngg(struct si_screen *sscreen, struct si_shader *shader
    bool ngg_wave_id_en =
       shader->info.num_streamout_vec4s != 0 || shader->info.uses_mesh_scratch_ring;
    if (sscreen->info.gfx_level >= GFX12) {
+      assert(sscreen->info.compiler_info.has_ngg_passthru_no_msg);
       shader->ngg.vgt_shader_stages_en =
          S_028A98_GS_EN(gs_stage == MESA_SHADER_GEOMETRY) |
          S_028A98_GS_FAST_LAUNCH(gs_stage == MESA_SHADER_MESH) |
@@ -1741,7 +1742,7 @@ static void gfx10_shader_ngg(struct si_screen *sscreen, struct si_shader *shader
          S_028B54_PRIMGEN_EN(1) |
          S_028B54_PRIMGEN_PASSTHRU_EN(gfx10_is_ngg_passthrough(shader)) |
          S_028B54_PRIMGEN_PASSTHRU_NO_MSG(gfx10_is_ngg_passthrough(shader) &&
-                                          sscreen->info.family >= CHIP_NAVI23) |
+                                          sscreen->info.compiler_info.has_ngg_passthru_no_msg) |
          S_028B54_NGG_WAVE_ID_EN(ngg_wave_id_en) |
          S_028B54_GS_W32_EN(shader->wave_size == 32) |
          S_028B54_MAX_PRIMGRP_IN_WAVE(2);
@@ -1836,8 +1837,8 @@ static void si_emit_shader_vs(struct si_context *sctx, unsigned index)
  * If \p gs is non-NULL, it points to the geometry shader for which this shader
  * is the copy shader.
  */
-static void si_shader_vs(struct si_screen *sscreen, struct si_shader *shader,
-                         struct si_shader_selector *gs)
+static void si_shader_vs_legacy(struct si_screen *sscreen, struct si_shader *shader,
+                                struct si_shader_selector *gs)
 {
    const struct si_shader_info *info = &shader->selector->info;
    struct si_pm4_state *pm4;
@@ -2309,7 +2310,7 @@ static void si_shader_init_pm4_state(struct si_screen *sscreen, struct si_shader
       else if (shader->key.ge.as_ngg)
          gfx10_shader_ngg(sscreen, shader);
       else
-         si_shader_vs(sscreen, shader, NULL);
+         si_shader_vs_legacy(sscreen, shader, NULL);
       break;
    case MESA_SHADER_TESS_CTRL:
       si_shader_hs(sscreen, shader);
@@ -2320,15 +2321,15 @@ static void si_shader_init_pm4_state(struct si_screen *sscreen, struct si_shader
       else if (shader->key.ge.as_ngg)
          gfx10_shader_ngg(sscreen, shader);
       else
-         si_shader_vs(sscreen, shader, NULL);
+         si_shader_vs_legacy(sscreen, shader, NULL);
       break;
    case MESA_SHADER_GEOMETRY:
       if (shader->key.ge.as_ngg) {
          gfx10_shader_ngg(sscreen, shader);
       } else {
          /* VS must be initialized first because GS uses its fields. */
-         si_shader_vs(sscreen, shader->gs_copy_shader, shader->selector);
-         si_shader_gs(sscreen, shader);
+         si_shader_vs_legacy(sscreen, shader->gs_copy_shader, shader->selector);
+         si_shader_gs_legacy(sscreen, shader);
       }
       break;
    case MESA_SHADER_FRAGMENT:
@@ -2600,35 +2601,6 @@ static void si_clear_vs_key_outputs(struct si_context *sctx, struct si_shader_se
    key->ge.mono.write_pos_to_clipvertex = 0;
 }
 
-void si_ps_key_update_framebuffer(struct si_context *sctx)
-{
-   struct si_shader_selector *sel = sctx->shader.ps.cso;
-   union si_shader_key *key = &sctx->shader.ps.key;
-
-   if (!sel)
-      return;
-
-   /* ps_uses_fbfetch is true only if the color buffer is bound. */
-   if (sctx->ps_uses_fbfetch) {
-      struct pipe_surface *cb0 = &sctx->framebuffer.state.cbufs[0];
-      struct pipe_resource *tex = cb0->texture;
-
-      /* 1D textures are allocated and used as 2D on GFX9. */
-      key->ps.mono.fbfetch_msaa = sctx->framebuffer.nr_samples > 1;
-      key->ps.mono.fbfetch_is_1D =
-         sctx->gfx_level != GFX9 &&
-         (tex->target == PIPE_TEXTURE_1D || tex->target == PIPE_TEXTURE_1D_ARRAY);
-      key->ps.mono.fbfetch_layered =
-         tex->target == PIPE_TEXTURE_1D_ARRAY || tex->target == PIPE_TEXTURE_2D_ARRAY ||
-         tex->target == PIPE_TEXTURE_CUBE || tex->target == PIPE_TEXTURE_CUBE_ARRAY ||
-         tex->target == PIPE_TEXTURE_3D;
-   } else {
-      key->ps.mono.fbfetch_msaa = 0;
-      key->ps.mono.fbfetch_is_1D = 0;
-      key->ps.mono.fbfetch_layered = 0;
-   }
-}
-
 void si_ps_key_update_framebuffer_blend_dsa_rasterizer(struct si_context *sctx)
 {
    struct si_shader_selector *sel = sctx->shader.ps.cso;
@@ -2697,9 +2669,9 @@ void si_ps_key_update_framebuffer_blend_dsa_rasterizer(struct si_context *sctx)
        sctx->framebuffer.spi_shader_col_format);
    key->ps.part.epilog.spi_shader_col_format &= blend->cb_target_enabled_4bit;
 
-   key->ps.part.epilog.dual_src_blend_swizzle = sctx->gfx_level >= GFX11 &&
-                                                blend->dual_src_blend &&
-                                                (sel->info.colors_written_4bit & 0xff) == 0xff;
+   key->ps.part.epilog.dual_src_blend =
+      blend->dual_src_blend && ((sctx->gfx_level >= GFX11 && sel->info.colors_written_4bit & 0xff) ||
+                                ((sel->info.colors_written_4bit & 0xff) == 0xf0));
 
    /* The output for dual source blending should have
     * the same format as the first output.
@@ -2719,13 +2691,13 @@ void si_ps_key_update_framebuffer_blend_dsa_rasterizer(struct si_context *sctx)
       key->ps.part.epilog.spi_shader_col_format |= V_028710_SPI_SHADER_32_AR;
 
    /* CB doesn't clamp outputs to less than 16 bits. */
-   if (sctx->screen->info.has_cb_lt16bit_int_clamp_bug) {
+   if (sctx->screen->info.compiler_info.has_cb_lt16bit_int_clamp_bug) {
       key->ps.part.epilog.color_is_int8 = sctx->framebuffer.color_is_int8;
       key->ps.part.epilog.color_is_int10 = sctx->framebuffer.color_is_int10;
    }
 
    /* Disable unwritten outputs (if WRITE_ALL_CBUFS isn't enabled). */
-   if (!sel->info.color0_writes_all_cbufs) {
+   if (!sel->info.color0_writes_all_cbufs && !blend->dual_src_blend) {
       key->ps.part.epilog.spi_shader_col_format &= sel->info.colors_written_4bit;
       key->ps.part.epilog.color_is_int8 &= sel->info.colors_written;
       key->ps.part.epilog.color_is_int10 &= sel->info.colors_written;
@@ -4737,7 +4709,7 @@ void si_update_tess_io_layout_state(struct si_context *sctx)
    unsigned num_patches, lds_size;
 
    /* Compute NUM_PATCHES and LDS_SIZE. */
-   ac_nir_compute_tess_wg_info(&sctx->screen->info, &tcs->info.tess_io_info,
+   ac_nir_compute_tess_wg_info(&sctx->screen->info.compiler_info, &tcs->info.tess_io_info,
                                tcs->info.base.tess.tcs_vertices_out, ls_current->wave_size,
                                tess_uses_primid, num_tcs_input_cp, lds_input_vertex_size,
                                num_remapped_tess_level_outputs, &num_patches, &lds_size);

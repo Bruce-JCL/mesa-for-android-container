@@ -37,7 +37,7 @@ struct ac_llvm_flow {
  * The caller is responsible for initializing ctx::module and ctx::builder.
  */
 void ac_llvm_context_init(struct ac_llvm_context *ctx, struct ac_llvm_compiler *compiler,
-                          const struct radeon_info *info, enum ac_float_mode float_mode,
+                          const struct ac_compiler_info *info, enum ac_float_mode float_mode,
                           unsigned wave_size, bool exports_color_null, bool exports_mrtz)
 {
    ctx->context = LLVMContextCreate();
@@ -418,7 +418,7 @@ void ac_build_optimization_barrier(struct ac_llvm_context *ctx, LLVMValueRef *pg
    } else {
       LLVMTypeRef old_type = LLVMTypeOf(*pgpr);
 
-      if (old_type == ctx->i1)
+      if (old_type == ctx->i1 || old_type == ctx->i8)
          *pgpr = LLVMBuildZExt(builder, *pgpr, ctx->i32, "");
 
       if (old_type == LLVMVectorType(ctx->i16, 3))
@@ -430,7 +430,7 @@ void ac_build_optimization_barrier(struct ac_llvm_context *ctx, LLVMValueRef *pg
 
       *pgpr = LLVMBuildCall2(builder, ftype, inlineasm, pgpr, 1, "");
 
-      if (old_type == ctx->i1)
+      if (old_type == ctx->i1 || old_type == ctx->i8)
          *pgpr = LLVMBuildTrunc(builder, *pgpr, old_type, "");
 
       if (old_type == LLVMVectorType(ctx->i16, 3))
@@ -783,12 +783,6 @@ LLVMValueRef ac_build_gep0(struct ac_llvm_context *ctx, struct ac_llvm_pointer p
    return LLVMBuildGEP2(ctx->builder, ptr.t, ptr.v, indices, 2, "");
 }
 
-void ac_build_indexed_store(struct ac_llvm_context *ctx, struct ac_llvm_pointer ptr, LLVMValueRef index,
-                            LLVMValueRef value)
-{
-   LLVMBuildStore(ctx->builder, value, ac_build_gep0(ctx, ptr, index));
-}
-
 /**
  * Build an LLVM bytecode indexed load using LLVMBuildGEP + LLVMBuildLoad.
  * It's equivalent to doing a load from &base_ptr[index].
@@ -838,12 +832,6 @@ static LLVMValueRef ac_build_load_custom(struct ac_llvm_context *ctx, LLVMTypeRe
    return result;
 }
 
-LLVMValueRef ac_build_load_invariant(struct ac_llvm_context *ctx, struct ac_llvm_pointer ptr,
-                                     LLVMValueRef index)
-{
-   return ac_build_load_custom(ctx, ptr.t, ptr.v, index, false, true, false);
-}
-
 /* This assumes that there is no unsigned integer wraparound during the address
  * computation, excluding all GEPs within base_ptr. */
 LLVMValueRef ac_build_load_to_sgpr(struct ac_llvm_context *ctx, struct ac_llvm_pointer ptr,
@@ -852,10 +840,24 @@ LLVMValueRef ac_build_load_to_sgpr(struct ac_llvm_context *ctx, struct ac_llvm_p
    return ac_build_load_custom(ctx, ptr.t, ptr.v, index, true, true, true);
 }
 
-static unsigned get_cache_flags(struct ac_llvm_context *ctx, enum gl_access_qualifier access,
-                                enum ac_access_type type)
+unsigned ac_get_llvm_cache_flags(struct ac_llvm_context *ctx, enum gl_access_qualifier access,
+                                 enum ac_access_type type)
 {
-   return ac_get_hw_cache_flags(ctx->gfx_level, access, type).value;
+   union ac_hw_cache_flags flags = ac_get_hw_cache_flags(ctx->gfx_level, access, type);
+   unsigned llvm_flags;
+
+   if (ctx->gfx_level >= GFX12) {
+      llvm_flags = (uint32_t)flags.gfx12.temporal_hint |
+                   ((uint32_t)flags.gfx12.scope << 3) |
+                   ((uint32_t)flags.gfx12.swizzled << 6);
+   } else {
+      llvm_flags = (uint32_t)!!(flags.value & ac_glc) |
+                   ((uint32_t)!!(flags.value & ac_slc) << 1) |
+                   ((uint32_t)!!(flags.value & ac_dlc) << 2) |
+                   ((uint32_t)!!(flags.value & ac_swizzled) << 3);
+   }
+
+   return llvm_flags;
 }
 
 static void ac_build_buffer_store_common(struct ac_llvm_context *ctx, LLVMValueRef rsrc,
@@ -872,7 +874,7 @@ static void ac_build_buffer_store_common(struct ac_llvm_context *ctx, LLVMValueR
       args[idx++] = vindex ? vindex : ctx->i32_0;
    args[idx++] = voffset ? voffset : ctx->i32_0;
    args[idx++] = soffset ? soffset : ctx->i32_0;
-   args[idx++] = LLVMConstInt(ctx->i32, get_cache_flags(ctx, access, type), 0);
+   args[idx++] = LLVMConstInt(ctx->i32, ac_get_llvm_cache_flags(ctx, access, type), 0);
    const char *indexing_kind = vindex ? "struct" : "raw";
    char name[256], type_name[8];
 
@@ -936,7 +938,7 @@ static LLVMValueRef ac_build_buffer_load_common(struct ac_llvm_context *ctx, LLV
       args[idx++] = vindex;
    args[idx++] = voffset ? voffset : ctx->i32_0;
    args[idx++] = soffset ? soffset : ctx->i32_0;
-   args[idx++] = LLVMConstInt(ctx->i32, get_cache_flags(ctx, access, ac_access_type_load), 0);
+   args[idx++] = LLVMConstInt(ctx->i32, ac_get_llvm_cache_flags(ctx, access, ac_access_type_load), 0);
    unsigned return_channels =
       !ac_has_vec3_support(ctx->gfx_level, use_format) && num_channels == 3 ? 4 : num_channels;
    const char *indexing_kind = vindex ? "struct" : "raw";
@@ -1022,7 +1024,8 @@ LLVMValueRef ac_build_buffer_load(struct ac_llvm_context *ctx, LLVMValueRef rsrc
          LLVMValueRef args[3] = {
             rsrc,
             offset,
-            LLVMConstInt(ctx->i32, get_cache_flags(ctx, access | ACCESS_SMEM_AMD, ac_access_type_load), 0),
+            LLVMConstInt(ctx->i32, ac_get_llvm_cache_flags(ctx, access | ACCESS_SMEM_AMD,
+                                                           ac_access_type_load), 0),
          };
          result[i] = ac_build_intrinsic(ctx, name, channel_type, args, 3, AC_ATTR_INVARIANT_LOAD);
       }
@@ -1075,7 +1078,7 @@ static LLVMValueRef ac_build_tbuffer_load(struct ac_llvm_context *ctx, LLVMValue
    args[idx++] = voffset ? voffset : ctx->i32_0;
    args[idx++] = soffset ? soffset : ctx->i32_0;
    args[idx++] = LLVMConstInt(ctx->i32, tbuffer_format, 0);
-   args[idx++] = LLVMConstInt(ctx->i32, get_cache_flags(ctx, access, ac_access_type_load), 0);
+   args[idx++] = LLVMConstInt(ctx->i32, ac_get_llvm_cache_flags(ctx, access, ac_access_type_load), 0);
    const char *indexing_kind = vindex ? "struct" : "raw";
    char name[256], type_name[8];
 
@@ -1101,7 +1104,7 @@ LLVMValueRef ac_build_safe_tbuffer_load(struct ac_llvm_context *ctx, LLVMValueRe
                                         bool can_speculate)
 {
    const struct ac_vtx_format_info *vtx_info =
-      ac_get_vtx_format_info(ctx->gfx_level, ctx->info->cu_info.has_vtx_format_alpha_adjust_bug, format);
+      ac_get_vtx_format_info(ctx->gfx_level, ctx->info->has_vtx_format_alpha_adjust_bug, format);
    const unsigned max_channels = vtx_info->num_channels;
    LLVMValueRef voffset_plus_const =
       LLVMBuildAdd(ctx->builder, base_voffset, LLVMConstInt(ctx->i32, const_offset, 0), "");
@@ -1432,7 +1435,7 @@ void ac_build_export(struct ac_llvm_context *ctx, struct ac_export_args *a)
     * X writemask component.
     */
    unsigned enabled_channels = a->enabled_channels;
-   if (ctx->info->cu_info.has_gfx6_mrt_export_bug && enabled_channels &&
+   if (ctx->info->has_gfx6_mrt_export_bug && enabled_channels &&
        a->target <= V_008DFC_SQ_EXP_MRTZ) {
       enabled_channels |= 1;
    }
@@ -1692,10 +1695,9 @@ LLVMValueRef ac_build_image_opcode(struct ac_llvm_context *ctx, struct ac_image_
 
    args[num_args++] = a->tfe ? ctx->i32_1 : ctx->i32_0; /* texfailctrl */
    args[num_args++] = LLVMConstInt(
-      ctx->i32, get_cache_flags(ctx,
-                                a->access,
-                                (atomic ? ac_access_type_atomic :
-                                 load ? ac_access_type_load : ac_access_type_store_subdword)),
+      ctx->i32, ac_get_llvm_cache_flags(ctx, a->access,
+                                        (atomic ? ac_access_type_atomic :
+                                                  load ? ac_access_type_load : ac_access_type_store_subdword)),
       false);
 
    const char *name;
@@ -1918,16 +1920,6 @@ LLVMValueRef ac_build_imad(struct ac_llvm_context *ctx, LLVMValueRef s0, LLVMVal
    return LLVMBuildAdd(ctx->builder, LLVMBuildMul(ctx->builder, s0, s1, ""), s2, "");
 }
 
-LLVMValueRef ac_build_fmad(struct ac_llvm_context *ctx, LLVMValueRef s0, LLVMValueRef s1,
-                           LLVMValueRef s2)
-{
-   /* FMA is better on GFX10, because it has FMA units instead of MUL-ADD units. */
-   if (ctx->gfx_level >= GFX10)
-      return ac_build_intrinsic(ctx, "llvm.fma.f32", ctx->f32, (LLVMValueRef[]){s0, s1, s2}, 3, 0);
-
-   return LLVMBuildFAdd(ctx->builder, LLVMBuildFMul(ctx->builder, s0, s1, ""), s2, "");
-}
-
 void ac_build_waitcnt(struct ac_llvm_context *ctx, unsigned wait_flags)
 {
    if (!wait_flags)
@@ -2030,28 +2022,6 @@ LLVMValueRef ac_build_fsat(struct ac_llvm_context *ctx, LLVMValueRef src,
    }
 
    return result;
-}
-
-LLVMValueRef ac_build_fract(struct ac_llvm_context *ctx, LLVMValueRef src0, unsigned bitsize)
-{
-   LLVMTypeRef type;
-   char *intr;
-
-   if (bitsize == 16) {
-      intr = "llvm.amdgcn.fract.f16";
-      type = ctx->f16;
-   } else if (bitsize == 32) {
-      intr = "llvm.amdgcn.fract.f32";
-      type = ctx->f32;
-   } else {
-      intr = "llvm.amdgcn.fract.f64";
-      type = ctx->f64;
-   }
-
-   LLVMValueRef params[] = {
-      src0,
-   };
-   return ac_build_intrinsic(ctx, intr, type, params, 1, 0);
 }
 
 LLVMValueRef ac_const_uint_vec(struct ac_llvm_context *ctx, LLVMTypeRef type, uint64_t value)

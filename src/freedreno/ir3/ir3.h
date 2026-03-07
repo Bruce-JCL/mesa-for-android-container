@@ -446,7 +446,6 @@ struct ir3_instruction {
          type_t src_type, dst_type;
          round_t round;
          reduce_op_t reduce_op;
-         bool sat;
          uint16_t r[2];
       } cat1;
       struct {
@@ -2172,14 +2171,18 @@ is_sy_producer(struct ir3_instruction *instr)
       is_atomic(instr->opc);
 }
 
+static inline bool
+is_compute_or_frag(mesa_shader_stage type)
+{
+   return mesa_shader_stage_is_compute(type) || (type == MESA_SHADER_FRAGMENT);
+}
+
 static inline unsigned
 soft_sy_delay(struct ir3_instruction *instr, struct ir3 *shader)
 {
    /* TODO: this is just an optimistic guess, we can do better post-RA.
     */
-   bool double_wavesize =
-      shader->type == MESA_SHADER_FRAGMENT ||
-      shader->type == MESA_SHADER_COMPUTE;
+   bool double_wavesize = is_compute_or_frag(shader->type);
 
    unsigned components = reg_elems(instr->dsts[0]);
 

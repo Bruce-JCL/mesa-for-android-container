@@ -753,7 +753,7 @@ lower_line_smooth_gs_store(nir_builder *b,
       gl_varying_slot location = var->data.location;
       unsigned location_frac = var->data.location_frac;
       if (location != VARYING_SLOT_POS) {
-         assert(state->varyings[location]);
+         assert(state->varyings[location][location_frac]);
          nir_store_var(b, state->varyings[location][location_frac],
                        intrin->src[1].ssa,
                        nir_intrinsic_write_mask(intrin));
@@ -1296,7 +1296,6 @@ zink_screen_init_compiler(struct zink_screen *screen)
       .lower_usub_borrow = true,
       .lower_uadd_sat = true,
       .lower_usub_sat = true,
-      .lower_vector_cmp = true,
       .lower_int64_options =
          nir_lower_bit_count64 |
          nir_lower_find_lsb64 |
@@ -1446,6 +1445,18 @@ filter_pack_instr(const nir_instr *const_instr, UNUSED const void *data)
    nir_instr *instr = (nir_instr *)const_instr;
    nir_alu_instr *alu = nir_instr_as_alu(instr);
    switch (alu->op) {
+   case nir_op_ball_fequal2:
+   case nir_op_ball_fequal3:
+   case nir_op_ball_fequal4:
+   case nir_op_bany_fnequal2:
+   case nir_op_bany_fnequal3:
+   case nir_op_bany_fnequal4:
+   case nir_op_ball_iequal2:
+   case nir_op_ball_iequal3:
+   case nir_op_ball_iequal4:
+   case nir_op_bany_inequal2:
+   case nir_op_bany_inequal3:
+   case nir_op_bany_inequal4:
    case nir_op_pack_64_2x32_split:
    case nir_op_pack_32_2x16_split:
    case nir_op_unpack_32_2x16_split_x:
@@ -5673,7 +5684,14 @@ zink_shader_init(struct zink_screen *screen, struct zink_shader *zs)
    {
       nir_lower_subgroups_options subgroup_options = {0};
       subgroup_options.lower_to_scalar = true;
-      subgroup_options.subgroup_size = screen->info.props11.subgroupSize;
+
+      if (nir->info.api_subgroup_size)
+         subgroup_options.subgroup_size = nir->info.api_subgroup_size;
+      else if (nir->info.stage != MESA_SHADER_KERNEL ||
+         !screen->info.feats13.subgroupSizeControl ||
+         screen->info.props13.minSubgroupSize == screen->info.props13.maxSubgroupSize)
+         subgroup_options.subgroup_size = screen->info.props11.subgroupSize;
+
       subgroup_options.ballot_bit_size = 32;
       subgroup_options.ballot_components = 4;
       subgroup_options.lower_subgroup_masks = true;

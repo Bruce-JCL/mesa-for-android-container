@@ -71,9 +71,9 @@ anv_shader_deserialize(struct vk_device *vk_device,
    blob_copy_bytes(blob, data.bind_map.push_sha1, sizeof(data.bind_map.push_sha1));
    data.bind_map.layout_type = blob_read_uint16(blob);
    data.bind_map.binding_mask = blob_read_uint16(blob);
-   data.bind_map.surface_count = blob_read_uint32(blob);
-   data.bind_map.sampler_count = blob_read_uint32(blob);
-   data.bind_map.embedded_sampler_count = blob_read_uint32(blob);
+   data.bind_map.surface_count = blob_read_uint8(blob);
+   data.bind_map.sampler_count = blob_read_uint8(blob);
+   data.bind_map.embedded_sampler_count = blob_read_uint16(blob);
    data.bind_map.surface_to_descriptor = (void *)
       blob_read_bytes(blob, data.bind_map.surface_count *
                             sizeof(*data.bind_map.surface_to_descriptor));
@@ -85,9 +85,17 @@ anv_shader_deserialize(struct vk_device *vk_device,
                             sizeof(*data.bind_map.embedded_sampler_to_binding));
    blob_copy_bytes(blob, data.bind_map.input_attachments,
                    sizeof(data.bind_map.input_attachments));
-   blob_copy_bytes(blob, data.bind_map.push_ranges, sizeof(data.bind_map.push_ranges));
+   blob_copy_bytes(blob, data.bind_map.push_ranges,
+                   sizeof(data.bind_map.push_ranges));
+   data.bind_map.inline_dwords_count = blob_read_uint8(blob);
+   blob_copy_bytes(blob, data.bind_map.inline_dwords,
+                   data.bind_map.inline_dwords_count);
+   data.bind_map.used_surface_sets = blob_read_uint8(blob);
+   data.bind_map.used_sampler_sets = blob_read_uint8(blob);
+   data.bind_map.pushed_sets = blob_read_uint8(blob);
    blob_copy_bytes(blob, data.bind_map.dynamic_descriptors,
                    sizeof(data.bind_map.dynamic_descriptors));
+   data.bind_map.inferred_behavior = blob_read_uint8(blob);
 
    if (blob->overrun)
       return vk_error(device, VK_ERROR_UNKNOWN);
@@ -148,9 +156,9 @@ anv_shader_serialize(struct vk_device *device,
                     sizeof(shader->bind_map.push_sha1));
    blob_write_uint16(blob, shader->bind_map.layout_type);
    blob_write_uint16(blob, shader->bind_map.binding_mask);
-   blob_write_uint32(blob, shader->bind_map.surface_count);
-   blob_write_uint32(blob, shader->bind_map.sampler_count);
-   blob_write_uint32(blob, shader->bind_map.embedded_sampler_count);
+   blob_write_uint8(blob, shader->bind_map.surface_count);
+   blob_write_uint8(blob, shader->bind_map.sampler_count);
+   blob_write_uint16(blob, shader->bind_map.embedded_sampler_count);
    blob_write_bytes(blob, shader->bind_map.surface_to_descriptor,
                     shader->bind_map.surface_count *
                     sizeof(*shader->bind_map.surface_to_descriptor));
@@ -164,8 +172,15 @@ anv_shader_serialize(struct vk_device *device,
                     sizeof(shader->bind_map.input_attachments));
    blob_write_bytes(blob, shader->bind_map.push_ranges,
                     sizeof(shader->bind_map.push_ranges));
+   blob_write_uint8(blob, shader->bind_map.inline_dwords_count);
+   blob_write_bytes(blob, shader->bind_map.inline_dwords,
+                    shader->bind_map.inline_dwords_count);
+   blob_write_uint8(blob, shader->bind_map.used_surface_sets);
+   blob_write_uint8(blob, shader->bind_map.used_sampler_sets);
+   blob_write_uint8(blob, shader->bind_map.pushed_sets);
    blob_write_bytes(blob, shader->bind_map.dynamic_descriptors,
                     sizeof(shader->bind_map.dynamic_descriptors));
+   blob_write_uint8(blob, shader->bind_map.inferred_behavior);
 
    return !blob->out_of_memory;
 }
@@ -257,7 +272,8 @@ write_ir_text(VkPipelineExecutableInternalRepresentationKHR* ir,
 }
 
 static char *
-get_shader_bind_map_text(const struct anv_shader *shader)
+get_shader_bind_map_text(const struct anv_device *device,
+                         const struct anv_shader *shader)
 {
    char *stream_data = NULL;
    size_t stream_size = 0;
@@ -285,12 +301,6 @@ get_shader_bind_map_text(const struct anv_shader *shader)
             fprintf(stream, "Vulkan push constants and API params");
             break;
 
-         case ANV_DESCRIPTOR_SET_DESCRIPTORS_BUFFER:
-            fprintf(stream, "Descriptor buffer (desc buffer) for set %d (start=%dB)",
-                    bind_map->push_ranges[i].index,
-                    bind_map->push_ranges[i].start * 32);
-            break;
-
          case ANV_DESCRIPTOR_SET_DESCRIPTORS:
             fprintf(stream, "Descriptor buffer for set %d (start=%dB)",
                     bind_map->push_ranges[i].index,
@@ -314,7 +324,13 @@ get_shader_bind_map_text(const struct anv_shader *shader)
          fprintf(stream, "\n");
       }
       fprintf(stream, "\n");
+   }
 
+   if (shader->bind_map.inline_dwords_count > 0) {
+      fprintf(stream, "Inline promoted dwords: ");
+      for (unsigned i = 0; i < bind_map->inline_dwords_count; i++)
+         fprintf(stream, "%hhu, ", bind_map->inline_dwords[i]);
+      fprintf(stream, "\n");
    }
 
    fclose(stream);
@@ -337,11 +353,11 @@ get_shader_isa_text(struct anv_device *device,
    FILE *stream = open_memstream(&stream_data, &stream_size);
 
    if (shader->vk.stage == MESA_SHADER_FRAGMENT) {
-      const struct brw_wm_prog_data *wm_prog_data = get_shader_wm_prog_data(shader);
+      const struct brw_fs_prog_data *fs_prog_data = get_shader_fs_prog_data(shader);
 
-      int simd8_index = (wm_prog_data->dispatch_8 || wm_prog_data->dispatch_multi) ? 0 : -1;
-      int simd16_index = wm_prog_data->dispatch_16 ? (simd8_index + 1) : -1;
-      int simd32_index = wm_prog_data->dispatch_32 ? (MAX2(simd8_index, simd16_index) + 1) : -1;
+      int simd8_index = (fs_prog_data->dispatch_8 || fs_prog_data->dispatch_multi) ? 0 : -1;
+      int simd16_index = fs_prog_data->dispatch_16 ? (simd8_index + 1) : -1;
+      int simd32_index = fs_prog_data->dispatch_32 ? (MAX2(simd8_index, simd16_index) + 1) : -1;
 
       if (executable_index == simd8_index) {
          brw_disassemble_with_errors(&device->physical->compiler->isa,
@@ -349,11 +365,11 @@ get_shader_isa_text(struct anv_device *device,
       } else if (executable_index == simd16_index) {
          brw_disassemble_with_errors(&device->physical->compiler->isa,
                                      shader->code,
-                                     wm_prog_data->prog_offset_16, NULL, stream);
+                                     fs_prog_data->prog_offset_16, NULL, stream);
       } else if (executable_index == simd32_index) {
          brw_disassemble_with_errors(&device->physical->compiler->isa,
                                      shader->code,
-                                     wm_prog_data->prog_offset_32, NULL, stream);
+                                     fs_prog_data->prog_offset_32, NULL, stream);
       }
    } else {
       brw_disassemble_with_errors(&device->physical->compiler->isa,
@@ -394,7 +410,7 @@ anv_shader_get_executable_internal_representations(
       }
    }
 
-   char *bind_map_text = get_shader_bind_map_text(shader);
+   char *bind_map_text = get_shader_bind_map_text(device, shader);
    if (bind_map_text != NULL) {
       vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR, &out, ir) {
          VK_COPY_STR(ir->name, "Shader push map");
@@ -438,14 +454,14 @@ anv_shader_set_relocs(struct anv_device *device,
 {
    int rv_count = 0;
    const uint64_t shader_data_addr =
-      device->physical->va.instruction_state_pool.addr +
+      device->physical->va.shader_heap.addr +
       shader->kernel.offset +
       shader->prog_data->const_data_offset;
 
-   assert((device->physical->va.instruction_state_pool.addr & 0xffffffff) == 0);
+   assert((device->physical->va.shader_heap.addr & 0xffffffff) == 0);
    reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
       .id = BRW_SHADER_RELOC_INSTRUCTION_BASE_ADDR_HIGH,
-      .value = device->physical->va.instruction_state_pool.addr >> 32,
+      .value = device->physical->va.shader_heap.addr >> 32,
    };
    assert((device->physical->va.dynamic_visible_pool.addr & 0xffffffff) == 0);
    reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
@@ -460,16 +476,16 @@ anv_shader_set_relocs(struct anv_device *device,
                (device->physical->va.indirect_descriptor_pool.addr >> 32) :
                (device->physical->va.internal_surface_state_pool.addr >> 32),
    };
-   assert((device->physical->va.instruction_state_pool.addr & 0xffffffff) == 0);
+   assert((device->physical->va.shader_heap.addr & 0xffffffff) == 0);
    reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
       .id = INTEL_SHADER_RELOC_CONST_DATA_ADDR_LOW,
       .value = shader_data_addr,
    };
-   assert((device->physical->va.instruction_state_pool.addr & 0xffffffff) == 0);
-   assert(shader_data_addr >> 32 == device->physical->va.instruction_state_pool.addr >> 32);
+   assert((device->physical->va.shader_heap.addr & 0xffffffff) == 0);
+   assert(shader_data_addr >> 32 == device->physical->va.shader_heap.addr >> 32);
    reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
       .id = INTEL_SHADER_RELOC_CONST_DATA_ADDR_HIGH,
-      .value = device->physical->va.instruction_state_pool.addr >> 32,
+      .value = device->physical->va.shader_heap.addr >> 32,
    };
    reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
       .id = INTEL_SHADER_RELOC_SHADER_START_OFFSET,
@@ -479,7 +495,7 @@ anv_shader_set_relocs(struct anv_device *device,
       const struct brw_bs_prog_data *bs_prog_data =
          brw_bs_prog_data_const(shader->prog_data);
       uint64_t resume_sbt_addr =
-         device->physical->va.instruction_state_pool.addr +
+         device->physical->va.shader_heap.addr +
          shader->kernel.offset +
          bs_prog_data->resume_sbt_offset;
       reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
@@ -489,6 +505,18 @@ anv_shader_set_relocs(struct anv_device *device,
       reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
          .id = BRW_SHADER_RELOC_RESUME_SBT_ADDR_HIGH,
          .value = resume_sbt_addr >> 32,
+      };
+   }
+   if (device->info->verx10 >= 125) {
+      reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
+         .id = BRW_SHADER_RELOC_DESCRIPTORS_BUFFERS_VIEW_HANDLE,
+         .value = anv_surface_state_to_handle(
+            device->physical, device->descriptor_buffer_view_state),
+      };
+      reloc_values[rv_count++] = (struct intel_shader_reloc_value) {
+         .id = BRW_SHADER_RELOC_DESCRIPTORS_VIEW_HANDLE,
+         .value = anv_surface_state_to_handle(
+            device->physical, device->descriptor_view_state),
       };
    }
 
@@ -689,8 +717,10 @@ anv_shader_create(struct anv_device *device,
       goto error_state;
 
    anv_shader_heap_upload(&device->shader_heap,
-                          shader->kernel, shader_data->code,
-                          shader_data->prog_data.base.program_size);
+                          shader->kernel,
+                          shader_data->code,
+                          shader->prog_data,
+                          shader->stats->dispatch_width);
 
    if (mesa_shader_stage_is_rt(shader->vk.stage)) {
       const struct brw_bs_prog_data *bs_prog_data =
@@ -855,8 +885,10 @@ anv_replay_rt_shader_group(struct vk_device *vk_device,
          assert(result == VK_SUCCESS);
 
          anv_shader_heap_upload(&device->shader_heap,
-                                shader->replay_kernel, shader->code,
-                                shader->prog_data->program_size);
+                                shader->replay_kernel,
+                                shader->code,
+                                shader->prog_data,
+                                shader->stats->dispatch_width);
       }
 
       simple_mtx_unlock(&shader->replay_mutex);

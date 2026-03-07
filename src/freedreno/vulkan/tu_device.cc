@@ -174,12 +174,13 @@ get_device_extensions(const struct tu_physical_device *device,
       .KHR_bind_memory2 = true,
       .KHR_buffer_device_address = true,
       .KHR_calibrated_timestamps = device->info->props.has_persistent_counter,
-      .KHR_compute_shader_derivatives = device->info->chip >= 7,
+      .KHR_compute_shader_derivatives = true,
       .KHR_copy_commands2 = true,
       // TODO workaround for https://github.com/KhronosGroup/VK-GL-CTS/issues/525
       .KHR_create_renderpass2 = true, // tu_has_multiview(device),
       .KHR_dedicated_allocation = true,
       .KHR_deferred_host_operations = true,
+      .KHR_depth_clamp_zero_one = true,
       .KHR_depth_stencil_resolve = true,
       .KHR_descriptor_update_template = true,
       .KHR_device_group = true,
@@ -336,6 +337,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .EXT_shader_module_identifier = true,
       .EXT_shader_replicated_composites = true,
       .EXT_shader_stencil_export = true,
+      .EXT_shader_uniform_buffer_unsized_array = true,
       .EXT_shader_viewport_index_layer = tu_has_multiview(device),
       .EXT_subgroup_size_control = tu_is_vk_1_1(device),
 #ifdef TU_USE_WSI_PLATFORM
@@ -356,7 +358,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .GOOGLE_hlsl_functionality1 = true,
       .GOOGLE_user_type = true,
       .IMG_filter_cubic = device->info->props.has_tex_filter_cubic,
-      .NV_compute_shader_derivatives = device->info->chip >= 7,
+      .NV_compute_shader_derivatives = true,
       .QCOM_fragment_density_map_offset = true,
       .QCOM_image_processing = device->info->props.has_image_processing,
       .QCOM_multiview_per_view_render_areas = true,
@@ -532,7 +534,7 @@ tu_get_features(struct tu_physical_device *pdevice,
 
    /* VK_KHR_compute_shader_derivatives */
    features->computeDerivativeGroupQuads = pdevice->info->chip >= 7;
-   features->computeDerivativeGroupLinear = pdevice->info->chip >= 7;
+   features->computeDerivativeGroupLinear = true;
 
    /* VK_KHR_dynamic_rendering_local_read */
    features->dynamicRenderingLocalRead = true;
@@ -628,7 +630,7 @@ tu_get_features(struct tu_physical_device *pdevice,
    features->customBorderColors = true;
    features->customBorderColorWithoutFormat = true;
 
-   /* VK_EXT_depth_clamp_zero_one */
+   /* VK_KHR_depth_clamp_zero_one */
    features->depthClampZeroOne = true;
 
    /* VK_EXT_depth_clip_control */
@@ -789,6 +791,9 @@ tu_get_features(struct tu_physical_device *pdevice,
 
    /* VK_EXT_shader_replicated_composites */
    features->shaderReplicatedComposites = true;
+
+   /* VK_EXT_shader_uniform_buffer_unsized_array */
+   features->shaderUniformBufferUnsizedArray = true;
 
 #ifdef TU_USE_WSI_PLATFORM
    /* VK_KHR_swapchain_maintenance1 */
@@ -1406,7 +1411,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->samplerDescriptorBufferAddressSpaceSize = ~0ull;
    props->resourceDescriptorBufferAddressSpaceSize = ~0ull;
    props->descriptorBufferAddressSpaceSize = ~0ull;
-   props->combinedImageSamplerDensityMapDescriptorSize = 2 * FDL6_TEX_CONST_DWORDS * 4;
+   props->combinedImageSamplerDensityMapDescriptorSize = 3 * FDL6_TEX_CONST_DWORDS * 4;
 
    /* VK_EXT_legacy_vertex_attributes */
    props->nativeUnalignedPerformance = true;
@@ -1529,7 +1534,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->fullyCoveredFragmentShaderInputVariable = false;
    props->conservativeRasterizationPostDepthCoverage = false;
 
-   /* VK_QCOM_fragment_density_map_offset */
+   /* VK_EXT_fragment_density_map_offset */
    props->fragmentDensityOffsetGranularity = (VkExtent2D) { 
       TU_FDM_OFFSET_GRANULARITY, TU_FDM_OFFSET_GRANULARITY
    };
@@ -2489,24 +2494,10 @@ static const struct debug_named_value tu_reg_stomper_options[] = {
 };
 
 template <chip CHIP>
-static inline void
-tu_cs_dbg_stomp_regs(struct tu_cs *cs,
-                     bool is_rp_blit,
-                     uint32_t first_reg,
-                     uint32_t last_reg,
-                     bool inverse)
+static void
+stomp_regs(struct tu_cs *cs, const uint16_t *regs, size_t count,
+           uint32_t first_reg, uint32_t last_reg, bool inverse)
 {
-   const uint16_t *regs = NULL;
-   size_t count = 0;
-
-   if (is_rp_blit) {
-      regs = &RP_BLIT_REGS<CHIP>[0];
-      count = ARRAY_SIZE(RP_BLIT_REGS<CHIP>);
-   } else {
-      regs = &CMD_REGS<CHIP>[0];
-      count = ARRAY_SIZE(CMD_REGS<CHIP>);
-   }
-
    for (size_t i = 0; i < count; i++) {
       if (inverse) {
          if (regs[i] >= first_reg && regs[i] <= last_reg)
@@ -2518,6 +2509,30 @@ tu_cs_dbg_stomp_regs(struct tu_cs *cs,
 
       if (fd_reg_stomp_allowed(CHIP, regs[i]))
          tu_cs_emit_write_reg(cs, regs[i], 0xffffffff);
+   }
+}
+
+template <chip CHIP>
+static inline void
+tu_cs_dbg_stomp_regs(struct tu_cs *cs,
+                     bool is_rp_blit,
+                     uint32_t first_reg,
+                     uint32_t last_reg,
+                     bool inverse)
+{
+   if (is_rp_blit) {
+      stomp_regs<CHIP>(cs, &DRAW_REGS<CHIP>[0], ARRAY_SIZE(DRAW_REGS<CHIP>),
+                       first_reg, last_reg, inverse);
+      stomp_regs<CHIP>(cs, &BLIT_REGS<CHIP>[0], ARRAY_SIZE(BLIT_REGS<CHIP>),
+                       first_reg, last_reg, inverse);
+      stomp_regs<CHIP>(cs, &COMPUTE_REGS<CHIP>[0], ARRAY_SIZE(COMPUTE_REGS<CHIP>),
+                       first_reg, last_reg, inverse);
+      tu_init_hw_rp<CHIP>(cs);
+   } else {
+      stomp_regs<CHIP>(cs, &CMD_REGS<CHIP>[0], ARRAY_SIZE(CMD_REGS<CHIP>),
+                       first_reg, last_reg, inverse);
+      stomp_regs<CHIP>(cs, &RESOLVE_REGS<CHIP>[0], ARRAY_SIZE(RESOLVE_REGS<CHIP>),
+                       first_reg, last_reg, inverse);
    }
 }
 

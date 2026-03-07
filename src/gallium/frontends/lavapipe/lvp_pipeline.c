@@ -418,7 +418,7 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
    NIR_PASS(_, nir, nir_lower_system_values);
    NIR_PASS(_, nir, nir_lower_is_helper_invocation);
 
-   bool progress;
+   bool progress = false;
    NIR_PASS(progress, nir, nir_lower_cooperative_matrix_flexible_dimensions, 8, 8, 8);
    if (progress) {
       NIR_PASS(_, nir, nir_opt_deref);
@@ -466,7 +466,8 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
    NIR_PASS(_, nir, nir_vk_lower_ycbcr_tex, lvp_ycbcr_conversion_lookup, layout);
 
    nir_lower_non_uniform_access_options options = {
-      .types = nir_lower_non_uniform_ubo_access | nir_lower_non_uniform_texture_access | nir_lower_non_uniform_image_access,
+      .types = nir_lower_non_uniform_ubo_access | nir_lower_non_uniform_texture_access | nir_lower_non_uniform_image_access |
+               nir_lower_non_uniform_texture_query | nir_lower_non_uniform_image_query,
    };
    NIR_PASS(_, nir, nir_lower_non_uniform_access, &options);
 
@@ -496,7 +497,7 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
       NIR_PASS(_, nir, nir_lower_io_array_vars_to_elements_no_indirects, true);
    }
 
-   // TODO: also optimize the tex srcs. see radeonSI for reference */
+   /* TODO: also optimize the tex srcs. see radeonSI for reference */
    /* Skip if there are potentially conflicting rounding modes */
    struct nir_opt_16bit_tex_image_options opt_16bit_options = {
       .rounding_mode = nir_rounding_mode_undef,
@@ -513,7 +514,11 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
        * lvp_nir_lower_sparse_residency.
        */
       .lower_tg4_offsets = true,
-      .lower_txd = true,
+      /* The NIR derivative lowering doesn't do the elliptical derivative
+       * transform. It matters for accurate anisotropic filtering, so we'll
+       * implement explicit derivatives internally instead.
+       */
+      .lower_txd = false,
    };
    NIR_PASS(_, nir, nir_lower_tex, &tex_options);
    NIR_PASS(_, nir, nir_lower_int64);

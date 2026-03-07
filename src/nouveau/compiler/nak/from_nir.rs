@@ -1712,30 +1712,6 @@ impl<'a> ShaderFromNir<'a> {
                 let src0_y = srcs(0).as_ssa().unwrap()[1];
                 b.copy(src0_y.into()).into()
             }
-            nir_op_unpack_half_2x16_split_x
-            | nir_op_unpack_half_2x16_split_y => {
-                assert!(alu.def.bit_size() == 32);
-                let dst = b.alloc_ssa(RegFile::GPR);
-
-                let swizzle = if alu.op == nir_op_unpack_half_2x16_split_x {
-                    SrcSwizzle::Xx
-                } else {
-                    SrcSwizzle::Yy
-                };
-
-                b.push_op(OpF2F {
-                    dst: dst.into(),
-                    src: srcs(0).swizzle(swizzle),
-                    src_type: FloatType::F16,
-                    dst_type: FloatType::F32,
-                    rnd_mode: FRndMode::NearestEven,
-                    ftz: false,
-                    dst_high: false,
-                    integer_rnd: false,
-                });
-
-                dst.into()
-            }
             nir_op_ushr => {
                 if alu.def.bit_size() == 64 {
                     let shift = if let Some(s) = nir_srcs[1].comp_as_uint(0) {
@@ -2965,6 +2941,7 @@ impl<'a> ShaderFromNir<'a> {
                     atom_op: atom_op,
                     atom_type: atom_type,
                     addr_offset: intrin.base(),
+                    addr_stride: OffsetStride::X1,
                     mem_space: MemSpace::Global(MemAddrType::A64),
                     mem_order: MemOrder::Strong(MemScope::GPU),
                     mem_eviction_priority: MemEvictionPriority::Normal, // Note: no intrinic access
@@ -2990,6 +2967,7 @@ impl<'a> ShaderFromNir<'a> {
                     atom_op: AtomOp::CmpExch(AtomCmpSrc::Separate),
                     atom_type: atom_type,
                     addr_offset: intrin.base(),
+                    addr_stride: OffsetStride::X1,
                     mem_space: MemSpace::Global(MemAddrType::A64),
                     mem_order: MemOrder::Strong(MemScope::GPU),
                     mem_eviction_priority: MemEvictionPriority::Normal, // Note: no intrinic access
@@ -3099,6 +3077,7 @@ impl<'a> ShaderFromNir<'a> {
                     dst: dst.clone().into(),
                     addr: addr,
                     offset: intrin.base(),
+                    stride: OffsetStride::X1,
                     access: access,
                 });
                 self.set_dst(&intrin.def, dst);
@@ -3208,6 +3187,7 @@ impl<'a> ShaderFromNir<'a> {
                     dst: dst.clone().into(),
                     addr: addr,
                     offset: intrin.base(),
+                    stride: OffsetStride::X1,
                     access: access,
                 });
                 self.set_dst(&intrin.def, dst);
@@ -3229,6 +3209,7 @@ impl<'a> ShaderFromNir<'a> {
                     dst: dst.clone().into(),
                     addr: addr,
                     offset: intrin.base(),
+                    stride: intrin.offset_shift_nv().try_into().unwrap(),
                     access: access,
                 });
                 self.set_dst(&intrin.def, dst);
@@ -3551,6 +3532,7 @@ impl<'a> ShaderFromNir<'a> {
                     atom_op: atom_op,
                     atom_type: atom_type,
                     addr_offset: intrin.base(),
+                    addr_stride: intrin.offset_shift_nv().try_into().unwrap(),
                     mem_space: MemSpace::Shared,
                     mem_order: MemOrder::Strong(MemScope::CTA),
                     mem_eviction_priority: MemEvictionPriority::Normal,
@@ -3576,6 +3558,7 @@ impl<'a> ShaderFromNir<'a> {
                     atom_op: AtomOp::CmpExch(AtomCmpSrc::Separate),
                     atom_type: atom_type,
                     addr_offset: intrin.base(),
+                    addr_stride: intrin.offset_shift_nv().try_into().unwrap(),
                     mem_space: MemSpace::Shared,
                     mem_order: MemOrder::Strong(MemScope::CTA),
                     mem_eviction_priority: MemEvictionPriority::Normal,
@@ -3604,6 +3587,7 @@ impl<'a> ShaderFromNir<'a> {
                     addr: addr,
                     data: data,
                     offset: intrin.base(),
+                    stride: OffsetStride::X1,
                     access: access,
                 });
             }
@@ -3634,6 +3618,7 @@ impl<'a> ShaderFromNir<'a> {
                     addr: addr,
                     data: data,
                     offset: intrin.base(),
+                    stride: OffsetStride::X1,
                     access: access,
                 });
             }
@@ -3654,6 +3639,7 @@ impl<'a> ShaderFromNir<'a> {
                     addr: addr,
                     data: data,
                     offset: intrin.base(),
+                    stride: intrin.offset_shift_nv().try_into().unwrap(),
                     access: access,
                 });
             }

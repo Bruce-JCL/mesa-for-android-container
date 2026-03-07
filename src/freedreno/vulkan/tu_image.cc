@@ -29,6 +29,7 @@
 #include "tu_formats.h"
 #include "tu_lrz.h"
 #include "tu_rmv.h"
+#include "tu_subsampled_image.h"
 #include "tu_wsi.h"
 
 uint32_t
@@ -538,6 +539,15 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
          /* no UBWC for separate stencil */
          image->ubwc_enabled = false;
 
+      /* Subsampled images with FDM offset require extra space for adjusting
+       * the offset to make the tiles aligned.
+       */
+      if ((image->vk.create_flags & VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT) &&
+          (image->vk.create_flags & VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_EXT)) {
+         width0 += device->physical_device->info->tile_align_w;
+         height0 += device->physical_device->info->tile_align_h;
+      }
+
       struct fdl_explicit_layout plane_layout;
 
       if (plane_layouts) {
@@ -571,6 +581,7 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
          .sparse = image->vk.create_flags &
             VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT,
          .force_disable_linear_fallback = image->force_disable_linear_fallback,
+         .plane = i,
       };
 
       if (!fdl6_layout_image(layout, &device->physical_device->dev_info,
@@ -631,6 +642,12 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
    } else {
       image->lrz_layout.lrz_height = 0;
       image->lrz_layout.lrz_total_size = 0;
+   }
+
+   if (image->vk.create_flags & VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT) {
+      image->subsampled_metadata_offset = align64(image->total_size, 16);
+      image->total_size = image->subsampled_metadata_offset +
+         image->vk.array_layers * sizeof(struct tu_subsampled_metadata);
    }
 
    return VK_SUCCESS;

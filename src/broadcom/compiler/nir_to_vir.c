@@ -1775,16 +1775,6 @@ ntq_emit_alu(struct v3d_compile *c, nir_alu_instr *instr)
                 result = vir_V8PACK(c, src[0], src[1]);
                 break;
 
-        case nir_op_unpack_half_2x16_split_x:
-                result = vir_FMOV(c, src[0]);
-                vir_set_unpack(c->defs[result.index], 0, V3D_QPU_UNPACK_L);
-                break;
-
-        case nir_op_unpack_half_2x16_split_y:
-                result = vir_FMOV(c, src[0]);
-                vir_set_unpack(c->defs[result.index], 0, V3D_QPU_UNPACK_H);
-                break;
-
         case nir_op_pack_2x16_to_unorm_2x8_v3d:
                 result = vir_VFTOUNORM8(c, src[0]);
                 break;
@@ -2502,7 +2492,9 @@ ntq_setup_outputs(struct v3d_compile *c)
                         c->output_position_index = loc;
                         break;
                 case FRAG_RESULT_SAMPLE_MASK:
-                        c->output_sample_mask_index = loc;
+                        if (!c->fs_key->ignore_sample_mask) {
+                                c->output_sample_mask_index = loc;
+                        }
                         break;
                 }
         }
@@ -3648,13 +3640,16 @@ ntq_emit_intrinsic(struct v3d_compile *c, nir_intrinsic_instr *instr)
                 ntq_emit_image_size(c, instr);
                 break;
 
-        /* FIXME: the Vulkan and SPIR-V specs specify that OpTerminate (which
+        /* The Vulkan and SPIR-V specs specify that OpTerminate (which
          * is intended to match the semantics of GLSL's discard) should
-         * terminate the invocation immediately. Our implementation doesn't
-         * do that. What we do is actually a demote by removing the invocations
-         * from the sample mask. Maybe we could be more strict and force an
-         * early termination by emitting a (maybe conditional) jump to the
-         * end section of the fragment shader for affected invocations.
+         * terminate the invocation immediately but our implementation
+         * doesn't do that. We could implement it by emitting a jump to
+         * the end of the shader, however, we have not observed any gains
+         * from this in real use cases, and doing that would require us to
+         * always emit additional instructions for terminates, so we discarded
+         * that approach. See
+         * https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/38381
+         * for more details.
          */
         case nir_intrinsic_terminate:
                 c->emitted_discard = true;

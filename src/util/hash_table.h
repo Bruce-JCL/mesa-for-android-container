@@ -48,6 +48,7 @@ struct hash_table {
    struct hash_entry *table;
    uint32_t (*key_hash_function)(const void *key);
    bool (*key_equals_function)(const void *a, const void *b);
+   void (*table_destructor)(void *data);
    const void *deleted_key;
    uint32_t size;
    uint32_t rehash;
@@ -85,6 +86,8 @@ void
 _mesa_hash_table_fini(struct hash_table *ht,
                       void (*delete_function)(struct hash_entry *entry));
 
+/* key == 0 and key == UINT32_MAX are not allowed */
+/* It's preferred to use _mesa_hash_table_init_u32_keys instead of this to skip ralloc. */
 struct hash_table *
 _mesa_hash_table_create_u32_keys(void *mem_ctx);
 

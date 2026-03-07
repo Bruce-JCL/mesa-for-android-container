@@ -332,6 +332,71 @@ anv_device_finish_trtt(struct anv_device *device)
    vk_free(&device->vk.alloc, trtt->page_table_bos);
 }
 
+static void
+anv_device_init_descriptors_view(struct anv_device *device)
+{
+   if (!device->info->has_lsc)
+      return;
+
+   struct anv_physical_device *pdevice = device->physical;
+
+   /* For descriptor buffers */
+   {
+      device->descriptor_buffer_view_state =
+         anv_state_pool_alloc(&device->scratch_surface_state_pool,
+                              device->isl_dev.ss.size, 64);
+
+      const uint64_t size = pdevice->va.dynamic_visible_pool.size +
+                            pdevice->va.push_descriptor_buffer_pool.size;
+      assert(size <= 4ull * 1024 * 1024 * 1024);
+
+      isl_buffer_fill_state(&device->isl_dev,
+                            device->descriptor_buffer_view_state.map,
+                            .address = pdevice->va.dynamic_visible_pool.addr,
+                            .size_B = size,
+                            .mocs = anv_mocs(device, NULL, ISL_SURF_USAGE_CONSTANT_BUFFER_BIT),
+                            .format = ISL_FORMAT_RAW,
+                            .swizzle = ISL_SWIZZLE_IDENTITY,
+                            .stride_B = 1,
+                            .is_scratch = false,
+                            .usage = ISL_SURF_USAGE_CONSTANT_BUFFER_BIT);
+   }
+
+   /* For descriptors */
+   {
+      device->descriptor_view_state =
+         anv_state_pool_alloc(&device->scratch_surface_state_pool,
+                              device->isl_dev.ss.size, 64);
+
+      const uint64_t size =
+         pdevice->va.internal_surface_state_pool.size +
+         pdevice->va.bindless_surface_state_pool.size;
+
+      isl_buffer_fill_state(&device->isl_dev,
+                            device->descriptor_view_state.map,
+                            .address = pdevice->va.internal_surface_state_pool.addr,
+                            .size_B = size,
+                            .mocs = anv_mocs(device, NULL, ISL_SURF_USAGE_CONSTANT_BUFFER_BIT),
+                            .format = ISL_FORMAT_RAW,
+                            .swizzle = ISL_SWIZZLE_IDENTITY,
+                            .stride_B = 1,
+                            .is_scratch = false,
+                            .usage = ISL_SURF_USAGE_CONSTANT_BUFFER_BIT);
+   }
+}
+
+static void
+anv_device_finish_descriptors_view(struct anv_device *device)
+{
+   if (!device->info->has_lsc)
+      return;
+
+   anv_state_pool_free(&device->scratch_surface_state_pool,
+                       device->descriptor_buffer_view_state);
+   anv_state_pool_free(&device->scratch_surface_state_pool,
+                       device->descriptor_view_state);
+}
+
 VkResult anv_CreateDevice(
     VkPhysicalDevice                            physicalDevice,
     const VkDeviceCreateInfo*                   pCreateInfo,
@@ -436,7 +501,7 @@ VkResult anv_CreateDevice(
          decoder->engine = physical_device->queue.families[i].engine_class;
          decoder->dynamic_base = physical_device->va.dynamic_state_pool.addr;
          decoder->surface_base = physical_device->va.internal_surface_state_pool.addr;
-         decoder->instruction_base = physical_device->va.instruction_state_pool.addr;
+         decoder->instruction_base = physical_device->va.shader_heap.addr;
       }
    }
 
@@ -588,7 +653,7 @@ VkResult anv_CreateDevice(
       goto fail_dynamic_state_pool;
 
    result = anv_shader_heap_init(&device->shader_heap, device,
-                                 device->physical->va.instruction_state_pool,
+                                 device->physical->va.shader_heap,
                                  21 /* 2MiB */, 27 /* 64MiB */);
    if (result != VK_SUCCESS)
       goto fail_custom_border_color_pool;
@@ -647,7 +712,7 @@ VkResult anv_CreateDevice(
                                    &(struct anv_state_pool_params) {
                                       .name         = "binding table pool",
                                       .base_address = device->physical->va.binding_table_pool.addr,
-                                      .block_size   = BINDING_TABLE_POOL_BLOCK_SIZE,
+                                      .block_size   = device->physical->instance->binding_table_block_size,
                                       .max_size     = device->physical->va.binding_table_pool.size,
                                    });
    } else {
@@ -665,7 +730,7 @@ VkResult anv_CreateDevice(
                                       .name         = "binding table pool",
                                       .base_address = device->physical->va.internal_surface_state_pool.addr,
                                       .start_offset = bt_pool_offset,
-                                      .block_size   = BINDING_TABLE_POOL_BLOCK_SIZE,
+                                      .block_size   = 64 * 1024,
                                       .max_size     = device->physical->va.internal_surface_state_pool.size,
                                    });
    }
@@ -982,6 +1047,8 @@ VkResult anv_CreateDevice(
 
    anv_device_init_embedded_samplers(device);
 
+   anv_device_init_descriptors_view(device);
+
    BITSET_ONES(device->gfx_dirty_state);
    BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_INDEX_BUFFER);
    BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_SO_DECL_LIST);
@@ -1055,6 +1122,7 @@ VkResult anv_CreateDevice(
  fail_queues:
    for (uint32_t i = 0; i < device->queue_count; i++)
       anv_queue_finish(&device->queues[i]);
+   anv_device_finish_descriptors_view(device);
    anv_device_finish_embedded_samplers(device);
    anv_device_finish_blorp(device);
    anv_device_finish_astc_emu(device);
@@ -1202,6 +1270,8 @@ void anv_DestroyDevice(
    anv_device_finish_astc_emu(device);
 
    anv_device_finish_internal_kernels(device);
+
+   anv_device_finish_descriptors_view(device);
 
    if (INTEL_DEBUG(DEBUG_SHADER_PRINT))
       anv_device_print_fini(device);
@@ -1579,19 +1649,18 @@ VkResult anv_AllocateMemory(
                              NULL;
    mem->dedicated_image = image;
 
+   /* If there is a dedicated image with a modifier, use that to determine
+    * compression, otherwise use the memory type.
+    */
    if (device->info->ver >= 20 && image &&
-       image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
-       isl_drm_modifier_has_aux(image->vk.drm_format_mod)) {
-      /* ISL should skip compression modifiers when no_ccs is set. */
-      assert(!INTEL_DEBUG(DEBUG_NO_CCS));
-      /* Images created with the Xe2 modifiers should be allocated into
-       * compressed memory, but we won't get such info from the memory type,
-       * refer to anv_image_is_pat_compressible(). We have to check the
-       * modifiers and enable compression if we can here.
-       */
-      alloc_flags |= ANV_BO_ALLOC_COMPRESSED;
-   } else if (mem_type->compressed && !INTEL_DEBUG(DEBUG_NO_CCS)) {
-      alloc_flags |= ANV_BO_ALLOC_COMPRESSED;
+       image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
+      const bool needs_compression =
+         isl_drm_modifier_has_aux(image->vk.drm_format_mod);
+      assert(!needs_compression || !INTEL_DEBUG(DEBUG_NO_CCS));
+      alloc_flags |= needs_compression ? ANV_BO_ALLOC_COMPRESSED : 0;
+   } else {
+      alloc_flags |= (mem_type->compressed && !INTEL_DEBUG(DEBUG_NO_CCS)) ?
+                      ANV_BO_ALLOC_COMPRESSED : 0;
    }
 
    /* Anything imported or exported is EXTERNAL */

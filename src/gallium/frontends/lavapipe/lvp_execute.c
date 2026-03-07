@@ -868,6 +868,9 @@ static void handle_graphics_pipeline(struct lvp_pipeline *pipeline,
       if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_RS_RASTERIZER_DISCARD_ENABLE))
          state->rs_state.rasterizer_discard = ps->rs->rasterizer_discard_enable;
 
+      if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_RS_RASTERIZATION_STREAM))
+         state->rs_state.rasterization_stream = ps->rs->rasterization_stream;
+
       if (!BITSET_TEST(ps->dynamic, MESA_VK_DYNAMIC_RS_LINE_MODE)) {
          state->rs_state.line_smooth = pipeline->line_smooth;
          state->rs_state.line_rectangular = pipeline->line_rectangular;
@@ -1759,7 +1762,6 @@ create_multisample_surface(struct rendering_state *state, struct lvp_image_view 
    templ.nr_samples = samples;
    struct lvp_image *image = mem_dup(imgv->vk.image, sizeof(struct lvp_image));
    image->vk.samples = samples;
-   image->planes[0].pmem = NULL;
    image->planes[0].bo = state->pctx->screen->resource_create(state->pctx->screen, &templ);
 
    struct lvp_image_view *multi = mem_dup(imgv, sizeof(struct lvp_image_view));
@@ -4842,7 +4844,7 @@ handle_trace_rays_indirect2(struct vk_cmd_queue_entry *cmd, struct rendering_sta
 static void
 handle_write_buffer_cp(struct vk_cmd_queue_entry *cmd, struct rendering_state *state)
 {
-   struct lvp_cmd_write_buffer_cp *write = cmd->driver_data;
+   struct lvp_cmd_write_buffer_cp *write = (struct lvp_cmd_write_buffer_cp *)cmd;
 
    finish_fence(state);
 
@@ -4878,7 +4880,7 @@ handle_dispatch_unaligned(struct vk_cmd_queue_entry *cmd, struct rendering_state
 static void
 handle_fill_buffer_addr(struct vk_cmd_queue_entry *cmd, struct rendering_state *state)
 {
-   struct lvp_cmd_fill_buffer_addr *fill = cmd->driver_data;
+   struct lvp_cmd_fill_buffer_addr *fill = (struct lvp_cmd_fill_buffer_addr *)cmd;
 
    finish_fence(state);
 
@@ -4891,7 +4893,7 @@ handle_fill_buffer_addr(struct vk_cmd_queue_entry *cmd, struct rendering_state *
 static void
 handle_encode_as(struct vk_cmd_queue_entry *cmd, struct rendering_state *state)
 {
-   struct lvp_cmd_encode_as *encode = cmd->driver_data;
+   struct lvp_cmd_encode_as *encode = (struct lvp_cmd_encode_as *)cmd;
 
    finish_fence(state);
 
@@ -5067,7 +5069,6 @@ void lvp_add_enqueue_cmd_entrypoints(struct vk_device_dispatch_table *disp)
    ENQUEUE_CMD(CmdCopyAccelerationStructureKHR)
    ENQUEUE_CMD(CmdCopyMemoryToAccelerationStructureKHR)
    ENQUEUE_CMD(CmdCopyAccelerationStructureToMemoryKHR)
-   ENQUEUE_CMD(CmdBuildAccelerationStructuresIndirectKHR)
    ENQUEUE_CMD(CmdWriteAccelerationStructuresPropertiesKHR)
 
    ENQUEUE_CMD(CmdSetRayTracingPipelineStackSizeKHR)

@@ -263,7 +263,7 @@ libclc_add_generic_variants(nir_shader *shader)
       if (strstr(func->name, "async_work_group_strided_copy"))
          continue;
 
-      char *U3AS1 = strstr(func->name, "U3AS1");
+      const char *U3AS1 = strstr(func->name, "U3AS1");
       if (U3AS1 == NULL)
          continue;
 
@@ -321,7 +321,7 @@ libclc_add_generic_variants(nir_shader *shader)
 static bool
 mark_exact(nir_builder *b, nir_alu_instr *alu, UNUSED void *_)
 {
-   alu->fp_math_ctrl |= nir_fp_exact;
+   alu->fp_math_ctrl |= nir_op_valid_fp_math_ctrl(alu->op, nir_fp_exact);
    return true;
 }
 
