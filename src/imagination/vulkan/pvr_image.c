@@ -270,24 +270,11 @@ VkResult pvr_CreateImage(VkDevice _device,
 {
    VK_FROM_HANDLE(pvr_device, device, _device);
    struct pvr_image *image;
-   uint64_t modifier = DRM_FORMAT_MOD_INVALID;
-   VkResult res;
-
-   unsigned pbe_stride_align = get_pbe_stride_align(&device->pdevice->dev_info);
 
    if (wsi_common_is_swapchain_image(pCreateInfo)) {
       return wsi_common_create_swapchain_image(&device->pdevice->wsi_device,
                                                pCreateInfo,
                                                pImage);
-   }
-
-   if (pCreateInfo->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
-      res = pvr_pick_modifier(pCreateInfo, pbe_stride_align,
-                              &modifier);
-      if (res != VK_SUCCESS)
-         return vk_error(device, res);
-
-      assert(modifier == DRM_FORMAT_MOD_LINEAR);
    }
 
    image =

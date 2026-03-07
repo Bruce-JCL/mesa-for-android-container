@@ -13914,12 +13914,7 @@ typedef void* <name>MTLSharedEvent_id</name>;
             <param optional="true" externsync="true"><type>VkDevice</type> <name>device</name></param>
             <param optional="true">const <type>VkAllocationCallbacks</type>* <name>pAllocator</name></param>
             <implicitexternsyncparams>
-                <param>all sname:VkQueue objects created from pname:device
-ifdef::VK_KHR_internally_synchronized_queues[]
-    that are not created with
-    ename:VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR
-endif::VK_KHR_internally_synchronized_queues[]
-                </param>
+                <param>all sname:VkQueue objects created from pname:device</param>
             </implicitexternsyncparams>
         </command>
         <command export="vulkan,vulkansc" successcodes="VK_SUCCESS" errorcodes="VK_ERROR_OUT_OF_HOST_MEMORY,VK_ERROR_UNKNOWN,VK_ERROR_VALIDATION_FAILED">
@@ -30350,49 +30345,6 @@ endif::VK_KHR_internally_synchronized_queues[]
             <require>
                 <enum value="0"                                            name="VK_SEC_EXTENSION_675_SPEC_VERSION"/>
                 <enum value="&quot;VK_SEC_extension_675&quot;"             name="VK_SEC_EXTENSION_675_EXTENSION_NAME"/>
-            </require>
-        </extension>
-        <extension name="VK_GOOGLE_extension_666" number="666" author="GOOGLE" contact="Michael Anttila @michaelanttila" supported="disabled">
-            <require>
-                <enum value="0"                                             name="VK_GOOGLE_EXTENSION_666_SPEC_VERSION"/>
-                <enum value="&quot;VK_GOOGLE_extension_666&quot;"           name="VK_GOOGLE_EXTENSION_666_EXTENSION_NAME"/>
-            </require>
-        </extension>
-        <extension name="VK_HUAWEI_extension_667" number="667" author="HUAWEI" contact="Pan Gao @pangao-h" supported="disabled">
-            <require>
-                <enum value="0"                                             name="VK_HUAWEI_EXTENSION_667_SPEC_VERSION"/>
-                <enum value="&quot;VK_HUAWEI_extension_667&quot;"           name="VK_HUAWEI_EXTENSION_667_EXTENSION_NAME"/>
-                <enum bitpos="4"  extends="VkCommandBufferUsageFlagBits"    name="VK_COMMAND_BUFFER_USAGE_RESERVED_4_BIT_HUAWEI"/>
-            </require>
-        </extension>
-        <extension name="VK_NV_extension_668" number="668" author="NV" contact="Chris Lentini @clentini" supported="disabled">
-            <require>
-                <enum value="0"                                            name="VK_NV_EXTENSION_668_SPEC_VERSION"/>
-                <enum value="&quot;VK_NV_extension_668&quot;"              name="VK_NV_EXTENSION_668_EXTENSION_NAME"/>
-            </require>
-        </extension>
-        <extension name="VK_KHR_extension_669" number="669" author="KHR" contact="Jon Leech @oddhack" supported="disabled">
-            <require>
-                <enum value="0"                                            name="VK_KHR_EXTENSION_669_SPEC_VERSION"/>
-                <enum value="&quot;VK_KHR_extension_669&quot;"             name="VK_KHR_EXTENSION_669_EXTENSION_NAME"/>
-            </require>
-        </extension>
-        <extension name="VK_NV_extension_670" number="670" author="NV" contact="Charles Hansen @cshansen" supported="disabled">
-            <require>
-                <enum value="0"                                            name="VK_NV_EXTENSION_670_SPEC_VERSION"/>
-                <enum value="&quot;VK_NV_extension_670&quot;"              name="VK_NV_EXTENSION_670_EXTENSION_NAME"/>
-            </require>
-        </extension>
-        <extension name="VK_ARM_extension_671" number="671" author="ARM" contact="Kevin Petit @kpet" supported="disabled">
-            <require>
-                <enum value="0"                                            name="VK_ARM_EXTENSION_671_SPEC_VERSION"/>
-                <enum value="&quot;VK_ARM_extension_671&quot;"             name="VK_ARM_EXTENSION_671_EXTENSION_NAME"/>
-            </require>
-        </extension>
-        <extension name="VK_KHR_extension_672" number="672" author="KHR" contact="Graeme Leese @gnl21" supported="disabled">
-            <require>
-                <enum value="0"                                            name="VK_KHR_EXTENSION_672_SPEC_VERSION"/>
-                <enum value="&quot;VK_KHR_extension_672&quot;"             name="VK_KHR_EXTENSION_672_EXTENSION_NAME"/>
             </require>
         </extension>
     </extensions>

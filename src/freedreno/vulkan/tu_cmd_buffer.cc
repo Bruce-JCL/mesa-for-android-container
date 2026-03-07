@@ -1312,13 +1312,6 @@ use_hw_binning(struct tu_cmd_buffer *cmd)
    return vsc->binning;
 }
 
-static uint32_t
-tu_fdm_num_layers(const struct tu_cmd_buffer *cmd)
-{
-   return cmd->state.pass->num_views ? cmd->state.pass->num_views : 
-      (cmd->state.fdm_per_layer ? cmd->state.framebuffer->layers : 1);
-}
-
 static bool
 use_sysmem_rendering(struct tu_cmd_buffer *cmd,
                      struct tu_renderpass_result **autotune_result)

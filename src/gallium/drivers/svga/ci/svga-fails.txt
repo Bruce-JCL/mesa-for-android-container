@@ -405,7 +405,6 @@ spec@arb_tessellation_shader@execution@barrier-patch,Fail
 spec@arb_tessellation_shader@execution@invocation-counting-even,Fail
 spec@arb_tessellation_shader@execution@invocation-counting-odd,Fail
 spec@arb_tessellation_shader@execution@tcs-primitiveid,Fail
-spec@arb_tessellation_shader@execution@tcs-input@tcs-input-vec2,Fail
 spec@arb_tessellation_shader@execution@tesslevels-indirect,Fail
 spec@arb_tessellation_shader@execution@variable-indexing@tcs-output-array-float-index-rd-after-barrier,Fail
 spec@arb_tessellation_shader@execution@variable-indexing@tcs-output-array-float-index-wr,Fail

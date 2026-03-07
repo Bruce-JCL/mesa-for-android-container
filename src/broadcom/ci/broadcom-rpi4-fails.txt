@@ -10,7 +10,6 @@ shaders@point-vertex-id gl_vertexid gl_instanceid divisor,Fail
 shaders@point-vertex-id gl_vertexid gl_instanceid,Fail
 shaders@point-vertex-id gl_vertexid,Fail
 spec@!opengl 1.0@gl-1.0-user-clip-all-planes,Fail
-spec@!opengl 1.1@depthstencil-default_fb-drawpixels-float-and-ushort samples=2,Fail
 spec@!opengl 1.1@texwrap formats bordercolor,Fail
 spec@!opengl 1.1@texwrap formats bordercolor-swizzled,Fail
 spec@!opengl 1.1@texwrap formats bordercolor-swizzled@GL_INTENSITY12- swizzled- border color only,Fail
@@ -756,13 +755,6 @@ dEQP-VK.binding_model.unused_invalid_descriptor.write.unused.uniform_buffer,Cras
 ubsan-dEQP-VK.image.mutable.2d_array.r16g16_sfloat_r32_uint_draw_copy_resolve_mutable_resolve_att,Fail
 ubsan-dEQP-VK.image.mutable.2d_array.r16g16b16a16_sfloat_r16g16b16a16_uint_draw_copy_resolve_mutable_resolve_att,Fail
 ubsan-dEQP-VK.image.mutable.2d_array.r32_uint_r8g8b8a8_sint_draw_copy_resolve_mutable_color_att,Fail
-
-arm32-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_128_bits.rgba32ui_rgba32ui.texture2d_to_renderbuffer,Fail
-arm32-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16ui_r16ui.renderbuffer_to_renderbuffer,Fail
-arm32-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.r16ui_r16ui.texture2d_to_renderbuffer,Fail
-arm32-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_16_bits.rg8_rg8.texture2d_to_renderbuffer,Fail
-arm32-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_32_bits.rg16i_rg16i.texture2d_to_renderbuffer,Fail
-arm32-dEQP-GLES31.functional.copy_image.non_compressed.viewclass_64_bits.rgba16ui_rgba16ui.renderbuffer_to_renderbuffer,Fail
 
 # SKQP failing tests
 ES2BlendWithNoTexture,Fail

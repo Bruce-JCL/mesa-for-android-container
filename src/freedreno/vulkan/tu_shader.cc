@@ -890,25 +890,6 @@ lower_tex_impl(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
 }
 
 static bool
-lower_tex_impl(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
-          struct tu_shader *shader, const struct tu_pipeline_layout *layout,
-          uint32_t read_only_input_attachments, bool dynamic_renderpass,
-          bool ref)
-{
-   if (tex->op == nir_texop_block_match_sad_qcom ||
-       tex->op == nir_texop_block_match_ssd_qcom ||
-       tex->op == nir_texop_sample_weighted_qcom) {
-      lower_tex_impl(b, tex, dev, shader, layout, read_only_input_attachments, dynamic_renderpass, false);
-      lower_tex_impl(b, tex, dev, shader, layout, read_only_input_attachments, dynamic_renderpass, true);
-   } else {
-      lower_tex_immutable(dev, shader, layout, b, tex);
-      lower_tex_impl(b, tex, dev, shader, layout, read_only_input_attachments, dynamic_renderpass, false);
-   }
-
-   return true;
-}
-
-static bool
 lower_tex(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
           struct tu_shader *shader, const struct tu_pipeline_layout *layout,
           uint32_t read_only_input_attachments, bool dynamic_renderpass)
@@ -919,7 +900,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
       lower_tex_impl(b, tex, dev, shader, layout, read_only_input_attachments, dynamic_renderpass, false);
       lower_tex_impl(b, tex, dev, shader, layout, read_only_input_attachments, dynamic_renderpass, true);
    } else {
-      lower_tex_ycbcr(layout, b, tex);
+      lower_tex_immutable(dev, shader, layout, b, tex);
       lower_tex_impl(b, tex, dev, shader, layout, read_only_input_attachments, dynamic_renderpass, false);
    }
 

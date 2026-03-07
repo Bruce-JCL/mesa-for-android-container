@@ -3026,20 +3026,6 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
             nir_shader_as_str(nir_shaders[MESA_SHADER_FRAGMENT], NULL);
       }
 
-      if (pCreateInfo->flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) {
-         struct pvr_stats stats = pco_get_pvr_stats(*fs);
-         gfx_pipeline->fs_stats = vk_zalloc2(&device->vk.alloc,
-                                             allocator,
-                                             sizeof(stats),
-                                             8,
-                                             VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-
-         if (!gfx_pipeline->fs_stats)
-            return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-         memcpy(gfx_pipeline->fs_stats, &stats, sizeof(stats));
-      }
-
       pvr_graphics_pipeline_setup_fragment_coeff_program(
          gfx_pipeline,
          nir_shaders[MESA_SHADER_FRAGMENT]);

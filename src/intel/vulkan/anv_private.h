@@ -1311,13 +1311,6 @@ struct anv_shader_group_rt_replay {
    uint64_t intersection;
 };
 
-struct anv_shader_group_rt_replay {
-   uint64_t general;
-   uint64_t closest_hit;
-   uint64_t any_hit;
-   uint64_t intersection;
-};
-
 struct anv_shader {
    struct vk_shader vk;
 

@@ -550,9 +550,6 @@ insert_coupling_code(struct spill_ctx *ctx, bi_block *pred, bi_block *succ)
          bi_index mem = bi_temp(ctx->shader);
          mem.memory = true;
 
-         bi_index mem = bi_temp(ctx->shader);
-         mem.memory = true;
-
          bi_index gpr = bi_temp(ctx->shader);
 
          assert(gpr.type == BI_INDEX_NORMAL);
