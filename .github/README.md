@@ -12,11 +12,12 @@ A [Mesa](https://gitlab.freedesktop.org/mesa/mesa) build for containers on Andro
   - For some Adreno 6xx/7xx/8xx GPUs, the Freedreno driver can be used for OpenGL, OpenGL ES, and Vulkan, eliminating the need for Zink for graphics API call translation and significantly improving GPU utilization.  
   - Only drivers relevant to the vast majority of Android devices are compiled to reduce the package size.  
 ## Compatibility
+This section only displays GPU models confirmed to be supported through actual testing by me and others, **it does not mean that other GPU models are unsupported**. You can search for your device's GPU model in the [freedreno_devices.py](https://github.com/lfdevs/mesa-for-android-container/blob/turnip-main/src/freedreno/common/freedreno_devices.py) file (for example, search for `725` for Adreno 725). If the model has a complete device definition, it is likely supported. You are welcome to share how the driver runs on your device in [Issues](https://github.com/lfdevs/mesa-for-android-container/issues), which will help us improve the table below.  
 
 |              GPU               |    OpenGL    |  OpenGL ES   |    Vulkan    |
 | :----------------------------: | :----------: | :----------: | :----------: |
 |         **Adreno 660**         | ✔️ Supported | ✔️ Supported | ✔️ Supported |
-| **Adreno 710/720/730/740/750** | ✔️ Supported | ✔️ Supported | ✔️ Supported |
+| **Adreno 710/720/730/735/740/750** | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 |       **Adreno 830/840**       | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 
 Experimental support (by [**whitebelyash**](https://github.com/whitebelyash)): **Adreno 810/825/829**  

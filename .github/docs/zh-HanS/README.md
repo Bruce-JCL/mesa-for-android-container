@@ -12,11 +12,12 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
   - 对于部分 Adreno 6xx/7xx/8xx GPU，OpenGL、OpenGL ES、Vulkan 均可使用 Freedreno 驱动，不再需要使用 Zink 进行图形 API 调用转换，极大地提高了 GPU 的利用效率。  
   - 只编译与绝大部分 Android 设备相关的驱动，减小包体体积。  
 ## 兼容性
+这里只展示了经我和其他人实测后确认支持的 GPU 型号，**不代表其他的 GPU 型号不支持**。你可以在 [freedreno_devices.py](https://github.com/lfdevs/mesa-for-android-container/blob/turnip-main/src/freedreno/common/freedreno_devices.py) 文件中搜索你设备的 GPU 型号（例如，Adreno 725 可搜索`725`），若该型号有完整的设备定义，则它很可能受支持。欢迎在 [Issues](https://github.com/lfdevs/mesa-for-android-container/issues) 中分享驱动在你的设备上的运行情况，这将帮助我们完善下面的这张表。  
 
 |              GPU               | OpenGL | OpenGL ES | Vulkan |
 | :----------------------------: | :----: | :-------: | :----: |
 |         **Adreno 660**         |  ✔️支持  |   ✔️支持    |  ✔️支持  |
-| **Adreno 710/720/730/740/750** |  ✔️支持  |   ✔️支持    |  ✔️支持  |
+| **Adreno 710/720/730/735/740/750** |  ✔️支持  |   ✔️支持    |  ✔️支持  |
 |       **Adreno 830/840**       |  ✔️支持  |   ✔️支持    |  ✔️支持  |
 
 实验性支持（by [**whitebelyash**](https://github.com/whitebelyash)）：**Adreno 810/825/829**  
