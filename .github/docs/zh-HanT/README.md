@@ -18,9 +18,9 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 | :----------------------------: | :----: | :-------: | :----: |
 |         **Adreno 660**         |  ✔️支援  |   ✔️支援    |  ✔️支援  |
 | **Adreno 710/720/730/735/740/750** |  ✔️支援  |   ✔️支援    |  ✔️支援  |
-|       **Adreno 830/840**       |  ✔️支援  |   ✔️支援    |  ✔️支援  |
+|       **Adreno 829/830/840**       |  ✔️支援  |   ✔️支援    |  ✔️支援  |
 
-實驗性支援（by [**whitebelyash**](https://github.com/whitebelyash)）：**Adreno 810/825/829**  
+實驗性支援（by [**whitebelyash**](https://github.com/whitebelyash)）：**Adreno 810/825**  
 ## 安裝
 本專案的 Releases 有兩種形式的安裝包，一種可以使用 Linux 發行版的套件管理器安裝，另一種只能直接解壓來安裝。推薦使用第一種安裝包，若需要最新的 Mesa 功能（例如 **Adreno 8xx 的支援**），則可以使用第二種。  
 若常規的 Release（標題不帶 `turnip-` 前綴）中的 Turnip 驅動無法正常運作，可使用**未打補丁的 Turnip 驅動**（標題帶 `turnip-` 前綴），直接覆蓋安裝即可。  
@@ -33,7 +33,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Debian 13     |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 | Ubuntu 24.04 LTS | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|    Arch Linux    |               [26.1.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260208)               |              [turnip-26.1.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260208)              |
+|    Arch Linux    |               [26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404)               |              [turnip-26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404)              |
 ### 直接解壓
 ℹ️**注意**：Releases 中 `.tar.gz` 格式的安裝包僅能覆蓋原有的 Mesa 驅動程式，卸載時需手動刪除解壓出來的檔案，僅供測試使用。  
 
@@ -41,7 +41,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 |                                                         標準安裝包                                                         |                                                        未打補丁的 Turnip 安裝包                                                        |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.1.0-devel-20260208](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260208) | [turnip-26.1.0-devel-20260208](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260208) |
+| [26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404) | [turnip-26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404) |
 2.  直接將安裝包解壓縮到根目錄。  
 ```bash
 sudo tar -zxvf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /

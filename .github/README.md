@@ -18,9 +18,9 @@ This section only displays GPU models confirmed to be supported through actual t
 | :----------------------------: | :----------: | :----------: | :----------: |
 |         **Adreno 660**         | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 | **Adreno 710/720/730/735/740/750** | ✔️ Supported | ✔️ Supported | ✔️ Supported |
-|       **Adreno 830/840**       | ✔️ Supported | ✔️ Supported | ✔️ Supported |
+|       **Adreno 829/830/840**       | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 
-Experimental support (by [**whitebelyash**](https://github.com/whitebelyash)): **Adreno 810/825/829**  
+Experimental support (by [**whitebelyash**](https://github.com/whitebelyash)): **Adreno 810/825**  
 ## Installation
 This project's Releases provide two types of installation packages: one installable via the Linux distribution's package manager, and another that must be installed by direct extraction. The first type is recommended; however, if you need the latest Mesa features (such as **Adreno 8xx support**), use the second type.  
 If the Turnip driver from the standard release (whose release title doesn't have the `turnip-` prefix) fails to work properly, you can use the **unpatched Turnip driver** (whose release title does have the `turnip-` prefix) by directly installing it over the standard one.  
@@ -33,7 +33,7 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 |     Debian 13      |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 |  Ubuntu 24.04 LTS  | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |     Fedora 43      |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|     Arch Linux     |               [26.1.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260208)               |              [turnip-26.1.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260208)              |
+|     Arch Linux     |               [26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404)               |              [turnip-26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404)              |
 ### Direct Extraction
 ℹ️ **Note**: The `.tar.gz` installation packages in Releases can only overwrite the existing Mesa drivers. To uninstall, you must manually delete the extracted files. These packages are intended for testing purposes only.  
 
@@ -41,7 +41,7 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 
 |                                             Standard Installation Package                                             |                                             Unpatched Turnip Installation Package                                              |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.1.0-devel-20260208](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260208) | [turnip-26.1.0-devel-20260208](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260208) |
+| [26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404) | [turnip-26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404) |
 2.  Extract the installation package directly to the root directory.  
 ```bash
 sudo tar -zxvf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
