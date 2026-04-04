@@ -138,8 +138,7 @@ radv_gfx_copy_memory_to_image(struct radv_cmd_buffer *cmd_buffer, struct radv_me
          goto fail;
       }
 
-      rendering_info.pDepthAttachment = &att_info,
-      rendering_info.pStencilAttachment = (dst->image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) ? &att_info : NULL,
+      rendering_info.pDepthAttachment = &att_info;
 
       radv_meta_bind_graphics_pipeline(cmd_buffer, pipeline);
    } else {
@@ -151,8 +150,7 @@ radv_gfx_copy_memory_to_image(struct radv_cmd_buffer *cmd_buffer, struct radv_me
          goto fail;
       }
 
-      rendering_info.pDepthAttachment = (dst->image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) ? &att_info : NULL,
-      rendering_info.pStencilAttachment = &att_info,
+      rendering_info.pStencilAttachment = &att_info;
 
       radv_meta_bind_graphics_pipeline(cmd_buffer, pipeline);
    }
@@ -290,8 +288,7 @@ radv_gfx_copy_image(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_
          goto fail_pipeline;
       }
 
-      rendering_info.pDepthAttachment = &att_info,
-      rendering_info.pStencilAttachment = (dst->image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) ? &att_info : NULL,
+      rendering_info.pDepthAttachment = &att_info;
 
       radv_meta_bind_graphics_pipeline(cmd_buffer, pipeline);
    } else if (dst->aspect_mask == VK_IMAGE_ASPECT_STENCIL_BIT) {
@@ -301,8 +298,7 @@ radv_gfx_copy_image(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_
          goto fail_pipeline;
       }
 
-      rendering_info.pDepthAttachment = (dst->image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) ? &att_info : NULL,
-      rendering_info.pStencilAttachment = &att_info,
+      rendering_info.pStencilAttachment = &att_info;
 
       radv_meta_bind_graphics_pipeline(cmd_buffer, pipeline);
    } else
@@ -481,9 +477,9 @@ get_color_pipeline(struct radv_device *device, enum blit2d_src_type src_type, Vk
       break;
    }
 
-   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader(device);
+   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader();
    nir_shader *fs_module = radv_meta_nir_build_blit2d_copy_fragment_shader(
-      device, src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
+      src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
 
    const VkGraphicsPipelineCreateInfo pipeline_create_info = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -621,9 +617,9 @@ get_depth_only_pipeline(struct radv_device *device, enum blit2d_src_type src_typ
       break;
    }
 
-   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader(device);
+   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader();
    nir_shader *fs_module = radv_meta_nir_build_blit2d_copy_fragment_shader_depth(
-      device, src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
+      src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
 
    const VkGraphicsPipelineCreateInfo pipeline_create_info = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -779,9 +775,9 @@ get_stencil_only_pipeline(struct radv_device *device, enum blit2d_src_type src_t
       break;
    }
 
-   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader(device);
+   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader();
    nir_shader *fs_module = radv_meta_nir_build_blit2d_copy_fragment_shader_stencil(
-      device, src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
+      src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
 
    const VkGraphicsPipelineCreateInfo pipeline_create_info = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -928,9 +924,9 @@ get_depth_stencil_pipeline(struct radv_device *device, enum blit2d_src_type src_
       break;
    }
 
-   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader(device);
+   nir_shader *vs_module = radv_meta_nir_build_blit2d_vertex_shader();
    nir_shader *fs_module = radv_meta_nir_build_blit2d_copy_fragment_shader_depth_stencil(
-      device, src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
+      src_func, name, src_type == BLIT2D_SRC_TYPE_IMAGE_3D, log2_samples > 0);
 
    const VkGraphicsPipelineCreateInfo pipeline_create_info = {
       .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,

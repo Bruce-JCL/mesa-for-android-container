@@ -76,20 +76,6 @@ genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
       case 2048: cfe.StackIDControl = StackIDs2048; break;
       default:   UNREACHABLE("invalid stack_ids value");
       }
-
-#if INTEL_WA_14021821874_GFX_VER || INTEL_WA_14018813551_GFX_VER || INTEL_WA_14026600921_GFX_VER
-      /* Wa_14021821874, Wa_14018813551, Wa_14026600921:
-       *
-       * "StackIDControlOverride_RTGlobals = 0 (i.e. 2k)". We
-       * already set stack size per ray to 64 in brw_nir_lower_rt_intrinsics
-       * as the workaround also requires.
-       */
-      if (intel_needs_workaround(cmd_buffer->device->info, 14021821874) ||
-          intel_needs_workaround(cmd_buffer->device->info, 14018813551) ||
-          intel_needs_workaround(cmd_buffer->device->info, 14026600921))
-         cfe.StackIDControl = StackIDs2048;
-#endif
-
 #endif
 
       cfe.OverDispatchControl = 2; /* 50% overdispatch */
@@ -114,7 +100,7 @@ cmd_buffer_flush_compute_state(struct anv_cmd_buffer *cmd_buffer)
                               comp_state->shader->prog_data->total_shared > 0 ?
                               device->l3_slm_config : device->l3_config);
 
-   genX(cmd_buffer_update_color_aux_op(cmd_buffer, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(cmd_buffer, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    genX(flush_descriptor_buffers)(cmd_buffer, &comp_state->base,
                                   VK_SHADER_STAGE_COMPUTE_BIT);
@@ -1172,9 +1158,11 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
 
    trace_intel_begin_rays(&cmd_buffer->trace);
 
+   cmd_buffer->state.compute.trace_rays_active = true;
+
    genX(cmd_buffer_config_l3)(cmd_buffer, device->l3_config);
 
-   genX(cmd_buffer_update_color_aux_op(cmd_buffer, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(cmd_buffer, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    genX(flush_descriptor_buffers)(cmd_buffer, &rt->base,
                                   ANV_RT_STAGE_BITS);

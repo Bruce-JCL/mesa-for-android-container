@@ -54,7 +54,7 @@ typedef void *drmDevicePtr;
 #endif
 #include "util/build_id.h"
 #include "util/driconf.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/os_time.h"
 #include "util/timespec.h"
 #include "util/u_atomic.h"
@@ -1264,26 +1264,8 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
                                       ? NULL
                                       : pdev->ws->copy_sync_payloads;
 
-   /* Enable the global BO list by default. */
-   /* TODO: Remove the per cmdbuf BO list tracking after few Mesa releases if no blockers. */
-   device->use_global_bo_list = pdev->info.has_vm_always_valid;
-
-   /* Disable it for debugging purposes if no features require it. */
-   if (instance->debug_flags & RADV_DEBUG_NO_BO_LIST) {
-      if (!device->vk.enabled_features.bufferDeviceAddress && !device->vk.enabled_features.descriptorIndexing &&
-          !device->vk.enabled_features.descriptorBindingUniformBufferUpdateAfterBind &&
-          !device->vk.enabled_features.descriptorBindingSampledImageUpdateAfterBind &&
-          !device->vk.enabled_features.descriptorBindingStorageImageUpdateAfterBind &&
-          !device->vk.enabled_features.descriptorBindingStorageBufferUpdateAfterBind &&
-          !device->vk.enabled_features.descriptorBindingUniformTexelBufferUpdateAfterBind &&
-          !device->vk.enabled_features.descriptorBindingStorageTexelBufferUpdateAfterBind &&
-          !device->vk.enabled_features.descriptorBindingUpdateUnusedWhilePending &&
-          !device->vk.enabled_features.descriptorBindingPartiallyBound) {
-         device->use_global_bo_list = false;
-      } else {
-         fprintf(stderr, "radv: Can't disable the global BO list because some features require it!\n");
-      }
-   }
+   /* VM_ALWAYS_VALID must be supported. */
+   assert(pdev->info.has_vm_always_valid);
 
    device->overallocation_disallowed = overallocation_disallowed;
    mtx_init(&device->overallocation_mutex, mtx_plain);
@@ -1678,13 +1660,11 @@ radv_device_set_pstate(struct radv_device *device, bool enable)
    struct radeon_winsys *ws = device->ws;
    enum radeon_ctx_pstate pstate = enable ? instance->profile_pstate : RADEON_CTX_PSTATE_NONE;
 
-   if (pdev->info.has_stable_pstate) {
-      /* pstate is per-device; setting it for one ctx is sufficient.
-       * We pick the first initialized one below. */
-      for (unsigned i = 0; i < RADV_NUM_HW_CTX; i++)
-         if (device->hw_ctx[i])
-            return ws->ctx_set_pstate(device->hw_ctx[i], pstate) >= 0;
-   }
+   /* pstate is per-device; setting it for one ctx is sufficient. We pick the first initialized one
+    * below. */
+   for (unsigned i = 0; i < RADV_NUM_HW_CTX; i++)
+      if (device->hw_ctx[i])
+         return ws->ctx_set_pstate(device->hw_ctx[i], pstate) >= 0;
 
    return true;
 }

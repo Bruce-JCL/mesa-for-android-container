@@ -67,22 +67,6 @@ brw_emit_gs_thread_end(brw_shader &s)
    urb->offset = 0;
 }
 
-static void
-brw_assign_gs_urb_setup(brw_shader &s)
-{
-   assert(s.stage == MESA_SHADER_GEOMETRY);
-
-   struct brw_vue_prog_data *vue_prog_data = brw_vue_prog_data(s.prog_data);
-
-   s.first_non_payload_grf +=
-      8 * vue_prog_data->urb_read_length * s.nir->info.gs.vertices_in;
-
-   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
-      /* Rewrite all ATTR file references to GRFs. */
-      s.convert_attr_sources_to_hw_regs(inst);
-   }
-}
-
 static bool
 run_gs(brw_shader &s)
 {
@@ -120,7 +104,7 @@ run_gs(brw_shader &s)
    brw_optimize(s);
 
    s.assign_curb_setup();
-   brw_assign_gs_urb_setup(s);
+   brw_assign_urb_setup(s);
 
    brw_lower_3src_null_dest(s);
    brw_workaround_emit_dummy_mov_instruction(s);
@@ -152,6 +136,7 @@ brw_compile_gs(const struct brw_compiler *compiler,
       .nir = nir,
       .dispatch_width = dispatch_width,
       .compiler = compiler,
+      .key = &key->base,
       .archiver = params->base.archiver,
    }, *pt = &pt_;
 
@@ -190,7 +175,7 @@ brw_compile_gs(const struct brw_compiler *compiler,
    BRW_NIR_SNAPSHOT("after_lower_io");
 
    brw_nir_opt_vectorize_urb(pt);
-   brw_postprocess_nir(pt, debug_enabled, key->base.robust_flags);
+   brw_postprocess_nir(pt, debug_enabled);
 
    prog_data->include_primitive_id =
       BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_PRIMITIVE_ID);

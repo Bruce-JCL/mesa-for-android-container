@@ -72,8 +72,8 @@ denorm_ftz_64 = 'nir_is_denorm_flush_to_zero(info->float_controls_execution_mode
 # opcodes.
 #
 # All expression types can have a bit-size specified.  For opcodes, this
-# looks like "op@32", for variables it is "a@32" or "a@uint32" to specify a
-# type and size.  In the search half of the expression this indicates that it
+# looks like "op@32", for variables it is "a@32" to specify a size.
+# In the search half of the expression this indicates that it
 # should only match that particular bit-size.  In the replace half of the
 # expression this indicates that the constructed value should have that
 # bit-size.
@@ -658,18 +658,17 @@ optimizations.extend([
     # Collapse non-zero right-shift into bitfield extract.
     (('ushr@32', ('ubfe', a, '#b', '#c'), '#d(is_5lsb_not_zero)'),
      ubfe_ubfe(a, b, c, d, 31)),
-
-    (('iand', 'a(is_unsigned_multiple_of_4)', -4), a),
 ])
 
 for log2 in range(1, 7): # powers of two from 2 to 64
    v = 1 << log2
-   mask = 0xffffffff & ~(v - 1)
-   b_is_multiple = 'b(is_unsigned_multiple_of_{})'.format(v)
+   mask = -v
+   a_is_multiple = 'a(is_unsigned_multiple_of_{})'.format(v)
 
    optimizations.extend([
+       (('iand', a_is_multiple, mask), a),
        # Reassociate for improved CSE
-       (('iand@32', ('iadd@32', a, b_is_multiple), mask), ('iadd', ('iand', a, mask), b)),
+       (('iand', ('iadd', a_is_multiple, b), mask), ('iadd', ('iand', b, mask), a)),
    ])
 
 # To save space in the state tables, reduce to the set that is known to help.
@@ -784,8 +783,12 @@ optimizations.extend([
    # 0 < fsat(NaN) -> 0 < 0 -> false, and 0 < NaN -> false.
    (('flt', 0.0, ('fsat(is_used_once)', a)), ('flt', 0.0, a)),
 
-   (('bcsel(is_only_used_as_float)', ('feq', a, 'b(is_not_zero)'), b, a), a),
-   (('bcsel(is_only_used_as_float)', ('fneu', a, 'b(is_not_zero)'), a, b), a),
+   (('bcsel', ('feq', a, 'b(is_a_number_not_zero)'), b, a), a),
+   (('bcsel', ('fneu', a, 'b(is_a_number_not_zero)'), a, b), a),
+   (('bcsel(is_only_used_as_float_nsz)', ('feq', a, 0.0), 0.0, a),  a),
+   (('bcsel(is_only_used_as_float_nsz)', ('fneu', a, 0.0), a, 0.0), a),
+   (('bcsel(is_only_used_as_float_nsz)', ('feq', a, 0.0), -0.0, a),  a),
+   (('bcsel(is_only_used_as_float_nsz)', ('fneu', a, 0.0), a, -0.0), a),
    (('bcsel', ('feq', a, 0), 0, ('fsat', ('fmul', a, 'b(is_a_number)'))), ('fsat(preserve_sz)', ('fmul', a, b))),
    (('bcsel', ('fneu', a, 0), ('fsat', ('fmul', a, 'b(is_a_number)')), 0), ('fsat(preserve_sz)', ('fmul', a, b))),
    (('bcsel', ('feq', a, 0), b, ('fadd', a, 'b(is_not_zero)')), ('fadd', a, b)),
@@ -824,12 +827,12 @@ optimizations.extend([
    (('fge(nnan,ninf)', ('fadd', a, b), a), ('fge', b, 0.0)),
    (('feq(nnan,ninf)', ('fadd', a, b), a), ('feq', b, 0.0)),
    (('fneu(nnan,ninf)', ('fadd', a, b), a), ('fneu', b, 0.0)),
-   (('flt',  ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c'), ('flt', a,  ('fadd', c, ('fneg', b)))),
-   (('fge',  ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c'), ('fge', a,  ('fadd', c, ('fneg', b)))),
-   (('feq',  ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c'), ('feq', a,  ('fadd', c, ('fneg', b)))),
-   (('fneu', ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c'), ('fneu', a, ('fadd', c, ('fneg', b)))),
-   (('flt',  '#c', ('~fadd(is_used_once)', a, '#b(is_finite)')), ('flt', ('fadd', c, ('fneg', b)), a)),
-   (('fge',  '#c', ('~fadd(is_used_once)', a, '#b(is_finite)')), ('fge', ('fadd', c, ('fneg', b)), a)),
+   (('flt',  ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c(is_finite)'), ('flt', a,  ('fadd', c, ('fneg', b)))),
+   (('fge',  ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c(is_finite)'), ('fge', a,  ('fadd', c, ('fneg', b)))),
+   (('feq',  ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c(is_finite)'), ('feq', a,  ('fadd', c, ('fneg', b)))),
+   (('fneu', ('~fadd(is_used_once)', a, '#b(is_finite)'), '#c(is_finite)'), ('fneu', a, ('fadd', c, ('fneg', b)))),
+   (('flt',  '#c(is_finite)', ('~fadd(is_used_once)', a, '#b(is_finite)')), ('flt', ('fadd', c, ('fneg', b)), a)),
+   (('fge',  '#c(is_finite)', ('~fadd(is_used_once)', a, '#b(is_finite)')), ('fge', ('fadd', c, ('fneg', b)), a)),
 
 
    # Cannot remove the addition from ilt or ige due to overflow.
@@ -900,10 +903,6 @@ optimizations.extend([
 
    (('flt', ('fadd(is_used_once)', a, ('fneg', b)), 0.0), ('flt', a, b)),
 
-   (('bcsel(is_only_used_as_float_nsz)', ('flt(nnan)', b, a), b, a), ('fmin(preserve_nan_inf)', a, b)),
-   (('bcsel(is_only_used_as_float_nsz)', ('flt(nnan)', a, b), b, a), ('fmax(preserve_nan_inf)', a, b)),
-   (('bcsel(is_only_used_as_float_nsz)', ('fge(nnan)', a, b), b, a), ('fmin(preserve_nan_inf)', a, b)),
-   (('bcsel(is_only_used_as_float_nsz)', ('fge(nnan)', b, a), b, a), ('fmax(preserve_nan_inf)', a, b)),
    (('bcsel(is_only_used_as_float_nsz)', ('flt', b, 'a(is_a_number)'), b, a), ('fmin(preserve_nan_inf)', a, b)),
    (('bcsel(is_only_used_as_float_nsz)', ('flt', 'a(is_a_number)', b), b, a), ('fmax(preserve_nan_inf)', a, b)),
    (('bcsel(is_only_used_as_float_nsz)', ('fge', 'a(is_a_number)', b), b, a), ('fmin(preserve_nan_inf)', a, b)),
@@ -1055,10 +1054,9 @@ optimizations.extend([
    # fmin(0.0, b)) while the right one is "b", so this optimization is not NaN correct.
    (('fmin(nsz)', ('fsat(nnan)', a), '#b(is_zero_to_one)'), ('fsat', ('fmin', a, b))),
 
-   (('fsat(nnan)', 'a(is_ge_pos_one)'), 1.0),
    (('fsat', 'a(is_a_number_ge_pos_one)'), 1.0),
+   (('fsat', 'a(is_not_positive)'), 0.0),
 
-   (('fsat(nnan,nsz)', 'a(is_zero_to_one)'), ('fcanonicalize', a)),
    (('fsat(nsz)', 'a(is_a_number_zero_to_one)'), ('fcanonicalize', a)),
 
    # Let constant folding do its job. This can have emergent behaviour.
@@ -1069,22 +1067,13 @@ optimizations.extend([
    (('fmax', ('fneg', ('fmin', b, a)), b), ('fmax', ('fabs', b), ('fneg', a))),
    (('fmin', ('fneg', ('fmax', b, a)), b), ('fmin', ('fneg', ('fabs', b)), ('fneg', a))),
 
-   # If a in [-b,0] then a+b is in [0,b].  Since b in [0,1], max(a+b, 0) =
-   # fsat(a+b).
-   #
-   # If a < -b, then a+b < 0 and max(a+b, 0) = fsat(a+b) = 0
-   #
    # This should be NaN safe since max(NaN, 0) = fsat(NaN) = 0.
-   (('fmax', ('fadd(is_used_once)', 'a(is_not_positive)', '#b(is_zero_to_one)'), 0.0),
-    ('fsat', ('fadd', a, b)), '!options->lower_fsat'),
+   (('fmax', 'a(is_le_pos_one)', 0.0), ('fsat', a), '!options->lower_fsat'),
 
-   # ffma variants of the pattern above.
-   (('fmax', ('ffma(is_used_once)', 'a(is_not_positive)', 'b(is_not_negative)', '#c(is_zero_to_one)'), 0.0),
-    ('fsat', ('ffma', a, b, c)), '!options->lower_fsat'),
-   (('fmax', ('ffma(is_used_once)', 'a', ('fneg', a), '#b(is_zero_to_one)'), 0.0),
-    ('fsat', ('ffma', a, ('fneg', a), b)), '!options->lower_fsat'),
+   (('fmin(nsz)', 'a(is_a_number_not_negative)', 1.0), ('fsat', a), '!options->lower_fsat'),
 
    (('fsat', ('fmax', a, 'b(is_not_positive)')), ('fsat', a)),
+   (('fsat', ('fmin', 'a(is_a_number)', 'b(is_ge_pos_one)')), ('fsat', a)),
 
    (('fsat', ('bcsel(is_used_once)', a, b, '#c')), ('bcsel', a, ('fsat', b), ('fsat', c))),
    (('fsat', ('bcsel(is_used_once)', a, '#b', c)), ('bcsel', a, ('fsat', b), ('fsat', c))),
@@ -1582,6 +1571,24 @@ for op in ('ior', 'iand', 'ixor'):
         (('iand', (op, ('b2i', 'a@1'), ('ineg', ('b2i', 'b@1'))), 1),       ('b2i', (op, a, b)) ),
     ])
 
+
+for compare in [('fneu', a, 0.0), ('inot', ('feq', a, 0.0))]:
+    mod = [a, ('fneg', a), ('fabs', a), ('fneg', ('fabs', a))]
+
+    for i in range(len(mod)):
+        for neg_b2f in [False, True]:
+
+            search_mod = mod[i]
+            replace_mod = mod[i ^ int(neg_b2f)];
+            search_b2f = ('fneg', ('b2f', compare)) if neg_b2f else ('b2f', compare)
+
+            replace_mod_mul = ('fcanonicalize', a) if replace_mod == a else replace_mod
+
+            optimizations.extend([
+                (('fmul', search_b2f, search_mod), replace_mod_mul),
+                (('ffma', search_b2f, search_mod, b), ('fadd', replace_mod, b)),
+            ])
+
 optimizations.extend([
    (('feq', ('seq', a, b), 1.0), ('feq', a, b)),
    (('feq', ('sne', a, b), 1.0), ('fneu', a, b)),
@@ -1610,13 +1617,23 @@ optimizations.extend([
    (('ffma', ('b2f', 'a@1'), ('b2f', 'b@1'), c), ('fadd', ('b2f', ('iand', a, b)), c)),
    (('fadd', 1.0, ('fneg', ('b2f', a))), ('b2f', ('inot', a))),
    (('fadd(nsz)', -1.0, ('b2f', a)), ('fneg', ('b2f', ('inot', a)))),
-   (('fmul', ('b2f', ('fneu', a, 0)), a), ('fmul', 1.0, a)),
-   (('ffma', ('b2f', ('fneu', a, 0)), a, b), ('fadd', a, b)),
    (('fsat', ('fadd', ('b2f', 'a@1'), ('b2f', 'b@1'))), ('b2f', ('ior', a, b))),
    (('fsat', ('fadd', ('b2f', 'a@1'), ('fneg', ('b2f', 'b@1')))), ('b2f', ('iand', a, ('inot', b)))),
    (('fmax', ('fadd', ('b2f', 'a@1'), ('fneg', ('b2f', 'b@1'))), 0.0), ('b2f', ('iand', a, ('inot', b)))),
-   (('iand', 'a@bool16', 1.0), ('b2f', a)),
-   (('iand', 'a@bool32', 1.0), ('b2f', a)),
+
+   # For this optimization, there are a few things to consider:
+   # The replacement must flush denorms, fcanonicalize/fneg takes care of that.
+   # For fmul, if b is not finite, b2f(False) * b would need to be NaN.
+   # If b is negative, b2f(False) * b would be -0.0, not +0.0, hence the nsz.
+   # For fmulz, if b is -0.0, b2f(True) * b would need to be +0.0, not b.
+   # So even there nsz is needed.
+   # When the multiplication is only used by fadd, it's not a clear win
+   # because of potential fma fusion.
+   (('fmul(nsz,is_not_only_used_by_fadd)',  ('b2f', 'a@1'), 'b(is_finite)'),           ('bcsel', a, ('fcanonicalize', b), 0.0)),
+   (('fmul(nsz,is_not_only_used_by_fadd)',  ('fneg', ('b2f', 'a@1')), 'b(is_finite)'), ('bcsel', a, ('fneg', b), 0.0)),
+   (('fmulz(nsz,is_not_only_used_by_fadd)', ('b2f', 'a@1'), b),           ('bcsel', a, ('fcanonicalize', b), 0.0)),
+   (('fmulz(nsz,is_not_only_used_by_fadd)', ('fneg', ('b2f', 'a@1')), b), ('bcsel', a, ('fneg', b), 0.0)),
+
    # Comparison with the same args.  Note that these are only done for the
    # float versions when the source must be a number.  Generally, NaN cmp NaN
    # produces the opposite result of X cmp X.  flt is the outlier.  NaN < NaN
@@ -1924,21 +1941,11 @@ optimizations.extend([
    (('ftrunc', 'a(is_integral)'), a),
    (('fround_even', 'a(is_integral)'), a),
 
-   # fract(x) = x - floor(x), so fract(NaN) = NaN
+   # fract(x) = x - floor(x), so fract(NaN/Inf) = NaN
    (('ffract(nnan)', 'a(is_integral)'), 0.0),
    (('ffract', ('ffract', a)), ('ffract', a)),
    (('fabs', 'a(is_not_negative)'), ('fcanonicalize', a)),
-   (('fsat', 'a(is_not_positive)'), 0.0),
-
-   (('fmin(nnan,nsz)', 'a(is_not_negative)', 1.0), ('fsat', a), '!options->lower_fsat'),
-   (('fmin(nsz)', 'a(is_a_number_not_negative)', 1.0), ('fsat', a), '!options->lower_fsat'),
-
-   # The result of the multiply must be in [-1, 0], so the result of the ffma
-   # must be in [0, 1].
-   (('flt', ('fadd', ('fmul', ('fsat', a), ('fneg', ('fsat', a))), 1.0), 0.0), False),
-   (('flt', ('fadd', ('fneg', ('fmul', ('fsat', a), ('fsat', a))), 1.0), 0.0), False),
-   (('fmax', ('fadd', ('fmul', ('fsat', a), ('fneg', ('fsat', a))), 1.0), 0.0), ('fadd', ('fmul', ('fsat', a), ('fneg', ('fsat', a))), 1.0)),
-   (('fmax', ('fadd', ('fneg', ('fmul', ('fsat', a), ('fsat', a))), 1.0), 0.0), ('fadd', ('fneg', ('fmul', ('fsat', a), ('fsat', a))), 1.0)),
+   (('fabs(nsz)', 'a(is_not_positive)'), ('fneg', a)),
 
    (('fneu', 'a(is_not_zero)', 0.0), True),
    (('feq', 'a(is_not_zero)', 0.0), False),
@@ -3189,9 +3196,13 @@ def ldexp(f, exp, bits):
    return ('!fmul', ('!fmul', f, pow2_1), pow2_2)
 
 optimizations += [
-   (('ldexp@16', 'x', 'exp'), ldexp('x', 'exp', 16), 'options->lower_ldexp', TestStatus.UNSUPPORTED), # All test inputs skipped.
-   (('ldexp@32', 'x', 'exp'), ldexp('x', 'exp', 32), 'options->lower_ldexp', TestStatus.UNSUPPORTED), # All test inputs skipped.
-   (('ldexp@64', 'x', 'exp'), ldexp('x', 'exp', 64), 'options->lower_ldexp', TestStatus.UNSUPPORTED), # All test inputs skipped.
+   (('ldexp@16', 'x', 'exp'), ldexp('x', 'exp', 16), '!options->has_ldexp', TestStatus.UNSUPPORTED), # All test inputs skipped.
+   (('ldexp@32', 'x', 'exp'), ldexp('x', 'exp', 32), '!options->has_ldexp', TestStatus.UNSUPPORTED), # All test inputs skipped.
+   (('ldexp@64', 'x', 'exp'), ldexp('x', 'exp', 64), '!options->has_ldexp', TestStatus.UNSUPPORTED), # All test inputs skipped.
+   (('fexp2(contract)', ('i2f', 'a@8')), ('ldexp', 1.0, ('i2i32', a)), 'options->has_ldexp'),
+   (('fexp2(contract)', ('i2f', 'a@16')), ('ldexp', 1.0, ('i2i32', a)), 'options->has_ldexp'),
+   (('fexp2(contract)', ('i2f', 'a@32')), ('ldexp', 1.0, a), 'options->has_ldexp'),
+   (('fexp2(contract,ninf)', ('u2f', a)), ('ldexp', 1.0, ('u2u32', a)), 'options->has_ldexp'),
 ]
 
 # XCOM 2 (OpenGL) open-codes bitfieldReverse()
@@ -3367,7 +3378,7 @@ for op in ['fpow']:
         (('bcsel', a, (op, b, c), (op + '(is_used_once)', d, c)), (op, ('bcsel', a, b, d), c)),
     ]
 
-for op in ['frcp', 'frsq', 'fsqrt', 'fexp2', 'flog2', 'fsign', 'fsin', 'fcos', 'fsin_amd', 'fcos_amd', 'fsin_mdg', 'fcos_mdg', 'fsin_agx', 'fneg', 'fabs', 'fsign', 'fcanonicalize']:
+for op in ['frcp', 'frsq', 'fsqrt', 'fexp2', 'flog2', 'fsign', 'fsin', 'fcos', 'fsin_normalized_2_pi', 'fcos_normalized_2_pi', 'fsin_mdg', 'fcos_mdg', 'fsin_agx', 'fneg', 'fabs', 'fsign', 'fcanonicalize']:
     optimizations += [
         (('bcsel', c, (op + '(is_used_once)', a), (op + '(is_used_once)', b)), (op, ('bcsel', c, a, b))),
     ]
@@ -3850,6 +3861,9 @@ late_optimizations.extend([
    (('~fadd', ('fneg', ('ffmaz(is_used_once)', a, b, ('ffmaz', c, d, ('fmulz(is_used_once)', 'e(is_not_const_and_not_fsign)', 'f(is_not_const_and_not_fsign)')))), 'g(is_not_const)'),
     ('ffmaz', ('fneg', a), b, ('ffmaz', ('fneg', c), d, ('ffmaz', ('fneg', e), 'f', 'g'))), '(info->stage != MESA_SHADER_VERTEX && info->stage != MESA_SHADER_GEOMETRY) && !options->intel_vec4'),
 
+   (('fmul(contract)', a, ('ldexp(is_used_once)', 1.0, b)), ('ldexp', a, b), 'options->has_ldexp'),
+   (('frcp(contract,ninf)', ('ldexp', 1.0, b)), ('ldexp', 1.0, ('ineg', b)), 'options->has_ldexp'),
+
    # Section 8.8 (Integer Functions) of the GLSL 4.60 spec says:
    #
    #    If bits is zero, the result will be zero.
@@ -3960,7 +3974,6 @@ late_optimizations += [
 for s in [16, 32, 64]:
     late_optimizations.extend([
        (('~fadd@{}'.format(s), 1.0, ('fmul(is_used_once)', c , ('fadd', b, -1.0 ))), ('fadd', ('fadd', 1.0, ('fneg', c)), ('fmul', b, c)), 'options->lower_flrp{}'.format(s)),
-       (('bcsel', a, 0, ('b2f{}'.format(s), ('inot', 'b@bool'))), ('b2f{}'.format(s), ('inot', ('ior', a, b)))),
     ])
 
 for op in ['fadd']:
@@ -4022,6 +4035,9 @@ late_optimizations += [
   (('i2fmp', a), ('i2f16', a), "!options->preserve_mediump", TestStatus.UNSUPPORTED),
   (('i2imp', a), ('u2u16', a), "!options->preserve_mediump", TestStatus.UNSUPPORTED),
   (('u2fmp', a), ('u2f16', a), "!options->preserve_mediump", TestStatus.UNSUPPORTED),
+
+  # Without preserving inf, comparing against inf is undefined
+  (('fisfinite(ninf)', a), ('feq', a, a)),
   (('fisfinite', a), ('flt', ('fabs', a), float("inf"))),
 
   (('f2f16', a), ('f2f16_rtz', a), "options->force_f2f16_rtz && !nir_is_rounding_mode_rtne(info->float_controls_execution_mode, 16)"),

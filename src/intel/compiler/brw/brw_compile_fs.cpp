@@ -63,8 +63,12 @@ brw_do_emit_fb_writes(brw_shader &s, int nr_color_regions, bool replicate_alpha)
 
    brw_fb_write_inst *write = NULL;
    for (int target = 0; target < nr_color_regions; target++) {
-      /* Skip over outputs that weren't written. */
-      if (s.outputs[target].file == BAD_FILE)
+      /* Skip over outputs that weren't written, unless dual source
+       * blending is at play. The results may be undefined depending
+       * on the blending settings, but that's what the user signed
+       * up for.
+       */
+      if (s.outputs[target].file == BAD_FILE && s.dual_src_output.file == BAD_FILE)
          continue;
 
       const brw_builder abld = bld.annotate(
@@ -143,8 +147,7 @@ brw_emit_fb_writes(brw_shader &s)
       (key->nr_color_regions > 1 && key->alpha_to_coverage &&
        s.sample_mask.file == BAD_FILE);
 
-   prog_data->dual_src_blend = (s.dual_src_output.file != BAD_FILE &&
-                                s.outputs[0].file != BAD_FILE);
+   prog_data->dual_src_blend = s.dual_src_output.file != BAD_FILE;
    assert(!prog_data->dual_src_blend || key->nr_color_regions == 1);
 
    /* Following condition implements Wa_14017468336:
@@ -1226,7 +1229,7 @@ remap_attr_reg(brw_shader &s,
 }
 
 static void
-brw_assign_urb_setup(brw_shader &s)
+brw_assign_fs_urb_setup(brw_shader &s)
 {
    assert(s.stage == MESA_SHADER_FRAGMENT);
 
@@ -1297,7 +1300,7 @@ run_fs(brw_shader &s, bool allow_spilling, bool do_rep_send)
 
    assert(s.stage == MESA_SHADER_FRAGMENT);
 
-   s.payload_ = new brw_fs_thread_payload(s, s.source_depth_to_render_target);
+   s.payload_ = new brw_fs_thread_payload(s);
 
    if (nir->info.ray_queries > 0)
       s.limit_dispatch_width(16, "SIMD32 not supported with ray queries.\n");
@@ -1359,7 +1362,7 @@ run_fs(brw_shader &s, bool allow_spilling, bool do_rep_send)
       if (devinfo->ver == 9)
          gfx9_ps_header_only_workaround(fs_prog_data);
 
-      brw_assign_urb_setup(s);
+      brw_assign_fs_urb_setup(s);
 
       brw_lower_3src_null_dest(s);
       brw_workaround_emit_dummy_mov_instruction(s);
@@ -1448,6 +1451,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
       .nir = nir,
       .dispatch_width = 0,
       .compiler = compiler,
+      .key = &key->base,
       .archiver = params->base.archiver,
    }, *pt = &pt_;
 
@@ -1531,7 +1535,7 @@ brw_compile_fs(const struct brw_compiler *compiler,
       BRW_NIR_PASS(nir_inline_sysval, nir_intrinsic_load_fs_config_intel, f);
    }
 
-   brw_postprocess_nir_opts(pt, key->base.robust_flags);
+   brw_postprocess_nir_opts(pt);
 
    unsigned pressure[SIMD_COUNT];
    brw_nir_quick_pressure_estimate(nir, devinfo, pressure);

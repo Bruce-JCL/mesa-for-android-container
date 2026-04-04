@@ -134,16 +134,6 @@ emit_system_values_block(nir_to_brw_state &ntb, nir_block *block)
             UNREACHABLE("should be lowered by brw_nir_lower_vs_inputs().");
          break;
 
-      case nir_intrinsic_load_invocation_id:
-         if (s.stage == MESA_SHADER_TESS_CTRL)
-            break;
-         assert(s.stage == MESA_SHADER_GEOMETRY);
-         reg = &ntb.system_values[SYSTEM_VALUE_INVOCATION_ID];
-         if (reg->file == BAD_FILE) {
-            *reg = s.gs_payload().instance_id;
-         }
-         break;
-
       case nir_intrinsic_load_sample_pos:
       case nir_intrinsic_load_sample_pos_or_center:
          assert(s.stage == MESA_SHADER_FRAGMENT);
@@ -807,9 +797,9 @@ try_emit_b2fi_of_inot(nir_to_brw_state &ntb, const brw_builder &bld,
 }
 
 static bool
-is_const_zero(const nir_src &src)
+is_const_zero(const nir_alu_src &src)
 {
-   return nir_src_is_const(src) && nir_src_as_int(src) == 0;
+   return nir_src_is_const(src.src) && nir_alu_src_as_uint(src) == 0;
 }
 
 static void
@@ -1564,7 +1554,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
        * either 0 or src0. Replacing the 0 with another value can eliminate a
        * temporary register.
        */
-      if (is_const_zero(instr->src[2].src))
+      if (is_const_zero(instr->src[2]))
          bld.BFI2(result, op[0], op[1], op[0]);
       else
          bld.BFI2(result, op[0], op[1], op[2]);
@@ -2865,6 +2855,7 @@ static void
 brw_from_nir_emit_tcs_intrinsic(nir_to_brw_state &ntb,
                           nir_intrinsic_instr *instr)
 {
+   const intel_device_info *devinfo = ntb.devinfo;
    const brw_builder &bld = ntb.bld;
    brw_shader &s = ntb.s;
 
@@ -2880,9 +2871,24 @@ brw_from_nir_emit_tcs_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_load_primitive_id:
       bld.MOV(dst, s.tcs_payload().primitive_id);
       break;
-   case nir_intrinsic_load_invocation_id:
-      bld.MOV(retype(dst, s.invocation_id.type), s.invocation_id);
+   case nir_intrinsic_load_invocation_id: {
+      /* Get "Instance ID" from g0.2 field */
+      const unsigned instance_id_mask =
+         (devinfo->verx10 >= 125) ? INTEL_MASK( 7,  0) :
+         (devinfo->ver >= 11)     ? INTEL_MASK(22, 16) :
+                                    INTEL_MASK(23, 17);
+      const unsigned instance_id_shift =
+         (devinfo->verx10 >= 125) ? 0 : (devinfo->ver >= 11) ? 16 : 17;
+
+      brw_reg t = bld.AND(brw_ud1_grf(0, 2), brw_imm_ud(instance_id_mask));
+
+      /* gl_InvocationID is just the thread number */
+      if (instance_id_shift)
+         bld.SHR(retype(dst, BRW_TYPE_UD), t, brw_imm_ud(instance_id_shift));
+      else
+         bld.MOV(retype(dst, BRW_TYPE_UD), t);
       break;
+   }
 
    case nir_intrinsic_barrier:
       if (nir_intrinsic_memory_scope(instr) != SCOPE_NONE)
@@ -3102,13 +3108,9 @@ brw_from_nir_emit_gs_intrinsic(nir_to_brw_state &ntb,
       bld.MOV(s.final_gs_vertex_count, get_nir_src(ntb, instr->src[0], 0));
       break;
 
-   case nir_intrinsic_load_invocation_id: {
-      brw_reg val = ntb.system_values[SYSTEM_VALUE_INVOCATION_ID];
-      assert(val.file != BAD_FILE);
-      dest.type = val.type;
-      bld.MOV(dest, val);
+   case nir_intrinsic_load_invocation_id:
+      bld.MOV(dest, retype(s.gs_payload().instance_id, dest.type));
       break;
-   }
 
    default:
       brw_from_nir_emit_intrinsic(ntb, bld, instr);
@@ -6215,7 +6217,7 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
       instr->intrinsic == nir_intrinsic_load_shared_uniform_block_intel ||
       instr->intrinsic == nir_intrinsic_load_global_constant_uniform_block_intel ||
       (instr->intrinsic == nir_intrinsic_load_shader_indirect_data_intel &&
-       nir_src_is_const(instr->src[0]));
+       srcs[MEMORY_LOGICAL_ADDRESS].is_scalar);
    const bool block = convergent_block_load ||
       instr->intrinsic == nir_intrinsic_load_global_block_intel ||
       instr->intrinsic == nir_intrinsic_load_shared_block_intel ||
@@ -6527,7 +6529,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
 
    const unsigned dest_size = nir_tex_instr_dest_size(instr);
    unsigned dest_comp;
-   if (instr->op != nir_texop_tg4 && instr->op != nir_texop_query_levels) {
+   if (instr->op != nir_texop_tg4) {
       unsigned write_mask = nir_def_components_read(&instr->def);
       assert(write_mask != 0); /* dead code should have been eliminated */
 
@@ -6598,8 +6600,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
     */
    const bool non_aligned_component_stride =
       (brw_type_size_bytes(dst_type) * bld.dispatch_width()) % grf_size != 0;
-   if (instr->op != nir_texop_query_levels && !instr->is_sparse &&
-       !non_aligned_component_stride) {
+   if (!instr->is_sparse && !non_aligned_component_stride) {
       /* In most cases we can write directly to the result. */
       tex->dst = nir_def_reg;
    } else {
@@ -6612,26 +6613,6 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
 
       for (unsigned i = dest_comp; i < dest_size; i++)
          nir_dest[i].type = dst.type;
-
-      if (instr->op == nir_texop_query_levels) {
-         /* # levels is in .w */
-         if (devinfo->ver == 9) {
-            /**
-             * Wa_1940217:
-             *
-             * When a surface of type SURFTYPE_NULL is accessed by resinfo, the
-             * MIPCount returned is undefined instead of 0.
-             */
-            brw_inst *mov = bld.MOV(bld.null_reg_d(), dst);
-            mov->conditional_mod = BRW_CONDITIONAL_NZ;
-            nir_dest[0] = bld.vgrf(BRW_TYPE_D);
-            brw_inst *sel =
-               bld.SEL(nir_dest[0], offset(dst, bld, 3), brw_imm_d(0));
-            sel->predicate = BRW_PREDICATE_NORMAL;
-         } else {
-            nir_dest[0] = offset(dst, bld, 3);
-         }
-      }
 
       /* The residency bits are only in the first component. */
       if (instr->is_sparse) {
@@ -6887,7 +6868,8 @@ brw_from_nir(brw_shader *s)
 
    brw_from_nir_emit_impl(ntb, nir_shader_get_entrypoint((nir_shader *)ntb.nir));
 
-   ntb.bld.emit(SHADER_OPCODE_HALT_TARGET);
+   if (s->stage >= MESA_SHADER_FRAGMENT)
+      ntb.bld.emit(SHADER_OPCODE_HALT_TARGET);
 
    ralloc_free(ntb.mem_ctx);
 

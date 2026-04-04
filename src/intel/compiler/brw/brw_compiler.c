@@ -46,7 +46,6 @@ const struct nir_shader_compiler_options brw_scalar_nir_options = {
    .lower_insert_word = true,
    .lower_isign = true,
    .lower_layer_fs_input_to_sysval = true,
-   .lower_ldexp = true,
    .lower_pack_half_2x16 = true,
    .lower_pack_snorm_2x16 = true,
    .lower_pack_snorm_4x8 = true,
@@ -281,14 +280,14 @@ brw_get_compiler_config_value(const struct brw_compiler *compiler)
 }
 
 void
-brw_device_sha1(char *hex,
+brw_device_blake3(char *hex,
                 const struct intel_device_info *devinfo) {
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
-   brw_device_sha1_update(&ctx, devinfo);
-   unsigned char result[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&ctx, result);
-   _mesa_sha1_format(hex, result);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
+   brw_device_blake3_update(&ctx, devinfo);
+   unsigned char result[BLAKE3_KEY_LEN];
+   _mesa_blake3_final(&ctx, result);
+   _mesa_blake3_format(hex, result);
 }
 
 unsigned

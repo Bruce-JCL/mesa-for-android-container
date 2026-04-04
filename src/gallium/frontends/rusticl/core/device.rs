@@ -297,7 +297,7 @@ impl DeviceBase {
                         PIPE_BIND_SHADER_IMAGE,
                     )
                 {
-                    flags |= CL_MEM_WRITE_ONLY | CL_MEM_KERNEL_READ_AND_WRITE;
+                    flags |= CL_MEM_WRITE_ONLY;
                 }
 
                 // TODO: cl_khr_srgb_image_writes
@@ -308,7 +308,7 @@ impl DeviceBase {
                         PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_SHADER_IMAGE,
                     )
                 {
-                    flags |= CL_MEM_READ_WRITE;
+                    flags |= CL_MEM_READ_WRITE | CL_MEM_KERNEL_READ_AND_WRITE;
                 }
 
                 fs.insert(t, flags as cl_mem_flags);
@@ -1362,6 +1362,16 @@ impl DeviceBase {
 }
 
 impl Device {
+    pub fn mem_base_addr_align_bytes(&self) -> usize {
+        // TODO: proper retrieval from the underlying device/screen
+        0x200
+    }
+
+    pub fn mem_base_addr_align_bits(&self) -> u32 {
+        const BITS_PER_BYTE: u32 = 8;
+        (self.mem_base_addr_align_bytes() as u32) * BITS_PER_BYTE
+    }
+
     fn new(screen: PipeScreenWithLdev) -> Option<Device> {
         if !Self::check_valid(&screen) {
             return None;

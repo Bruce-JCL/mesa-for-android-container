@@ -34,9 +34,13 @@ src3 = ('src', 3)
 src4 = ('src', 4)
 
 class Index(object):
-    def __init__(self, c_data_type, name):
+    def __init__(self, c_data_type, name, size):
+        # 64bit non struct types are possible, but intrinsics set/get
+        # need to be updated for that.
+        assert "struct" in c_data_type or size == 1
         self.c_data_type = c_data_type
         self.name = name
+        self.size = size
 
 class Intrinsic(object):
    """Class that represents all the information about an intrinsic opcode.
@@ -83,7 +87,14 @@ class Intrinsic(object):
        self.has_dest = (dest_components >= 0)
        self.dest_components = dest_components
        self.num_indices = len(indices)
+       self.num_index_slots = sum([idx.size for idx in indices])
        self.indices = indices
+       self.index_map = []
+       prefix = 0
+       for idx in indices:
+           self.index_map.append(prefix + 1)
+           prefix += idx.size
+       assert prefix <= 9
        self.flags = flags
        self.sysval = sysval
        self.bit_sizes = bit_sizes if isinstance(bit_sizes, list) else []
@@ -104,8 +115,8 @@ QUADGROUP_FLAGS = [CAN_ELIMINATE, QUADGROUP]
 INTR_INDICES = []
 INTR_OPCODES = {}
 
-def index(c_data_type, name):
-    idx = Index(c_data_type, name)
+def index(c_data_type, name, size = 1):
+    idx = Index(c_data_type, name, size)
     INTR_INDICES.append(idx)
     globals()[name.upper()] = idx
 
@@ -136,6 +147,12 @@ index("int", "base")
 
 # For store instructions, a writemask for the store.
 index("unsigned", "write_mask")
+
+# Same as write_mask, but can be 0 and still have side effects
+index("unsigned", "enabled_channels")
+
+# Generic named value
+index("unsigned", "target")
 
 # The stream-id for GS emit_vertex/end_primitive intrinsics.
 index("unsigned", "stream_id")
@@ -231,8 +248,11 @@ index("unsigned", "offset_shift")
 # Similar to offset_shift except it is applied only to the non uniform offset src, not the base.
 index("unsigned", "offset_shift_nv")
 
-# The Vulkan descriptor type for a vulkan_resource_[re]index intrinsic.
-index("unsigned", "desc_type")
+# The NIR descriptor type for a vulkan_resource_[re]index intrinsic.
+index("nir_descriptor_type", "desc_type")
+
+# The NIR resource type according to VkSpirvResourceTypeFlagsKHR.
+index("nir_resource_type", "resource_type")
 
 # The nir_alu_type of input data to a store or conversion
 index("nir_alu_type", "src_type")
@@ -283,11 +303,10 @@ index("mesa_scope", "memory_scope")
 index("mesa_scope", "execution_scope")
 
 # Semantics of an IO instruction
-index("struct nir_io_semantics", "io_semantics")
+index("struct nir_io_semantics", "io_semantics", size = 2)
 
 # Transform feedback info
-index("struct nir_io_xfb", "io_xfb")
-index("struct nir_io_xfb", "io_xfb2")
+index("struct nir_io_xfb", "io_xfb", size = 2)
 
 # Ray query values accessible from the RayQueryKHR object
 index("nir_ray_query_value", "ray_query_value")
@@ -372,6 +391,9 @@ index("unsigned", "num_matrices")
 # Register class for load/store_preamble
 index("nir_preamble_class", "preamble_class")
 
+# Like nir_alu_instr::fp_math_ctrl, but for intrinsics
+index("unsigned", "fp_math_ctrl")
+
 intrinsic("nop", flags=[CAN_ELIMINATE])
 
 # Uses a value and cannot be eliminated.
@@ -380,7 +402,7 @@ intrinsic("nop", flags=[CAN_ELIMINATE])
 intrinsic("use", src_comp=[0], flags=[])
 
 intrinsic("convert_alu_types", dest_comp=0, src_comp=[0],
-          indices=[SRC_TYPE, DEST_TYPE, ROUNDING_MODE, SATURATE],
+          indices=[SRC_TYPE, DEST_TYPE, ROUNDING_MODE, SATURATE, FP_MATH_CTRL],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 
 intrinsic("load_param", dest_comp=0, indices=[PARAM_IDX], flags=[CAN_ELIMINATE])
@@ -483,7 +505,7 @@ intrinsic("is_sparse_resident_zink", dest_comp=1, src_comp=[0], bit_sizes=[1],
 for suffix in ["", "_fine", "_coarse"]:
     for axis in ["x", "y"]:
         intrinsic(f"dd{axis}{suffix}", dest_comp=0, src_comp=[0],
-                  bit_sizes=[16, 32], flags=[CAN_ELIMINATE, QUADGROUP])
+                  bit_sizes=[16, 32], indices=[FP_MATH_CTRL], flags=[CAN_ELIMINATE, QUADGROUP])
 
 # a barrier is an intrinsic with no inputs/outputs but which can't be moved
 # around/optimized in general
@@ -590,6 +612,10 @@ intrinsic("shuffle", src_comp=[0, 1], dest_comp=0, bit_sizes=src0, flags=SUBGROU
 intrinsic("shuffle_xor", src_comp=[0, 1], dest_comp=0, bit_sizes=src0, flags=SUBGROUP_FLAGS)
 intrinsic("shuffle_up", src_comp=[0, 1], dest_comp=0, bit_sizes=src0, flags=SUBGROUP_FLAGS)
 intrinsic("shuffle_down", src_comp=[0, 1], dest_comp=0, bit_sizes=src0, flags=SUBGROUP_FLAGS)
+
+# SPV_INTEL_subgroups shuffles.
+intrinsic("shuffle_up_intel", src_comp=[0, 0, 1], dest_comp=0, bit_sizes=src0, flags=SUBGROUP_FLAGS)
+intrinsic("shuffle_down_intel", src_comp=[0, 0, 1], dest_comp=0, bit_sizes=src0, flags=SUBGROUP_FLAGS)
 
 # Quad operations from SPIR-V.
 intrinsic("quad_broadcast", src_comp=[0, 1], dest_comp=0, bit_sizes=src0, flags=QUADGROUP_FLAGS)
@@ -806,6 +832,8 @@ def image(name, src_comp=[], extra_indices=[], **kwargs):
               indices=[IMAGE_DIM, IMAGE_ARRAY, FORMAT, ACCESS, RANGE_BASE] + extra_indices, **kwargs)
     intrinsic("bindless_image_" + name, src_comp=[-1] + src_comp,
               indices=[IMAGE_DIM, IMAGE_ARRAY, FORMAT, ACCESS] + extra_indices, **kwargs)
+    intrinsic("image_heap_" + name, src_comp=[1] + src_comp,
+              indices=[IMAGE_DIM, IMAGE_ARRAY, FORMAT, ACCESS] + extra_indices, **kwargs)
 
 image("load", src_comp=[4, 1, 1], extra_indices=[DEST_TYPE], dest_comp=0, flags=[CAN_ELIMINATE])
 image("sparse_load", src_comp=[4, 1, 1], extra_indices=[DEST_TYPE], dest_comp=0, flags=[CAN_ELIMINATE])
@@ -849,7 +877,7 @@ image("fragment_mask_load_amd", src_comp=[4], dest_comp=1, bit_sizes=[32], flags
 # corresponds to the tuple (set, binding, index) and computes an index
 # corresponding to tuple (set, binding, idx + src1).
 intrinsic("vulkan_resource_index", src_comp=[1], dest_comp=0,
-          indices=[DESC_SET, BINDING, DESC_TYPE],
+          indices=[DESC_SET, BINDING, DESC_TYPE, RESOURCE_TYPE],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 intrinsic("vulkan_resource_reindex", src_comp=[0, 1], dest_comp=0,
           indices=[DESC_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
@@ -1316,7 +1344,7 @@ def store(name, srcs, indices=[], flags=[]):
     intrinsic("store_" + name, [0] + srcs, indices=indices, flags=flags)
 
 # src[] = { value, offset }.
-store("output", [1], [BASE, RANGE, WRITE_MASK, COMPONENT, SRC_TYPE, IO_SEMANTICS, IO_XFB, IO_XFB2])
+store("output", [1], [BASE, RANGE, WRITE_MASK, COMPONENT, SRC_TYPE, IO_SEMANTICS, IO_XFB])
 # src[] = { value, offset }.
 store("pixel_local", [1], [BASE, RANGE, WRITE_MASK, COMPONENT, FORMAT, SRC_TYPE, IO_SEMANTICS])
 # src[] = { value, vertex, offset }.
@@ -1416,15 +1444,30 @@ intrinsic("cmat_load", src_comp=[-1, -1, 1], indices=[MATRIX_LAYOUT])
 intrinsic("cmat_store", src_comp=[-1, -1, 1], indices=[MATRIX_LAYOUT])
 intrinsic("cmat_length", src_comp=[], dest_comp=1, indices=[CMAT_DESC], bit_sizes=[32])
 intrinsic("cmat_muladd", src_comp=[-1, -1, -1, -1], indices=[SATURATE, CMAT_SIGNED_MASK])
-intrinsic("cmat_convert", src_comp=[-1, -1], indices=[SATURATE, CMAT_SIGNED_MASK])
-intrinsic("cmat_unary_op", src_comp=[-1, -1], indices=[ALU_OP])
-intrinsic("cmat_binary_op", src_comp=[-1, -1, -1], indices=[ALU_OP])
-intrinsic("cmat_scalar_op", src_comp=[-1, -1, -1], indices=[ALU_OP])
+intrinsic("cmat_convert", src_comp=[-1, -1], indices=[SATURATE, CMAT_SIGNED_MASK, FP_MATH_CTRL])
+intrinsic("cmat_unary_op", src_comp=[-1, -1], indices=[ALU_OP, FP_MATH_CTRL])
+intrinsic("cmat_binary_op", src_comp=[-1, -1, -1], indices=[ALU_OP, FP_MATH_CTRL])
+intrinsic("cmat_scalar_op", src_comp=[-1, -1, -1], indices=[ALU_OP, FP_MATH_CTRL])
 intrinsic("cmat_bitcast", src_comp=[-1, -1])
 intrinsic("cmat_extract", src_comp=[-1, 1], dest_comp=1)
 intrinsic("cmat_insert", src_comp=[-1, 1, -1, 1])
 intrinsic("cmat_copy", src_comp=[-1, -1])
-intrinsic("cmat_transpose", src_comp=[-1, -1])
+intrinsic("cmat_transpose", src_comp=[-1, -1], indices=[FP_MATH_CTRL])
+
+# VK_EXT_descriptor_heap
+system_value("sampler_heap_ptr", 1, bit_sizes=[64])
+system_value("resource_heap_ptr", 1, bit_sizes=[64])
+# src[] = { deref }.
+load("buffer_ptr_deref", [-1], [ACCESS, RESOURCE_TYPE],
+     flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset }.
+load("heap_descriptor", [1], [RESOURCE_TYPE], [CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset }.
+load("resource_heap_data", [1], [ALIGN_MUL, ALIGN_OFFSET],
+     flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { addr }.
+intrinsic("global_addr_to_descriptor", src_comp=[1], dest_comp=0,
+          indices=[RESOURCE_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Select an output vertex in a poly GS. Takes the stream-local vertex ID.
 intrinsic("select_vertex_poly", src_comp=[1], indices=[STREAM_ID])
@@ -1523,6 +1566,7 @@ intrinsic("load_frag_coord_unscaled_ir3", dest_comp=4,
           flags=[CAN_ELIMINATE, CAN_REORDER], bit_sizes=[32])
 intrinsic("load_frag_coord_gmem_ir3", dest_comp=4,
           flags=[CAN_ELIMINATE, CAN_REORDER], bit_sizes=[32])
+system_value("alpha_to_coverage_enable_ir3", 1)
 
 # Per-view gl_FragSizeEXT and gl_FragCoord offset.
 intrinsic("load_frag_size_ir3", src_comp=[1], dest_comp=2, indices=[RANGE],
@@ -1638,6 +1682,22 @@ intrinsic("prefetch_ubo_ir3", [1], flags=[CAN_REORDER])
 # src[] = { vertex_id, instance_id, offset }
 load("attribute_pan", [1, 1, 1], [BASE, COMPONENT, DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
 
+# src[] = { idx, bary }
+load("var_pan", [1, 2], [DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
+# src[] = { idx }
+load("var_flat_pan", [1], [DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset, bary }
+load("var_buf_pan", [1, 2], [SRC_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset }
+load("var_buf_flat_pan", [1], [SRC_TYPE, IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
+
+# Panfrost-specific intrinsic to load special varyings, can load point coords
+# and frag_[zw] at specific barycentric coordinates.
+# src[] = { barycoord }
+# FLAGS is enum bi_varying_name
+intrinsic("load_var_special_pan", src_comp=[2], dest_comp=0, bit_sizes=[32],
+          indices=[FLAGS], flags=[CAN_ELIMINATE, CAN_REORDER])
+
 # Panfrost-specific intrinsic to load the shader_output special-FAU value on 5th Gen.
 intrinsic("load_shader_output_pan", dest_comp=1, src_comp=[], bit_sizes=[32],
           indices=[], flags=[CAN_REORDER, CAN_ELIMINATE])
@@ -1672,11 +1732,6 @@ store("raw_output_pan", [], [IO_SEMANTICS, BASE])
 store("combined_output_pan", [1, 1, 1, 4], [IO_SEMANTICS, COMPONENT, SRC_TYPE, DEST_TYPE])
 load("raw_output_pan", [1], [IO_SEMANTICS], [CAN_ELIMINATE, CAN_REORDER])
 
-# Like the frag_coord_zw intrinsic, but takes a barycentric. This is needed for
-# noperspective lowering.
-# src[] = { barycoord }
-intrinsic("load_frag_coord_zw_pan", [2], dest_comp=1, indices=[COMPONENT], flags=[CAN_ELIMINATE, CAN_REORDER], bit_sizes=[32])
-
 # Loads the sampler paramaters <min_lod, max_lod, lod_bias>
 # src[] = { sampler_index }
 load("sampler_lod_parameters", [1], flags=[CAN_ELIMINATE, CAN_REORDER])
@@ -1704,11 +1759,30 @@ store("tile_pan", [1, 1, 1], indices=[ACCESS, SRC_TYPE, IO_SEMANTICS])
 
 # Load converted memory given an address and a conversion descriptor
 # src[] = { address, conversion }
-load("converted_mem_pan", [1, 1], indices=[DEST_TYPE, IO_SEMANTICS], flags=[CAN_ELIMINATE])
+load("global_cvt_pan", [1, 1], indices=[DEST_TYPE, ACCESS], flags=[CAN_ELIMINATE])
 
-# Store a value to memory with conversion given an address and a conversion descriptor
+# Store a value to memory with conversion given an address and a conversion
+# descriptor.  The hardware also supports AUTO32, meaning a global store without
+# any conversion for 32-bit values, this behaviour can be enabled by setting
+# SRC_TYPE = `32` (using nir_type_invalid instead of real types).
 # src[] = { value, address, conversion }
-store("converted_mem_pan", [1, 1], indices=[IO_SEMANTICS])
+store("global_cvt_pan", [1, 1], indices=[SRC_TYPE, ACCESS])
+
+# Same exact opcode as store_global, but used to tag a gl_PointSize write.
+# This is needed to later mask out the write in the backend.
+# src[] = { value, address }
+store("global_psiz_pan", [1], indices=[WRITE_MASK, ACCESS])
+
+# Base index of the output buffer passed into the IDVS on Valhall.
+system_value("idvs_output_buf_index_pan", 1, bit_sizes=[32])
+
+# src[] = { handle, vertex_id, instance_id }
+intrinsic("lea_attr_pan", [1, 1, 1], dest_comp=3, bit_sizes=[32],
+          indices=[SRC_TYPE], flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# src[] = { handle, index }
+intrinsic("lea_buf_pan", [1, 1], dest_comp=2, bit_sizes=[32],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Load the address and potentially the conversion descriptor for a texel buffer index.
 # The 64 bit address is always in the first two channels, while the 32 bit
@@ -1845,7 +1919,8 @@ store("global_amd", [1, 1], indices=[BASE, ACCESS, ALIGN_MUL, ALIGN_OFFSET, WRIT
 
 # src[] = { address }. BASE is a 24 bit unsigned offset if a constant 0 address is given,
 # signed otherwise.
-load("global_nv", [1], indices=[BASE, ACCESS, ALIGN_MUL, ALIGN_OFFSET], flags=[CAN_ELIMINATE])
+# load_global_nv has an additional boolean input that makes the load return 0 on false.
+load("global_nv", [1, 1], indices=[BASE, ACCESS, ALIGN_MUL, ALIGN_OFFSET], flags=[CAN_ELIMINATE])
 store("global_nv", [1], indices=[BASE, ACCESS, ALIGN_MUL, ALIGN_OFFSET])
 load("scratch_nv", [1], indices=[BASE, ACCESS, ALIGN_MUL, ALIGN_OFFSET], flags=[CAN_ELIMINATE])
 store("scratch_nv", [1], indices=[BASE, ALIGN_MUL, ALIGN_OFFSET])
@@ -2163,14 +2238,14 @@ system_value("lds_ngg_gs_out_vertex_base_amd", 1)
 
 # AMD GPU shader output export instruction
 # src[] = { export_value, row }
-# BASE = export target
+# TARGET = export target
 # FLAGS = AC_EXP_FLAG_*
-intrinsic("export_amd", [0], indices=[BASE, WRITE_MASK, FLAGS])
-intrinsic("export_row_amd", [0, 1], indices=[BASE, WRITE_MASK, FLAGS])
+intrinsic("export_amd", [0], indices=[TARGET, ENABLED_CHANNELS, FLAGS])
+intrinsic("export_row_amd", [0, 1], indices=[TARGET, ENABLED_CHANNELS, FLAGS])
 
 # Export dual source blend outputs with swizzle operation
 # src[] = { mrt0, mrt1 }
-intrinsic("export_dual_src_blend_amd", [0, 0], indices=[WRITE_MASK])
+intrinsic("export_dual_src_blend_amd", [0, 0], indices=[ENABLED_CHANNELS])
 
 # Alpha test reference value
 system_value("alpha_reference_amd", 1)
@@ -2507,6 +2582,8 @@ intrinsic("bindless_sampler_agx", [1, 1], dest_comp=1, bit_sizes=[16],
 # variable. The const index specifies which of the six parameters to load.
 intrinsic("image_deref_load_param_intel", src_comp=[1], dest_comp=0,
           indices=[BASE], flags=[CAN_ELIMINATE, CAN_REORDER])
+intrinsic("image_heap_load_param_intel", src_comp=[1], dest_comp=0,
+          indices=[BASE], flags=[CAN_ELIMINATE, CAN_REORDER])
 image("load_raw_intel", src_comp=[1], dest_comp=0,
       flags=[CAN_ELIMINATE])
 image("store_raw_intel", src_comp=[1, 0])
@@ -2643,7 +2720,7 @@ store("urb_lsc_intel", [1], [BASE])
 # & task shaders on Gfx12.5+
 #
 # src[] = { offset }.
-load("shader_indirect_data_intel", [1], [BASE, RANGE])
+load("shader_indirect_data_intel", [1], [BASE, RANGE, ALIGN_MUL, ALIGN_OFFSET])
 
 # Return a handle for a shader's input or output URB memory.
 system_value("urb_input_handle_intel", 1)
@@ -2757,8 +2834,15 @@ intrinsic("ldcx_nv", dest_comp=0, src_comp=[1, 1],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 intrinsic("load_sysval_nv", dest_comp=1, src_comp=[], bit_sizes=[32, 64],
           indices=[ACCESS, BASE, DIVERGENT], flags=[CAN_ELIMINATE])
-intrinsic("isberd_nv", dest_comp=1, src_comp=[1], bit_sizes=[32],
-          flags=[CAN_ELIMINATE, CAN_REORDER])
+# src[] = { offset }.
+# FLAGS is struct nak_nir_isbe_flags
+intrinsic("isberd_nv", dest_comp=1, src_comp=[1], bit_sizes=[8, 16, 32],
+          indices=[BASE, RANGE_BASE, RANGE, FLAGS, ACCESS],
+          flags=[CAN_ELIMINATE])
+# src[] = { data, offset }.
+# FLAGS is struct nak_nir_isbe_flags
+intrinsic("isbewr_nv", src_comp=[0, 1],
+          indices=[BASE, RANGE_BASE, RANGE, FLAGS, ACCESS], flags=[])
 intrinsic("vild_nv", dest_comp=1, src_comp=[1], bit_sizes=[32],
           flags=[CAN_ELIMINATE, CAN_REORDER],
           indices=[BASE])

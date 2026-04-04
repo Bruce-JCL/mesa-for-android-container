@@ -90,9 +90,11 @@ struct blorp_surface_info
    struct isl_surf aux_surf;
    struct blorp_address aux_addr;
    enum isl_aux_usage aux_usage;
+   enum isl_format aux_format;
 
    union isl_color_value clear_color;
    struct blorp_address clear_color_addr;
+   bool has_replicated_pixel;
 
    struct isl_view view;
 
@@ -559,13 +561,18 @@ blorp_op_type_is_clear(enum blorp_op op)
    case BLORP_OP_CCS_COLOR_CLEAR:
    case BLORP_OP_CCS_PARTIAL_RESOLVE:
    case BLORP_OP_CCS_RESOLVE:
+   case BLORP_OP_FAST_STENCIL_CLEAR:
    case BLORP_OP_HIZ_AMBIGUATE:
    case BLORP_OP_HIZ_CLEAR:
    case BLORP_OP_HIZ_RESOLVE:
+   case BLORP_OP_HIZ_STENCIL_CLEAR:
    case BLORP_OP_MCS_AMBIGUATE:
    case BLORP_OP_MCS_COLOR_CLEAR:
    case BLORP_OP_MCS_PARTIAL_RESOLVE:
+   case BLORP_OP_LINEAR_SURFACE_CLEAR:
    case BLORP_OP_SLOW_COLOR_CLEAR:
+   case BLORP_OP_SLOW_STENCIL_CLEAR:
+   case BLORP_OP_SLOW_DEPTH_STENCIL_CLEAR:
    case BLORP_OP_SLOW_DEPTH_CLEAR:
       return true;
    default:

@@ -20,7 +20,7 @@
 #include "git_sha1.h"
 #include "util/detect_os.h"
 #include "util/disk_cache.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 
 #include "vk_android.h"
 #include "vk_device.h"
@@ -123,6 +123,7 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .KHR_copy_memory_indirect = true,
       .KHR_create_renderpass2 = true,
       .KHR_dedicated_allocation = true,
+      .KHR_depth_clamp_zero_one = true,
       .KHR_depth_stencil_resolve = true,
       .KHR_descriptor_update_template = true,
       .KHR_device_group = true,
@@ -586,7 +587,7 @@ nvk_get_device_features(const struct nv_device_info *info,
       /* VK_EXT_depth_clamp_control */
       .depthClampControl = true,
 
-      /* VK_EXT_depth_clamp_zero_one */
+      /* VK_KHR_depth_clamp_zero_one */
       .depthClampZeroOne = true,
 
       /* VK_EXT_depth_clip_control */
@@ -597,7 +598,11 @@ nvk_get_device_features(const struct nv_device_info *info,
 
       /* VK_EXT_descriptor_buffer */
       .descriptorBuffer = info->cls_eng3d >= MAXWELL_A,
-      .descriptorBufferCaptureReplay = info->cls_eng3d >= MAXWELL_A,
+      /*
+       * CaptureReplay is disabled until we fix
+       * https://gitlab.freedesktop.org/mesa/mesa/-/issues/14518
+       */
+      .descriptorBufferCaptureReplay = false, /* info->cls_eng3d >= MAXWELL_A, */
       .descriptorBufferImageLayoutIgnored = info->cls_eng3d >= MAXWELL_A,
       .descriptorBufferPushDescriptors = info->cls_eng3d >= MAXWELL_A,
 
@@ -1101,7 +1106,7 @@ nvk_get_device_properties(const struct nvk_instance *instance,
       .samplerCaptureReplayDescriptorDataSize =
          sizeof(struct nvk_sampler_capture),
       .accelerationStructureCaptureReplayDescriptorDataSize = 0, // todo
-      .samplerDescriptorSize = sizeof(struct nvk_sampled_image_descriptor),
+      .EDBsamplerDescriptorSize = sizeof(struct nvk_sampled_image_descriptor),
       .combinedImageSamplerDescriptorSize = sizeof(struct nvk_sampled_image_descriptor),
       .sampledImageDescriptorSize = sizeof(struct nvk_sampled_image_descriptor),
       .storageImageDescriptorSize = sizeof(struct nvk_storage_image_descriptor),
@@ -1322,24 +1327,24 @@ nvk_physical_device_init_pipeline_cache(struct nvk_physical_device *pdev)
 {
    const struct nvk_instance *instance = nvk_physical_device_instance(pdev);
 
-   struct mesa_sha1 sha_ctx;
-   _mesa_sha1_init(&sha_ctx);
+   blake3_hasher blake3_ctx;
+   _mesa_blake3_init(&blake3_ctx);
 
-   _mesa_sha1_update(&sha_ctx, instance->driver_build_sha,
+   _mesa_blake3_update(&blake3_ctx, instance->driver_build_sha,
                      sizeof(instance->driver_build_sha));
 
-   _mesa_sha1_update(&sha_ctx, &pdev->info.chipset,
+   _mesa_blake3_update(&blake3_ctx, &pdev->info.chipset,
                      sizeof(pdev->info.chipset));
 
    const uint64_t compiler_flags = nvk_physical_device_compiler_flags(pdev);
-   _mesa_sha1_update(&sha_ctx, &compiler_flags, sizeof(compiler_flags));
+   _mesa_blake3_update(&blake3_ctx, &compiler_flags, sizeof(compiler_flags));
 
-   unsigned char sha[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&sha_ctx, sha);
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   _mesa_blake3_final(&blake3_ctx, blake3);
 
-   STATIC_ASSERT(SHA1_DIGEST_LENGTH >= VK_UUID_SIZE);
-   memcpy(pdev->vk.properties.pipelineCacheUUID, sha, VK_UUID_SIZE);
-   memcpy(pdev->vk.properties.shaderBinaryUUID, sha, VK_UUID_SIZE);
+   STATIC_ASSERT(BLAKE3_KEY_LEN >= VK_UUID_SIZE);
+   memcpy(pdev->vk.properties.pipelineCacheUUID, blake3, VK_UUID_SIZE);
+   memcpy(pdev->vk.properties.shaderBinaryUUID, blake3, VK_UUID_SIZE);
 
 #ifdef ENABLE_SHADER_CACHE
    char renderer[10];
@@ -1347,8 +1352,8 @@ nvk_physical_device_init_pipeline_cache(struct nvk_physical_device *pdev)
                                pdev->info.chipset);
    assert(len == sizeof(renderer) - 2);
 
-   char timestamp[SHA1_DIGEST_STRING_LENGTH];
-   _mesa_sha1_format(timestamp, instance->driver_build_sha);
+   char timestamp[BLAKE3_HEX_LEN];
+   _mesa_blake3_format(timestamp, instance->driver_build_sha);
 
    const uint64_t driver_flags = nvk_physical_device_compiler_flags(pdev);
    pdev->vk.disk_cache = disk_cache_create(renderer, timestamp, driver_flags);

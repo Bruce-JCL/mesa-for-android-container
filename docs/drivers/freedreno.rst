@@ -54,8 +54,8 @@ Hardware acronyms
   SQE
     a6xx+ replacement for PFP/ME.  This is the microcontroller that runs the
     microcode (loaded from Linux) which actually processes the command stream
-    and writes to the hardware registers.  See `afuc
-    <https://gitlab.freedesktop.org/mesa/mesa/-/blob/main/src/freedreno/afuc/README.rst>`__.
+    and writes to the hardware registers.  See `qrisc
+    <https://gitlab.freedesktop.org/mesa/mesa/-/blob/main/src/freedreno/qrisc/README.rst>`__.
 
   ROQ
     DMA engine used by the SQE for reading memory, with some prefetch buffering.
@@ -350,7 +350,7 @@ You would need to disassemble the firmware (/lib/firmware/qcom/aXXX_sqe.fw) via:
 
 .. code-block:: sh
 
-  afuc-disasm -v a650_sqe.fw > a650_sqe.fw.disasm
+  qrisc-disasm -v a650_sqe.fw > a650_sqe.fw.disasm
 
 Now you should search for PC value in the disassembly, e.g.:
 
@@ -407,9 +407,10 @@ capture from inside Mesa. Different ``FD_RD_DUMP`` options are available:
   of that many subsequent submits. Writing -1 will enable dumping of submits
   until disabled. Writing 0 (or any other value) will disable dumps.
 
-Output dump files and trigger file (when enabled) are hard-coded to be placed
-under ``/tmp``, or ``/data/local/tmp`` under Android. `FD_RD_DUMP_TESTNAME` can
-be used to specify a more descriptive prefix for the output or trigger files.
+Output dump files and trigger file (when enabled) are placed under ``/tmp`` or
+``/data/local/tmp`` under Android by default, but that location can be adjusted
+through ``FD_RD_DUMP_PATH``. ``FD_RD_DUMP_TESTNAME`` can be used to specify a
+more descriptive prefix for the output or trigger files.
 
 Dumping can be limited to specific ranges of frames or submits. For example,
 ``FD_RD_DUMP_SUBMITS=120-140,160,165`` will dump command streams only for the

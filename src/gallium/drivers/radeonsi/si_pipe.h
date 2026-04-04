@@ -20,6 +20,7 @@
 #include "util/log.h"
 #include "ac_cmdbuf.h"
 #include "ac_descriptors.h"
+#include "ac_guardband.h"
 #include "ac_sqtt.h"
 #include "ac_spm.h"
 #include "si_perfetto.h"
@@ -192,6 +193,10 @@ enum
    DBG_NO_FMASK,
    DBG_NO_DMA,
 
+   DBG_FORCE_GFX_BLIT,
+   DBG_FORCE_COMPUTE_BLIT,
+   DBG_FORCE_FAST_CLEAR,
+
    DBG_EXTRA_METADATA,
 
    DBG_TMZ,
@@ -262,7 +267,6 @@ enum
    DBG_TEST_VMFAULT_SHADER,
    DBG_TEST_DMA_PERF,
    DBG_TEST_MEM_PERF,
-   DBG_TEST_BLIT_PERF,
 };
 
 #define DBG_ALL_SHADERS (((1 << (DBG_MS + 1)) - 1))
@@ -510,9 +514,6 @@ struct si_screen {
    uint64_t multimedia_debug_flags;
    char renderer_string[183];
 
-   unsigned pa_sc_raster_config;
-   unsigned pa_sc_raster_config_1;
-   unsigned se_tile_repeat;
    unsigned gs_table_depth;
    unsigned eqaa_force_coverage_samples;
    unsigned eqaa_force_z_samples;
@@ -750,20 +751,12 @@ struct si_framebuffer {
    bool gfx12_has_hiz;
 };
 
-enum si_quant_mode
-{
-   /* The small prim precision computation depends on the enum values to be like this. */
-   SI_QUANT_MODE_16_8_FIXED_POINT_1_256TH,
-   SI_QUANT_MODE_14_10_FIXED_POINT_1_1024TH,
-   SI_QUANT_MODE_12_12_FIXED_POINT_1_4096TH,
-};
-
 struct si_signed_scissor {
    int minx;
    int miny;
    int maxx;
    int maxy;
-   enum si_quant_mode quant_mode;
+   enum ac_quant_mode quant_mode;
 };
 
 struct si_viewports {
@@ -1390,9 +1383,8 @@ enum si_blitter_op /* bitmask */
 {
    SI_SAVE_TEXTURES = 1,
    SI_SAVE_FRAMEBUFFER = 2,
-   SI_SAVE_FRAGMENT_STATE = 4,
-   SI_SAVE_FRAGMENT_CONSTANT = 8,
-   SI_DISABLE_RENDER_COND = 16,
+   SI_SAVE_FRAGMENT_CONSTANT = 4,
+   SI_DISABLE_RENDER_COND = 8,
 };
 
 void si_blitter_begin(struct si_context *sctx, enum si_blitter_op op);
@@ -1676,9 +1668,6 @@ PROC void si_test_mem_perf(struct si_screen *sscreen) TAILV;
 PROC void si_test_clear_buffer(struct si_screen *sscreen) TAILV;
 PROC void si_test_copy_buffer(struct si_screen *sscreen) TAILV;
 
-/* si_test_blit_perf.c */
-PROC void si_test_blit_perf(struct si_screen *sscreen) TAILV;
-
 /* si_state_viewport.c */
 void si_update_vs_viewport_state(struct si_context *ctx);
 void si_init_viewport_functions(struct si_context *ctx);
@@ -1859,6 +1848,9 @@ static inline struct si_shader_ctx_state *si_get_vs(struct si_context *sctx)
 
 static inline bool si_get_streamout_enable_state(struct si_context *sctx)
 {
+   if (sctx->blitter_running)
+      return false;
+
    /* For GFX11, return whether NGG streamout queries are enabled. For older gens, return whether
     * streamout hw is enabled.
     *

@@ -240,7 +240,7 @@ radv_probe_video_decode(struct radv_physical_device *pdev)
    /* WRITE_MEMORY is needed for SetEvent and is required to pass CTS */
    pdev->video_decode_enabled = radv_video_write_memory_supported(pdev);
 
-   if (instance->perftest_flags & RADV_PERFTEST_VIDEO_DECODE) {
+   if (instance->experimental_flags & RADV_EXPERIMENTAL_VIDEO_DECODE) {
       pdev->video_decode_enabled = true;
    }
 }
@@ -983,7 +983,7 @@ radv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice, cons
          enc_caps->encodeInputPictureGranularity = pCapabilities->pictureAccessGranularity;
       ext->maxTiles.width = 2;
       ext->maxTiles.height = 16;
-      ext->minTileSize.width = 64;
+      ext->minTileSize.width = pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_5 ? 256 : 128;
       ext->minTileSize.height = 64;
       ext->maxTileSize.width = 4096;
       ext->maxTileSize.height = 4096;
@@ -2113,6 +2113,7 @@ radv_CmdDecodeVideoKHR(VkCommandBuffer commandBuffer, const VkVideoDecodeInfoKHR
       .width = frame_info->dstPictureResource.codedExtent.width,
       .height = frame_info->dstPictureResource.codedExtent.height,
       .tier = select_tier(device, vid, frame_info),
+      .low_latency = radv_physical_device_instance(pdev)->perftest_flags & RADV_PERFTEST_LOWLATENCYDEC,
    };
 
    if (vid->sessionctx.mem) {

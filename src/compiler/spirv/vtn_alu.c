@@ -1,24 +1,6 @@
 /*
  * Copyright © 2016 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include <math.h>
@@ -159,11 +141,12 @@ vtn_mediump_downconvert_value(struct vtn_builder *b, struct vtn_ssa_value *src)
    if (!src)
       return src;
 
-   struct vtn_ssa_value *srcmp = vtn_create_ssa_value(b, src->type);
-
    if (src->transposed) {
-      srcmp->transposed = vtn_mediump_downconvert_value(b, src->transposed);
+      struct vtn_ssa_value *transposed =
+         vtn_mediump_downconvert_value(b, src->transposed);
+      return vtn_ssa_transpose(b, transposed);
    } else {
+      struct vtn_ssa_value *srcmp = vtn_create_ssa_value(b, src->type);
       enum glsl_base_type base_type = glsl_get_base_type(src->type);
 
       if (glsl_type_is_vector_or_scalar(src->type)) {
@@ -173,9 +156,8 @@ vtn_mediump_downconvert_value(struct vtn_builder *b, struct vtn_ssa_value *src)
          for (int i = 0; i < glsl_get_matrix_columns(src->type); i++)
             srcmp->elems[i]->def = vtn_mediump_downconvert(b, base_type, src->elems[i]->def);
       }
+      return srcmp;
    }
-
-   return srcmp;
 }
 
 static struct vtn_ssa_value *
@@ -456,10 +438,14 @@ fp_math_ctrl_for_type(struct vtn_builder *b, struct vtn_type *type)
    enum glsl_base_type base_type;
 
    /* Some ALU like modf and frexp return a struct of two values. */
-   if (glsl_type_is_struct(type->type))
+   if (glsl_type_is_struct(type->type)) {
       base_type = glsl_get_base_type(type->type->fields.structure[0].type);
-   else
+   } else if (glsl_type_is_cmat(type->type)) {
+      struct glsl_cmat_description desc = *glsl_get_cmat_description(type->type);
+      base_type = desc.element_type;
+   } else {
       base_type = glsl_get_base_type(type->type);
+   }
 
    unsigned *fp_math_ctrl = vtn_fp_math_ctrl_for_base_type(b, base_type);
 
@@ -578,17 +564,26 @@ vtn_mediump_upconvert(struct vtn_builder *b, enum glsl_base_type base_type, nir_
    }
 }
 
-void
+struct vtn_ssa_value *
 vtn_mediump_upconvert_value(struct vtn_builder *b, struct vtn_ssa_value *value)
 {
    enum glsl_base_type base_type = glsl_get_base_type(value->type);
 
+   if (value->transposed) {
+      struct vtn_ssa_value *transposed =
+         vtn_mediump_upconvert_value(b, value->transposed);
+      return vtn_ssa_transpose(b, transposed);
+   }
+
+   struct vtn_ssa_value *value_full = vtn_create_ssa_value(b, value->type);
    if (glsl_type_is_vector_or_scalar(value->type)) {
-      value->def = vtn_mediump_upconvert(b, base_type, value->def);
+      value_full->def = vtn_mediump_upconvert(b, base_type, value->def);
    } else {
       for (int i = 0; i < glsl_get_matrix_columns(value->type); i++)
-         value->elems[i]->def = vtn_mediump_upconvert(b, base_type, value->elems[i]->def);
+         value_full->elems[i]->def = vtn_mediump_upconvert(b, base_type, value->elems[i]->def);
    }
+
+   return value_full;
 }
 
 static nir_def *
@@ -751,12 +746,13 @@ vtn_handle_alu(struct vtn_builder *b, SpvOp opcode,
    struct vtn_value *dest_val = vtn_untyped_value(b, w[2]);
    const struct glsl_type *dest_type = vtn_get_type(b, w[1])->type;
 
+   vtn_handle_fp_fast_math(b, dest_val, vtn_untyped_value(b, w[3]));
+
    if (glsl_type_is_cmat(dest_type)) {
       vtn_handle_cooperative_alu(b, dest_val, dest_type, opcode, w, count);
+      b->nb.fp_math_ctrl = nir_fp_fast_math;
       return;
    }
-
-   vtn_handle_fp_fast_math(b, dest_val, vtn_untyped_value(b, w[3]));
 
    bool mediump_16bit = vtn_alu_op_mediump_16bit(b, opcode, dest_val);
 
@@ -774,7 +770,7 @@ vtn_handle_alu(struct vtn_builder *b, SpvOp opcode,
       struct vtn_ssa_value *dest = vtn_handle_matrix_alu(b, opcode, vtn_src[0], vtn_src[1]);
 
       if (mediump_16bit)
-         vtn_mediump_upconvert_value(b, dest);
+         dest = vtn_mediump_upconvert_value(b, dest);
 
       vtn_push_ssa_value(b, w[2], dest);
       b->nb.fp_math_ctrl = nir_fp_fast_math;
@@ -1170,7 +1166,7 @@ vtn_handle_alu(struct vtn_builder *b, SpvOp opcode,
    }
 
    if (mediump_16bit)
-      vtn_mediump_upconvert_value(b, dest);
+      dest = vtn_mediump_upconvert_value(b, dest);
    vtn_push_ssa_value(b, w[2], dest);
 
    b->nb.fp_math_ctrl = nir_fp_fast_math;

@@ -81,6 +81,10 @@ static const struct debug_named_value radeonsi_debug_options[] = {
    {"nofmask", DBG(NO_FMASK), "Disable MSAA compression"},
    {"nodma", DBG(NO_DMA), "Disable SDMA-copy for DRI_PRIME"},
 
+   {"forcegfxblit", DBG(FORCE_GFX_BLIT), "Force the use of fragment shaders for image clears, copies, blits, and resolve."},
+   {"forcecomputeblit", DBG(FORCE_COMPUTE_BLIT), "Force the use of compute shaders for image clears, copies, blits, and resolve."},
+   {"forcefastclear", DBG(FORCE_FAST_CLEAR), "Force the use of image \"fast clear\" when possible. For debug only."},
+
    {"extra_md", DBG(EXTRA_METADATA), "Set UMD metadata for all textures and with additional fields for umr"},
 
    {"tmz", DBG(TMZ), "Force allocation of scanout/depth/stencil buffer as encrypted"},
@@ -151,7 +155,6 @@ static const struct debug_named_value test_options[] = {
    {"testvmfaultshader", DBG(TEST_VMFAULT_SHADER), "Invoke a shader VM fault test and exit."},
    {"dmaperf", DBG(TEST_DMA_PERF), "Test DMA performance"},
    {"testmemperf", DBG(TEST_MEM_PERF), "Test map + memcpy perf using the winsys."},
-   {"blitperf", DBG(TEST_BLIT_PERF), "Test gfx and compute clear/copy/blit/resolve performance"},
 
    DEBUG_NAMED_VALUE_END /* must be last */
 };
@@ -707,7 +710,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
          mesa_loge("can't create blitter");
          goto fail;
       }
-      sctx->blitter->skip_viewport_restore = true;
+      sctx->blitter->use_single_triangle = true;
 
       /* Some states are expected to be always non-NULL. */
       sctx->noop_blend = util_blitter_get_noop_blend_state(sctx->blitter);
@@ -1178,18 +1181,18 @@ static void si_disk_cache_create(struct si_screen *sscreen)
    if (sscreen->shader_debug_flags & DBG_ALL_SHADERS)
       return;
 
-   struct mesa_sha1 ctx;
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
-   char cache_id[SHA1_DIGEST_STRING_LENGTH];
+   blake3_hasher ctx;
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   char cache_id[BLAKE3_HEX_LEN];
 
-   _mesa_sha1_init(&ctx);
+   _mesa_blake3_init(&ctx);
 
 #ifdef RADEONSI_BUILD_ID_OVERRIDE
    {
       unsigned size = strlen(RADEONSI_BUILD_ID_OVERRIDE) / 2;
       char *data = alloca(size);
       parse_hex(data, RADEONSI_BUILD_ID_OVERRIDE, size);
-      _mesa_sha1_update(&ctx, data, size);
+      _mesa_blake3_update(&ctx, data, size);
    }
 #else
    if (!disk_cache_get_function_identifier(si_disk_cache_create, &ctx))
@@ -1204,10 +1207,10 @@ static void si_disk_cache_create(struct si_screen *sscreen)
    /* NIR options depend on si_screen::use_aco, which affects all shaders, including GLSL
     * compilation.
     */
-   _mesa_sha1_update(&ctx, &sscreen->use_aco, sizeof(sscreen->use_aco));
+   _mesa_blake3_update(&ctx, &sscreen->use_aco, sizeof(sscreen->use_aco));
 
-   _mesa_sha1_final(&ctx, sha1);
-   mesa_bytes_to_hex(cache_id, sha1, SHA1_DIGEST_LENGTH);
+   _mesa_blake3_final(&ctx, blake3);
+   mesa_bytes_to_hex(cache_id, blake3, BLAKE3_KEY_LEN);
 
    sscreen->disk_shader_cache = disk_cache_create(ac_get_family_name(sscreen->info.family),
                                                   cache_id, sscreen->info.address32_hi);
@@ -1333,13 +1336,6 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
 
    sscreen->ws = ws;
    ws->query_info(ws, &sscreen->info);
-
-   if (sscreen->info.gfx_level >= GFX9) {
-      sscreen->se_tile_repeat = 32 * sscreen->info.max_se;
-   } else {
-      ac_get_raster_config(&sscreen->info, &sscreen->pa_sc_raster_config,
-                           &sscreen->pa_sc_raster_config_1, &sscreen->se_tile_repeat);
-   }
 
    sscreen->context_roll_log_filename = debug_get_option("AMD_ROLLS", NULL);
    sscreen->debug_flags = debug_get_flags_option("R600_DEBUG", radeonsi_debug_options, 0);
@@ -1688,9 +1684,6 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
 
    if (test_flags & DBG(TEST_MEM_PERF))
       si_test_mem_perf(sscreen);
-
-   if (test_flags & DBG(TEST_BLIT_PERF))
-      si_test_blit_perf(sscreen);
 
    if (test_flags & (DBG(TEST_VMFAULT_CP) | DBG(TEST_VMFAULT_SHADER)))
       si_test_vmfault(sscreen, test_flags);

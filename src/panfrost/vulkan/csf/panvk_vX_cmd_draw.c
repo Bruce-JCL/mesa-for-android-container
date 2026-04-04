@@ -363,53 +363,52 @@ prepare_vs_driver_set(struct panvk_cmd_buffer *cmdbuf,
    return VK_SUCCESS;
 }
 
-static uint32_t
-get_varying_slots(const struct panvk_cmd_buffer *cmdbuf)
+static void
+emit_varying_descs(const struct panvk_cmd_buffer *cmdbuf,
+                   struct mali_attribute_packed *descs)
 {
    const struct panvk_shader_variant *vs =
       panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
    const struct panvk_shader_variant *fs =
       panvk_shader_only_variant(get_fs(cmdbuf));
-   uint32_t varying_slots = 0;
 
-   if (fs) {
-      unsigned vs_vars = vs->info.varyings.output_count;
-      unsigned fs_vars = fs->info.varyings.input_count;
-      varying_slots = MAX2(vs_vars, fs_vars);
-   }
+   const struct pan_varying_layout *vs_layout = &vs->info.varyings.formats;
+   const struct pan_varying_layout *fs_format = &fs->info.varyings.formats;
+   pan_varying_layout_require_layout(vs_layout);
+   pan_varying_layout_require_format(fs_format);
 
-   return varying_slots;
-}
+   for (uint32_t i = 0; i < fs_format->count; i++) {
+      const struct pan_varying_slot *fs_slot =
+         pan_varying_layout_slot_at(fs_format, i);
 
-static void
-emit_varying_descs(const struct panvk_cmd_buffer *cmdbuf,
-                   struct mali_attribute_packed *descs)
-{
-   uint32_t varying_slots = get_varying_slots(cmdbuf);
-   /* Assumes 16 byte slots. We could do better. */
-   uint32_t varying_size = varying_slots * 16;
-
-   const struct panvk_shader_variant *fs =
-      panvk_shader_only_variant(get_fs(cmdbuf));
-
-   for (uint32_t i = 0; i < varying_slots; i++) {
-      const struct pan_shader_varying *var = &fs->info.varyings.input[i];
-      /* Skip special varyings. */
-      if (var->location < VARYING_SLOT_VAR0)
+      /* Skip empty slots and special varyings. */
+      if (!fs_slot || fs_slot->section != PAN_VARYING_SECTION_GENERIC)
          continue;
 
-      uint32_t loc = var->location - VARYING_SLOT_VAR0;
+      unsigned offset = 0;
+      enum pipe_format format = PIPE_FORMAT_NONE;
+
+      const struct pan_varying_slot *vs_slot =
+         pan_varying_layout_find_slot(vs_layout, fs_slot->location);
+      if (vs_slot) {
+         nir_alu_type base_type = nir_alu_type_get_base_type(fs_slot->alu_type);
+         nir_alu_type bit_size = nir_alu_type_get_type_size(vs_slot->alu_type);
+
+         offset = vs_slot->offset;
+         format = pan_varying_format(base_type | bit_size, vs_slot->ncomps);
+      }
+
       pan_pack(&descs[i], ATTRIBUTE, cfg) {
          cfg.attribute_type = MALI_ATTRIBUTE_TYPE_VERTEX_PACKET;
          cfg.offset_enable = false;
-         cfg.format = GENX(pan_format_from_pipe_format)(var->format)->hw;
+         cfg.format = GENX(pan_format_from_pipe_format)(format)->hw;
          cfg.table = 61;
          cfg.frequency = MALI_ATTRIBUTE_FREQUENCY_VERTEX;
-         cfg.offset = 1024 + (loc * 16);
+         cfg.offset = 1024 + offset;
          /* On v12+, the hardware-controlled buffer is at index 1 for varyings */
          cfg.buffer_index = PAN_ARCH >= 12 ? 1 : 0;
-         cfg.attribute_stride = varying_size;
-         cfg.packet_stride = varying_size + 16;
+         cfg.attribute_stride = vs_layout->generic_size_B;
+         cfg.packet_stride = vs_layout->generic_size_B + 16;
       }
    }
 }
@@ -1671,7 +1670,9 @@ prepare_fs(struct panvk_cmd_buffer *cmdbuf)
       panvk_get_cs_builder(cmdbuf, PANVK_SUBQUEUE_VERTEX_TILER);
 
    if (fs &&
-       (gfx_state_dirty(cmdbuf, FS) || gfx_state_dirty(cmdbuf, DESC_STATE))) {
+       (gfx_state_dirty(cmdbuf, VS) ||
+        gfx_state_dirty(cmdbuf, FS) ||
+        gfx_state_dirty(cmdbuf, DESC_STATE))) {
       VkResult result = prepare_fs_driver_set(cmdbuf);
       if (result != VK_SUCCESS)
          return result;
@@ -2350,15 +2351,13 @@ prepare_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
    if (result != VK_SUCCESS)
       return result;
 
-   /* Assumes 16 byte slots. We could do better. */
-   uint32_t varying_size = get_varying_slots(cmdbuf) * 16;
-
    cs_update_vt_ctx(b) {
       prepare_index_buffer(cmdbuf, draw);
 
       set_tiler_idvs_flags(b, cmdbuf, draw);
 
-      cs_move32_to(b, cs_sr_reg32(b, IDVS, VARY_SIZE), varying_size);
+      cs_move32_to(b, cs_sr_reg32(b, IDVS, VARY_SIZE),
+                   vs->info.varyings.formats.generic_size_B);
 
       struct pan_earlyzs_state earlyzs = {0};
 
@@ -2520,13 +2519,38 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
    uint32_t idvs_count = DIV_ROUND_UP(cmdbuf->state.gfx.render.layer_count,
                                       MAX_LAYERS_PER_TILER_DESC);
 
-   if (idvs_count > 1) {
-      struct cs_index counter_reg = cs_scratch_reg32(b, 17);
-      struct cs_index tiler_ctx_addr = cs_sr_reg64(b, IDVS, TILER_CTX);
+   panvk_cond_render(cmdbuf, b)
+   {
+      if (idvs_count > 1) {
+         struct cs_index counter_reg = cs_scratch_reg32(b, 17);
+         struct cs_index tiler_ctx_addr = cs_sr_reg64(b, IDVS, TILER_CTX);
 
-      cs_move32_to(b, counter_reg, idvs_count);
+         cs_move32_to(b, counter_reg, idvs_count);
 
-      cs_while(b, MALI_CS_CONDITION_GREATER, counter_reg) {
+         cs_while(b, MALI_CS_CONDITION_GREATER, counter_reg) {
+#if PAN_ARCH >= 12
+            cs_trace_run_idvs2(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
+                               flags_override.opaque[0], true, cs_undef(),
+                               MALI_IDVS_SHADING_MODE_EARLY);
+#else
+            cs_trace_run_idvs(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
+                              flags_override.opaque[0], true,
+                              cs_shader_res_sel(0, 0, 1, 0),
+                              cs_shader_res_sel(2, 2, 2, 0), cs_undef());
+#endif
+
+            cs_add32(b, counter_reg, counter_reg, -1);
+            cs_update_vt_ctx(b) {
+               cs_add64(b, tiler_ctx_addr, tiler_ctx_addr,
+                        pan_size(TILER_CONTEXT));
+            }
+         }
+
+         cs_update_vt_ctx(b) {
+            cs_add64(b, tiler_ctx_addr, tiler_ctx_addr,
+                     -(idvs_count * pan_size(TILER_CONTEXT)));
+         }
+      } else {
 #if PAN_ARCH >= 12
          cs_trace_run_idvs2(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
                             flags_override.opaque[0], true, cs_undef(),
@@ -2537,29 +2561,7 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
                            cs_shader_res_sel(0, 0, 1, 0),
                            cs_shader_res_sel(2, 2, 2, 0), cs_undef());
 #endif
-
-         cs_add32(b, counter_reg, counter_reg, -1);
-         cs_update_vt_ctx(b) {
-            cs_add64(b, tiler_ctx_addr, tiler_ctx_addr,
-                     pan_size(TILER_CONTEXT));
-         }
       }
-
-      cs_update_vt_ctx(b) {
-         cs_add64(b, tiler_ctx_addr, tiler_ctx_addr,
-                  -(idvs_count * pan_size(TILER_CONTEXT)));
-      }
-   } else {
-#if PAN_ARCH >= 12
-      cs_trace_run_idvs2(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
-                         flags_override.opaque[0], true, cs_undef(),
-                         MALI_IDVS_SHADING_MODE_EARLY);
-#else
-      cs_trace_run_idvs(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
-                        flags_override.opaque[0], true,
-                        cs_shader_res_sel(0, 0, 1, 0),
-                        cs_shader_res_sel(2, 2, 2, 0), cs_undef());
-#endif
    }
 }
 
@@ -2726,7 +2728,9 @@ panvk_cmd_draw_indirect(struct panvk_cmd_buffer *cmdbuf,
    cs_move64_to(b, draw_params_addr, draw->indirect.buffer_dev_addr);
    cs_move32_to(b, draw_id, 0);
 
-   cs_while(b, MALI_CS_CONDITION_GREATER, draw_count) {
+   panvk_cond_render(cmdbuf, b)
+      cs_while(b, MALI_CS_CONDITION_GREATER, draw_count)
+   {
       cs_update_vt_ctx(b) {
          cs_move32_to(b, cs_sr_reg32(b, IDVS, GLOBAL_ATTRIBUTE_OFFSET), 0);
          /* Load SR33-37 from indirect buffer. */
@@ -3644,12 +3648,16 @@ issue_fragment_jobs(struct panvk_cmd_buffer *cmdbuf)
           * indirect mode */
          cs_set_state_imm32(b, MALI_CS_SET_STATE_TYPE_SB_SEL_DEFERRED,
                             SB_ID(DEFERRED_FLUSH));
+#else
+         async = cs_defer(SB_WAIT_ITER(sb_upd_ctx.cur_sb), SB_ID(DEFERRED_FLUSH));
 #endif
          cs_flush_caches(b, MALI_CS_FLUSH_MODE_CLEAN, MALI_CS_FLUSH_MODE_CLEAN,
                          MALI_CS_OTHER_FLUSH_MODE_NONE, flush_id, async);
 #if PAN_ARCH >= 11
          cs_set_state_imm32(b, MALI_CS_SET_STATE_TYPE_SB_SEL_DEFERRED,
                             SB_ID(DEFERRED_SYNC));
+#else
+         async = cs_defer(SB_WAIT_ITER(sb_upd_ctx.cur_sb), SB_ID(DEFERRED_SYNC));
 #endif
 
          cs_load64_to(b, oq_chain, cs_subqueue_ctx_reg(b),

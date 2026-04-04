@@ -103,7 +103,8 @@ struct ir3_driver_params_fs {
    /* Dynamic params (that aren't known when compiling the shader) */
 #define IR3_DP_FS_DYNAMIC dword_offsetof(struct ir3_driver_params_fs, frag_invocation_count)
    uint32_t frag_invocation_count;
-   uint32_t __pad_05_07[3];
+   uint32_t alpha_to_coverage_enable;
+   uint32_t __pad_06_07[2];
    uint32_t frag_size;
    uint32_t __pad_09;
    uint32_t frag_offset;
@@ -703,7 +704,7 @@ struct ir3_shader_variant {
 
    struct ir3_info info;
 
-   char sha1_str[SHA1_DIGEST_STRING_LENGTH];
+   char blake3_str[BLAKE3_HEX_LEN];
 
    struct ir3_shader_options shader_options;
 
@@ -1185,9 +1186,10 @@ ir3_shader_create_variant(struct ir3_shader *shader,
                           const struct ir3_shader_key *key,
                           bool keep_ir);
 struct ir3_shader_variant *
-ir3_shader_get_variant(struct ir3_shader *shader,
-                       const struct ir3_shader_key *key, bool binning_pass,
-                       bool keep_ir, bool *created);
+ir3_shader_get_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
+                       bool binning_pass, bool write_disasm,
+                       void (*upload)(struct ir3_shader_variant *v, void *),
+                       void *arg);
 
 struct ir3_shader *
 ir3_shader_from_nir(struct ir3_compiler *compiler, nir_shader *nir,

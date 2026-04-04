@@ -1580,7 +1580,7 @@ impl SM32Op for OpF2F {
         e.set_field(12..14, (self.src_type.bits() / 8).ilog2());
 
         e.set_rnd_mode(42..44, self.rnd_mode);
-        e.set_bit(44, self.is_high());
+        e.set_bit(44, self.src.src_swizzle == SrcSwizzle::Yy);
         e.set_bit(45, self.integer_rnd);
         e.set_bit(47, self.ftz);
         e.set_bit(48, src.src_mod.has_fneg());
@@ -1623,7 +1623,7 @@ impl SM32Op for OpF2I {
         e.set_bit(14, self.dst_type.is_signed());
 
         e.set_rnd_mode(42..44, self.rnd_mode);
-        // 44: .h1
+        e.set_bit(44, self.src.src_swizzle == SrcSwizzle::Yy);
         e.set_bit(47, self.ftz);
         e.set_bit(48, self.src.src_mod.has_fneg());
         e.set_bit(50, false); // dst.CC
@@ -2550,6 +2550,7 @@ impl SM32Op for OpLd {
 
     fn encode(&self, e: &mut SM32Encoder<'_>) {
         assert_eq!(self.stride, OffsetStride::X1);
+        assert!(self.pred.is_true());
         // Missing:
         // 0x7c8 for indirect const load
         match self.access.space {

@@ -1287,7 +1287,7 @@ zink_screen_init_compiler(struct zink_screen *screen)
        * effectively unused (no instances in shader-db), it's not worth the
        * effort to do so.
        * */
-      .lower_ldexp = true,
+      .has_ldexp = false,
 
       .lower_mul_high = true,
       .lower_to_scalar = true,
@@ -1590,6 +1590,7 @@ optimize_nir(struct nir_shader *s, struct zink_shader *zs, bool can_shrink)
       NIR_PASS(progress, s, nir_lower_alu_to_scalar, filter_pack_instr, NULL);
       NIR_PASS(progress, s, nir_opt_copy_prop_vars);
       NIR_PASS(progress, s, nir_opt_copy_prop);
+      NIR_PASS(progress, s, nir_opt_combine_stores, nir_var_all);
       NIR_PASS(progress, s, nir_opt_remove_phis);
       if (s->options->lower_int64_options) {
          NIR_PASS(progress, s, nir_lower_64bit_phis);

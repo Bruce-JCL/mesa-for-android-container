@@ -71,8 +71,7 @@ radv_taskmesh_enabled(const struct radv_physical_device *pdev)
    if (instance->debug_flags & RADV_DEBUG_NO_MESH_SHADER)
       return false;
 
-   return pdev->use_ngg && !pdev->use_llvm && pdev->info.gfx_level >= GFX10_3 && radv_compute_queue_enabled(pdev) &&
-          pdev->info.has_gang_submit;
+   return pdev->use_ngg && !pdev->use_llvm && pdev->info.gfx_level >= GFX10_3 && radv_compute_queue_enabled(pdev);
 }
 
 bool
@@ -89,8 +88,7 @@ radv_sparse_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
-   return pdev->info.has_sparse ||
-          (instance->perftest_flags & RADV_PERFTEST_SPARSE);
+   return pdev->info.has_sparse || (instance->experimental_flags & RADV_EXPERIMENTAL_SPARSE);
 }
 
 bool
@@ -100,10 +98,10 @@ radv_transfer_queue_enabled(const struct radv_physical_device *pdev)
 
    /* Check if the GPU has SDMA support and transfer queues are allowed. */
    if (pdev->info.sdma_ip_version == SDMA_UNKNOWN || !pdev->info.ip[AMD_IP_SDMA].num_queues ||
-       !(instance->perftest_flags & RADV_PERFTEST_TRANSFER_QUEUE))
+       !(instance->experimental_flags & RADV_EXPERIMENTAL_TRANSFER_QUEUE))
       return false;
 
-   if (!pdev->info.has_gang_submit || !radv_compute_queue_enabled(pdev))
+   if (!radv_compute_queue_enabled(pdev))
       return false;
 
    return pdev->info.gfx_level >= GFX9;
@@ -187,7 +185,7 @@ radv_bfloat16_enabled(const struct radv_physical_device *pdev)
       return false;
 
    /* GFX11-11.5 has precision issues. */
-   return (instance->perftest_flags & RADV_PERFTEST_BFLOAT16) || pdev->info.gfx_level >= GFX12;
+   return (instance->experimental_flags & RADV_EXPERIMENTAL_BFLOAT16) || pdev->info.gfx_level >= GFX12;
 }
 
 static bool
@@ -206,7 +204,7 @@ bool
 radv_host_image_copy_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
-   return pdev->info.gfx_level >= GFX10 && (instance->perftest_flags & RADV_PERFTEST_HIC);
+   return pdev->info.gfx_level >= GFX10 && (instance->experimental_flags & RADV_EXPERIMENTAL_HIC);
 }
 
 bool
@@ -225,7 +223,7 @@ bool
 radv_emulate_rt(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
-   if (instance->perftest_flags & RADV_PERFTEST_EMULATE_RT)
+   if (instance->experimental_flags & RADV_EXPERIMENTAL_EMULATE_RT)
       return true;
 
    /* Do not force emulated RT on GPUs that have native support. */
@@ -316,18 +314,18 @@ radv_physical_device_init_cache_key(struct radv_physical_device *pdev)
 static int
 radv_device_get_cache_uuid(struct radv_physical_device *pdev, void *uuid)
 {
-   struct mesa_sha1 ctx;
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
+   blake3_hasher ctx;
+   unsigned char blake3[BLAKE3_KEY_LEN];
 
    memset(uuid, 0, VK_UUID_SIZE);
-   _mesa_sha1_init(&ctx);
+   _mesa_blake3_init(&ctx);
 
 #ifdef RADV_BUILD_ID_OVERRIDE
    {
       unsigned size = strlen(RADV_BUILD_ID_OVERRIDE) / 2;
       char *data = alloca(size);
       parse_hex(data, RADV_BUILD_ID_OVERRIDE, size);
-      _mesa_sha1_update(&ctx, data, size);
+      _mesa_blake3_update(&ctx, data, size);
    }
 #else
    if (!disk_cache_get_function_identifier(radv_device_get_cache_uuid, &ctx))
@@ -339,9 +337,9 @@ radv_device_get_cache_uuid(struct radv_physical_device *pdev, void *uuid)
       return -1;
 #endif
 
-   _mesa_sha1_final(&ctx, sha1);
+   _mesa_blake3_final(&ctx, blake3);
 
-   memcpy(uuid, sha1, VK_UUID_SIZE);
+   memcpy(uuid, blake3, VK_UUID_SIZE);
    return 0;
 }
 
@@ -630,12 +628,14 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_bind_memory2 = true,
       .KHR_buffer_device_address = true,
       .KHR_copy_commands2 = true,
+      .KHR_copy_memory_indirect = pdev->info.gfx_level >= GFX8,
       .KHR_create_renderpass2 = true,
       .KHR_dedicated_allocation = true,
       .KHR_deferred_host_operations = true,
       .KHR_depth_clamp_zero_one = true,
       .KHR_depth_stencil_resolve = true,
       .KHR_descriptor_update_template = true,
+      .KHR_device_address_commands = true,
       .KHR_device_group = true,
       .KHR_draw_indirect_count = true,
       .KHR_driver_properties = true,
@@ -1371,8 +1371,8 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .imageCompressionControl = pdev->info.gfx_level < GFX12,
 
       /* VK_EXT_device_fault */
-      .deviceFault = true,
-      .deviceFaultVendorBinary = instance->debug_flags & RADV_DEBUG_HANG,
+      .deviceFaultEXT = true,
+      .deviceFaultVendorBinaryEXT = instance->debug_flags & RADV_DEBUG_HANG,
 
       /* VK_KHR_depth_clamp_zero_one */
       .depthClampZeroOne = true,
@@ -1526,6 +1526,13 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .shaderMixedFloatDotProductFloat16AccFloat16 = pdev->info.gfx_level >= GFX11,
       .shaderMixedFloatDotProductBFloat16Acc = radv_bfloat16_enabled(pdev),
       .shaderMixedFloatDotProductFloat8AccFloat32 = pdev->info.gfx_level >= GFX12,
+
+      /* VK_KHR_copy_memory_indirect */
+      .indirectMemoryCopy = pdev->info.gfx_level >= GFX8,
+      .indirectMemoryToImageCopy = pdev->info.gfx_level >= GFX8,
+
+      /* VK_KHR_device_address_commands */
+      .deviceAddressCommands = true,
    };
 }
 
@@ -1644,6 +1651,12 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
    os_get_page_size(&os_page_size);
 
    radv_init_image_properties(pdev);
+
+   VkQueueFlags copy_memory_indirect_queues = 0;
+   if (radv_graphics_queue_enabled(pdev))
+      copy_memory_indirect_queues |= VK_QUEUE_GRAPHICS_BIT;
+   if (radv_compute_queue_enabled(pdev))
+      copy_memory_indirect_queues |= VK_QUEUE_COMPUTE_BIT;
 
    pdev->vk.properties = (struct vk_properties){
 #ifdef ANDROID_STRICT
@@ -2119,7 +2132,7 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .imageViewCaptureReplayDescriptorDataSize = 1,
       .samplerCaptureReplayDescriptorDataSize = 4,
       .accelerationStructureCaptureReplayDescriptorDataSize = 1,
-      .samplerDescriptorSize = RADV_SAMPLER_DESC_SIZE,
+      .EDBsamplerDescriptorSize = RADV_SAMPLER_DESC_SIZE,
       .combinedImageSamplerDescriptorSize = radv_get_combined_image_sampler_desc_size(pdev),
       .sampledImageDescriptorSize = radv_get_sampled_image_desc_size(pdev),
       .storageImageDescriptorSize = RADV_STORAGE_IMAGE_DESC_SIZE,
@@ -2210,6 +2223,9 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .rgba4OpaqueBlackSwizzled = true,
       .resolveSrgbFormatAppliesTransferFunction = true,
       .resolveSrgbFormatSupportsTransferFunctionControl = true,
+
+      /* VK_KHR_copy_memory_indirect */
+      .supportedQueues = copy_memory_indirect_queues,
    };
 
    struct vk_properties *p = &pdev->vk.properties;

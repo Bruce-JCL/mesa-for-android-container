@@ -27,7 +27,6 @@
 #include "freedreno_query_hw.h"
 #include "freedreno_resource.h"
 #include "freedreno_screen.h"
-#include "freedreno_surface.h"
 #include "freedreno_util.h"
 
 #include <errno.h>
@@ -147,6 +146,8 @@ rebind_resource(struct fd_resource *rsc) assert_dt
 {
    struct fd_screen *screen = fd_screen(rsc->b.b.screen);
 
+   assert(!(rsc->b.b.bind & FD_BIND_GLOBAL_BUFFER));
+
    fd_screen_lock(screen);
    fd_resource_lock(rsc);
 
@@ -198,8 +199,10 @@ realloc_bo(struct fd_resource *rsc, uint32_t size)
       COND(prsc->bind & PIPE_BIND_SHARED, FD_BO_SHARED) |
       COND(prsc->bind & PIPE_BIND_SCANOUT, FD_BO_SCANOUT);
 
-   if (rsc->bo)
+   if (rsc->bo) {
+      assert(!(rsc->b.b.bind & FD_BIND_GLOBAL_BUFFER));
       fd_bo_del(rsc->bo);
+   }
 
    struct fd_bo *bo =
       fd_bo_new(screen->dev, size, flags, "%ux%ux%u@%u:%x", prsc->width0,
@@ -267,6 +270,8 @@ fd_replace_buffer_storage(struct pipe_context *pctx, struct pipe_resource *pdst,
    assert(src->track->batch_mask == 0);
    assert(src->track->write_batch == NULL);
    assert(memcmp(&dst->layout, &src->layout, sizeof(dst->layout)) == 0);
+   assert(!(psrc->bind & FD_BIND_GLOBAL_BUFFER));
+   assert(!(pdst->bind & FD_BIND_GLOBAL_BUFFER));
 
    /* get rid of any references that batch-cache might have to us (which
     * should empty/destroy rsc->batches hashset)
@@ -357,6 +362,9 @@ fd_try_shadow_resource(struct fd_context *ctx, struct fd_resource *rsc,
    bool fallback = false;
 
    if (prsc->next)
+      return false;
+
+   if (prsc->bind & FD_BIND_GLOBAL_BUFFER)
       return false;
 
    /* Flush any pending batches writing the resource before we go mucking around
@@ -1831,8 +1839,6 @@ fd_resource_context_init(struct pipe_context *pctx)
    pctx->texture_unmap = u_transfer_helper_transfer_unmap;
    pctx->buffer_subdata = u_default_buffer_subdata;
    pctx->texture_subdata = u_default_texture_subdata;
-   pctx->create_surface = fd_create_surface;
-   pctx->surface_destroy = fd_surface_destroy;
    pctx->resource_copy_region = fd_resource_copy_region;
    pctx->blit = fd_blit_pipe;
    pctx->flush_resource = fd_flush_resource;

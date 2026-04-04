@@ -1393,7 +1393,7 @@ gfx_program_init(struct zink_context *ctx, struct zink_gfx_program *prog)
    _mesa_blake3_init(&sctx);
    for (int i = 0; i < MESA_SHADER_MESH_STAGES; ++i) {
       if (prog->shaders[i])
-         _mesa_blake3_update(&sctx, prog->shaders[i]->base.sha1, sizeof(prog->shaders[i]->base.sha1));
+         _mesa_blake3_update(&sctx, prog->shaders[i]->base.blake3, sizeof(prog->shaders[i]->base.blake3));
    }
    _mesa_blake3_final(&sctx, prog->base.blake3);
 
@@ -2118,6 +2118,10 @@ bind_last_vertex_stage(struct zink_context *ctx, mesa_shader_stage stage, struct
    ctx->gfx_pipeline_state.shader_rast_prim =
       ctx->last_vertex_stage ? update_rast_prim(ctx->last_vertex_stage) :
                                MESA_PRIM_COUNT;
+
+   if (ctx->last_vertex_stage && ctx->last_vertex_stage->non_fs.is_generated)
+      ctx->gfx_pipeline_state.shader_rast_prim = MESA_PRIM_COUNT;
+
 
    if (old != current) {
       if (!zink_screen(ctx->base.screen)->optimal_keys) {

@@ -890,7 +890,7 @@ impl SrcMod {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SrcSwizzle {
     None,
     Xx,
@@ -976,6 +976,7 @@ impl Src {
         self
     }
 
+    #[allow(dead_code)]
     pub fn swizzle(mut self, src_swizzle: SrcSwizzle) -> Src {
         // Since we only have xx, yy, and xy, for any composition of swizzles,
         // the inner-most non-xy swizzle wins.
@@ -1012,7 +1013,10 @@ impl Src {
 
         Some(match src_type {
             SrcType::F16 => {
-                let low = u & 0xFFFF;
+                let low = match self.src_swizzle {
+                    SrcSwizzle::None | SrcSwizzle::Xx => u & 0xffff,
+                    SrcSwizzle::Yy => u >> 16,
+                };
 
                 match self.src_mod {
                     SrcMod::None => low,
@@ -3134,20 +3138,42 @@ impl fmt::Display for MuFuOp {
 }
 
 #[repr(C)]
-#[derive(SrcsAsSlice, DstsAsSlice)]
+#[derive(DstsAsSlice)]
 pub struct OpMuFu {
     #[dst_type(F32)]
     pub dst: Dst,
 
     pub op: MuFuOp,
 
-    #[src_type(F32)]
     pub src: Src,
+
+    pub op_type: FloatType,
+}
+
+impl AsSlice<Src> for OpMuFu {
+    type Attr = SrcType;
+
+    fn as_slice(&self) -> &[Src] {
+        std::slice::from_ref(&self.src)
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [Src] {
+        std::slice::from_mut(&mut self.src)
+    }
+
+    fn attrs(&self) -> SrcTypeList {
+        let src_type = match self.op_type {
+            FloatType::F16 => SrcType::F16,
+            FloatType::F32 => SrcType::F32,
+            FloatType::F64 => unreachable!("MuFu does not support F64"),
+        };
+        SrcTypeList::Uniform(src_type)
+    }
 }
 
 impl DisplayOp for OpMuFu {
     fn fmt_op(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "mufu.{} {}", self.op, self.src)
+        write!(f, "mufu.{}{} {}", self.op, self.op_type, self.src)
     }
 }
 impl_display_for_op!(OpMuFu);
@@ -4635,30 +4661,10 @@ pub struct OpF2F {
     pub dst_type: FloatType,
     pub rnd_mode: FRndMode,
     pub ftz: bool,
-    /// For 16-bit down-conversions, place the result into the upper 16 bits of
-    /// the destination register
-    pub dst_high: bool,
     /// Round to the nearest integer rather than nearest float
     ///
     /// Not available on SM70+
     pub integer_rnd: bool,
-}
-
-impl OpF2F {
-    pub fn is_high(&self) -> bool {
-        if matches!(self.src_type, FloatType::F16) {
-            // OpF2F with the same source and destination types is only allowed
-            // pre-Volta and only with F32.
-            assert!(!matches!(self.dst_type, FloatType::F16));
-
-            matches!(self.src.src_swizzle, SrcSwizzle::Yy)
-        } else if matches!(self.dst_type, FloatType::F16) {
-            self.dst_high
-        } else {
-            assert!(!self.dst_high);
-            false
-        }
-    }
 }
 
 impl AsSlice<Src> for OpF2F {
@@ -4674,7 +4680,7 @@ impl AsSlice<Src> for OpF2F {
 
     fn attrs(&self) -> SrcTypeList {
         let src_type = match self.src_type {
-            FloatType::F16 => SrcType::F16v2,
+            FloatType::F16 => SrcType::F16,
             FloatType::F32 => SrcType::F32,
             FloatType::F64 => SrcType::F64,
         };
@@ -4711,9 +4717,6 @@ impl DisplayOp for OpF2F {
         }
         if self.integer_rnd {
             write!(f, ".int")?;
-        }
-        if self.dst_high {
-            write!(f, ".high")?;
         }
         write!(
             f,
@@ -6459,6 +6462,10 @@ pub struct OpLd {
     #[src_type(GPR)]
     pub addr: Src,
 
+    /// On false the load returns 0
+    #[src_type(Pred)]
+    pub pred: Src,
+
     pub offset: i32,
     pub stride: OffsetStride,
     pub access: MemAccess,
@@ -6470,7 +6477,7 @@ impl DisplayOp for OpLd {
         if self.offset > 0 {
             write!(f, "+{:#x}", self.offset)?;
         }
-        write!(f, "]")
+        write!(f, "], {}", self.pred)
     }
 }
 impl_display_for_op!(OpLd);
@@ -7229,22 +7236,107 @@ impl DisplayOp for OpCS2R {
 }
 impl_display_for_op!(OpCS2R);
 
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub enum IsbeAccessType {
+    Map,
+    Patch,
+    Primitive,
+    Attribute,
+}
+
+impl fmt::Display for IsbeAccessType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IsbeAccessType::Map => write!(f, "map"),
+            IsbeAccessType::Patch => write!(f, "patch"),
+            IsbeAccessType::Primitive => write!(f, "prim"),
+            IsbeAccessType::Attribute => write!(f, "attr"),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(SrcsAsSlice, DstsAsSlice)]
 pub struct OpIsberd {
     #[dst_type(GPR)]
     pub dst: Dst,
 
-    #[src_type(SSA)]
-    pub idx: Src,
+    #[src_type(GPR)]
+    pub offset: Src,
+
+    pub imm_offset: u16,
+    pub mem_type: MemType,
+    pub access_type: IsbeAccessType,
+    pub output: bool,
+    pub skew: bool,
 }
 
 impl DisplayOp for OpIsberd {
     fn fmt_op(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "isberd [{}]", self.idx)
+        write!(f, "isberd")?;
+
+        if self.output {
+            write!(f, ".o")?;
+        }
+
+        write!(f, ".{}", self.access_type)?;
+
+        if self.skew {
+            write!(f, ".skew")?;
+        }
+
+        write!(f, "{} {}", self.mem_type, self.dst)?;
+
+        if self.imm_offset != 0 {
+            write!(f, " [{}+0x{:x}]", self.offset, self.imm_offset)
+        } else {
+            write!(f, " [{}]", self.offset)
+        }
     }
 }
 impl_display_for_op!(OpIsberd);
+
+#[repr(C)]
+#[derive(SrcsAsSlice, DstsAsSlice)]
+pub struct OpIsbewr {
+    #[src_type(GPR)]
+    pub offset: Src,
+
+    #[src_type(GPR)]
+    pub data: Src,
+
+    pub imm_offset: u16,
+    pub mem_type: MemType,
+    pub access_type: IsbeAccessType,
+    pub output: bool,
+    pub skew: bool,
+}
+
+impl DisplayOp for OpIsbewr {
+    fn fmt_op(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "isbewr")?;
+
+        if self.output {
+            write!(f, ".o")?;
+        }
+
+        write!(f, ".{}", self.access_type)?;
+
+        if self.skew {
+            write!(f, ".skew")?;
+        }
+
+        write!(f, "{}", self.mem_type)?;
+        if self.imm_offset != 0 {
+            write!(f, " [{}+0x{:x}]", self.offset, self.imm_offset)?;
+        } else {
+            write!(f, " [{}]", self.offset)?;
+        }
+
+        write!(f, " {}", self.data)
+    }
+}
+impl_display_for_op!(OpIsbewr);
 
 /// Vertex Index Load
 /// (Only available in Kepler)
@@ -8090,6 +8182,7 @@ pub enum Op {
     TexDepBar(Box<OpTexDepBar>),
     CS2R(Box<OpCS2R>),
     Isberd(Box<OpIsberd>),
+    Isbewr(Box<OpIsbewr>),
     ViLd(Box<OpViLd>),
     Kill(Box<OpKill>),
     Nop(OpNop),
@@ -8275,6 +8368,7 @@ impl Op {
             | Op::TexDepBar(_)
             | Op::CS2R(_)
             | Op::Isberd(_)
+            | Op::Isbewr(_)
             | Op::ViLd(_)
             | Op::Kill(_)
             | Op::PixLd(_)
@@ -8457,6 +8551,7 @@ impl Op {
             | Op::TexDepBar(_)
             | Op::CS2R(_)
             | Op::Isberd(_)
+            | Op::Isbewr(_)
             | Op::ViLd(_)
             | Op::Kill(_)
             | Op::PixLd(_)
@@ -8852,6 +8947,7 @@ impl Instr {
             | Op::RegOut(_)
             | Op::Out(_)
             | Op::OutFinal(_)
+            | Op::Isbewr(_)
             | Op::Annotate(_) => false,
             Op::BMov(op) => !op.clear,
             _ => true,
@@ -9658,8 +9754,14 @@ impl IsbeSpaceSharingStateTracker {
     }
 
     pub fn visit_instr(&mut self, instr: &Instr) {
-        // Track attribute store. (XXX: ISBEWR)
-        self.has_attribute_store |= matches!(instr.op, Op::ASt(_));
+        // Track attribute store.
+        match &instr.op {
+            Op::ASt(_) => self.has_attribute_store = true,
+            Op::Isbewr(op) if op.access_type == IsbeAccessType::Attribute => {
+                self.has_attribute_store = true;
+            }
+            _ => {}
+        }
 
         // Track attribute load.
         if matches!(instr.op, Op::ALd(_) | Op::Isberd(_)) {

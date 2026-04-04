@@ -145,11 +145,17 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_dynamic_rendering_local_read      = true,
    .KHR_format_feature_flags2             = true,
    .KHR_external_fence                    = true,
+#ifdef HAVE_LIBDRM
+   .KHR_external_fence_fd                 = true,
+#endif
    .KHR_external_memory                   = true,
 #ifdef PIPE_MEMORY_FD
    .KHR_external_memory_fd                = true,
 #endif
    .KHR_external_semaphore                = true,
+#ifdef HAVE_LIBDRM
+   .KHR_external_semaphore_fd             = true,
+#endif
    .KHR_shader_float_controls             = true,
    .KHR_shader_float_controls2            = true,
    .KHR_get_memory_requirements2          = true,
@@ -342,7 +348,7 @@ lvp_device_memory_type_for_handle_types(const struct lvp_physical_device *pdevic
       assert(!(types & ~(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
                          VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)));
 
-#ifdef HAVE_LIBDRM
+#if defined(HAVE_LIBDRM) && defined(HAVE_LINUX_UDMABUF_H)
       int dmabuf_bits = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
       if ((pdevice->pscreen->caps.dmabuf & dmabuf_bits) == dmabuf_bits) {
          /* If we have full dma-buf support, everything is a dma-buf */
@@ -1224,7 +1230,7 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .imageViewCaptureReplayDescriptorDataSize = 0,
       .samplerCaptureReplayDescriptorDataSize = 0,
       .accelerationStructureCaptureReplayDescriptorDataSize = 0,
-      .samplerDescriptorSize = sizeof(struct lp_descriptor),
+      .EDBsamplerDescriptorSize = sizeof(struct lp_descriptor),
       .combinedImageSamplerDescriptorSize = sizeof(struct lp_descriptor),
       .sampledImageDescriptorSize = sizeof(struct lp_descriptor),
       .storageImageDescriptorSize = sizeof(struct lp_descriptor),
@@ -1278,7 +1284,8 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .maxMeshOutputComponents = 128, /* 32x vec4 min required */
       .maxMeshOutputVertices = 256,
       .maxMeshOutputPrimitives = 256,
-      .maxMeshOutputLayers = 8,
+      .maxMeshOutputLayers = 9,
+      .maxMeshMultiviewViewCount = 1, /* 1 means unsupported */
       .meshOutputPerVertexGranularity = 1,
       .meshOutputPerPrimitiveGranularity = 1,
       .maxPreferredTaskWorkGroupInvocations = 64,
@@ -1441,18 +1448,22 @@ lvp_physical_device_init(struct lvp_physical_device *device,
 
    device->max_images = device->pscreen->shader_caps[MESA_SHADER_FRAGMENT].max_shader_images;
    device->vk.supported_extensions = lvp_device_extensions_supported;
-#ifdef HAVE_LIBDRM
+#if defined(HAVE_LIBDRM) && defined(HAVE_LINUX_UDMABUF_H)
    int dmabuf_bits = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
    int supported_dmabuf_bits = device->pscreen->caps.dmabuf;
-   /* if import or export is supported then EXT_external_memory_dma_buf is supported */
-   if (supported_dmabuf_bits)
-      device->vk.supported_extensions.EXT_external_memory_dma_buf = true;
-   if ((supported_dmabuf_bits & dmabuf_bits) == dmabuf_bits)
+   const bool dmabuf_import_export = (supported_dmabuf_bits & dmabuf_bits) == dmabuf_bits;
+   const char *engine_name = instance->vk.app_info.engine_name;
+   /* if import or export is supported then EXT_external_memory_dma_buf is supported
+    *
+    * For zink, advertise the extension only when both import and export are
+    * supported since zink has assumed both for dmabuf support.
+    */
+   if (engine_name && strcmp(engine_name, "mesa zink") == 0)
+      device->vk.supported_extensions.EXT_external_memory_dma_buf = dmabuf_import_export;
+   else
+      device->vk.supported_extensions.EXT_external_memory_dma_buf = !!supported_dmabuf_bits;
+   if (dmabuf_import_export)
       device->vk.supported_extensions.EXT_image_drm_format_modifier = true;
-   if (device->pscreen->caps.native_fence_fd) {
-      device->vk.supported_extensions.KHR_external_semaphore_fd = true;
-      device->vk.supported_extensions.KHR_external_fence_fd = true;
-   }
    if (supported_dmabuf_bits & DRM_PRIME_CAP_IMPORT)
       device->vk.supported_extensions.ANDROID_external_memory_android_hardware_buffer = true;
 #endif
@@ -2119,7 +2130,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
    }
 #if DETECT_OS_ANDROID
    else if (mem->vk.ahardware_buffer) {
-      error = lvp_import_ahb_memory(device, mem);
+      error = lvp_import_ahb_memory(device, pAllocateInfo, mem);
       if (error != VK_SUCCESS)
          goto fail;
    }
@@ -2141,13 +2152,8 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
          error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
          goto fail;
       }
-      if (mem->vk.export_handle_types == mem->vk.import_handle_type) {
-         mem->backed_fd = import_info->fd;
-      }
-      else {
-         close(import_info->fd);
-      }
 
+      mem->backed_fd = import_info->fd;
       mem->vk.size = size;
       mem->map = device->pscreen->map_memory(device->pscreen, mem->pmem);
       mem->memory_type = memory_type;
@@ -2392,6 +2398,8 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageMemoryRequirements2(
    const VkImageMemoryRequirementsInfo2       *pInfo,
    VkMemoryRequirements2                      *pMemoryRequirements)
 {
+   VK_FROM_HANDLE(lvp_image, image, pInfo->image);
+
    lvp_GetImageMemoryRequirements(device, pInfo->image,
                                   &pMemoryRequirements->memoryRequirements);
 
@@ -2400,7 +2408,8 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageMemoryRequirements2(
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req =
             (VkMemoryDedicatedRequirements *) ext;
-         req->requiresDedicatedAllocation = false;
+         req->requiresDedicatedAllocation =
+            vk_image_is_android_hardware_buffer(&image->vk);
          req->prefersDedicatedAllocation = req->requiresDedicatedAllocation;
          break;
       }
@@ -2445,24 +2454,19 @@ static VkResult
 lvp_image_plane_bind(struct lvp_device *device,
                      struct lvp_image_plane *plane,
                      struct lvp_device_memory *mem,
-                     VkDeviceSize memory_offset,
-                     VkDeviceSize *min_plane_offset)
+                     VkDeviceSize memory_offset)
 {
-   VkDeviceSize plane_offset = MAX2(plane->plane_offset, *min_plane_offset);
-
    if (!device->pscreen->resource_bind_backing(device->pscreen,
                                                plane->bo,
                                                mem->pmem,
                                                0, 0,
-                                               memory_offset + plane_offset)) {
+                                               memory_offset + plane->offset)) {
       /* This is probably caused by the texture being too large, so let's
        * report this as the *closest* allowed error-code. It's not ideal,
        * but it's unlikely that anyone will care too much.
        */
       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
    }
-   plane->plane_offset = plane_offset;
-   *min_plane_offset = plane_offset + plane->size;
    return VK_SUCCESS;
 }
 
@@ -2477,8 +2481,7 @@ lvp_image_bind(struct lvp_device *device,
 
    if (!mem) {
 #if DETECT_OS_ANDROID
-      /* TODO handle VkNativeBufferANDROID */
-      UNREACHABLE("VkBindImageMemoryInfo with no memory");
+      return lvp_bind_anb_memory(device, bind_info);
 #else
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
          vk_find_struct_const(bind_info->pNext,
@@ -2491,20 +2494,19 @@ lvp_image_bind(struct lvp_device *device,
    }
 
    assert(mem);
-   uint64_t offset_B = 0;
    if (image->disjoint) {
       const VkBindImagePlaneMemoryInfo *plane_info =
          vk_find_struct_const(bind_info->pNext, BIND_IMAGE_PLANE_MEMORY_INFO);
       const uint8_t plane =
          lvp_image_aspects_to_plane(image, plane_info->planeAspect);
       result = lvp_image_plane_bind(device, &image->planes[plane], mem,
-                                    mem_offset, &offset_B);
+                                    mem_offset);
       if (result != VK_SUCCESS)
          return result;
    } else {
       for (unsigned plane = 0; plane < image->plane_count; plane++) {
          result = lvp_image_plane_bind(device, &image->planes[plane], mem,
-                                       mem_offset + image->offset, &offset_B);
+                                       mem_offset);
          if (result != VK_SUCCESS)
             return result;
       }
@@ -2763,11 +2765,9 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceExternalFenceProperties(
    const VkPhysicalDeviceExternalFenceInfo    *pExternalFenceInfo,
    VkExternalFenceProperties                  *pExternalFenceProperties)
 {
-   VK_FROM_HANDLE(lvp_physical_device, physical_device, physicalDevice);
    const VkExternalFenceHandleTypeFlagBits handle_type = pExternalFenceInfo->handleType;
 
-   if (handle_type == VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT &&
-       physical_device->pscreen->caps.native_fence_fd) {
+   if (handle_type == VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT) {
       pExternalFenceProperties->exportFromImportedHandleTypes =
          VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT;
       pExternalFenceProperties->compatibleHandleTypes =
@@ -2787,15 +2787,13 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceExternalSemaphoreProperties(
    const VkPhysicalDeviceExternalSemaphoreInfo *pExternalSemaphoreInfo,
    VkExternalSemaphoreProperties               *pExternalSemaphoreProperties)
 {
-   VK_FROM_HANDLE(lvp_physical_device, physical_device, physicalDevice);
    const VkSemaphoreTypeCreateInfo *type_info =
       vk_find_struct_const(pExternalSemaphoreInfo->pNext, SEMAPHORE_TYPE_CREATE_INFO);
    const VkSemaphoreType type = !type_info ? VK_SEMAPHORE_TYPE_BINARY : type_info->semaphoreType;
    const VkExternalSemaphoreHandleTypeFlagBits handle_type = pExternalSemaphoreInfo->handleType;
 
    if (type == VK_SEMAPHORE_TYPE_BINARY &&
-       handle_type == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT &&
-       physical_device->pscreen->caps.native_fence_fd) {
+       handle_type == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT) {
       pExternalSemaphoreProperties->exportFromImportedHandleTypes =
          VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
       pExternalSemaphoreProperties->compatibleHandleTypes =

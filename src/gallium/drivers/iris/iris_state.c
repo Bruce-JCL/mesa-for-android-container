@@ -2996,12 +2996,15 @@ fill_surface_state(struct isl_device *isl_dev,
    if (aux_usage != ISL_AUX_USAGE_NONE) {
       f.aux_surf = &res->aux.surf;
       f.aux_usage = aux_usage;
-      f.clear_color = res->aux.clear_color;
+      if (aux_usage == ISL_AUX_USAGE_MC) {
+         f.aux_format = iris_format_for_usage(isl_dev->info,
+                                              res->external_format,
+                                              surf->usage).fmt;
+      } else {
+         f.aux_format = surf->format;
+      }
 
-      if (aux_usage == ISL_AUX_USAGE_MC)
-         f.mc_format = iris_format_for_usage(isl_dev->info,
-                                             res->external_format,
-                                             surf->usage).fmt;
+      f.clear_color = res->aux.clear_color;
 
       if (res->aux.bo)
          f.aux_address = res->aux.bo->address + res->aux.offset;
@@ -6818,12 +6821,27 @@ emit_wa_18020335297_dummy_draw(struct iris_batch *batch)
    }
 }
 
+#if INTEL_WA_14024997852_GFX_VER
+static void
+setup_ff_mode_autostrip(struct iris_context *ice,
+                        struct iris_batch *batch,
+                        bool enable)
+{
+   struct mi_builder b;
+   mi_builder_init(&b, batch->screen->devinfo, batch);
+   mi_builder_set_mocs(&b, isl_mocs(&batch->screen->isl_dev, 0, false));
+   mi_builder_set_write_check(&b, true);
+
+   mi_set_autostrip_state(&b, enable);
+}
+#endif
+
 static void
 setup_autostrip_state(struct iris_context *ice,
                       struct iris_batch *batch,
                       bool enable)
 {
-#if GFX_VERx10 >= 200
+#if INTEL_WA_14024997852_GFX_VER
    if (ice->state.autostrip_state != enable) {
       iris_emit_pipe_control_flush(batch,
                                    "Wa_14024997852",
@@ -6836,11 +6854,8 @@ setup_autostrip_state(struct iris_context *ice,
          vfl.PartialAutostripDisableMask = true;
       }
       /* TE and Mesh. */
-      iris_emit_reg(batch, GENX(FF_MODE), ff) {
-         ff.TEAutostripDisable = !enable;
-         ff.MeshShaderAutostripDisable = !enable;
-         ff.MeshShaderPartialAutostripDisable = !enable;
-      }
+      setup_ff_mode_autostrip(ice, batch, enable);
+
       ice->state.autostrip_state = enable;
    }
 #endif

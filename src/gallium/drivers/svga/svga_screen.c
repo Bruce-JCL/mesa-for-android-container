@@ -139,7 +139,6 @@ get_bool_cap(struct svga_winsys_screen *sws, SVGA3dDevCapIndex cap,
    .lower_int64_options = nir_lower_imul_2x32_64 | nir_lower_divmod64,        \
    .lower_fdph = true,                                                        \
    .lower_flrp64 = true,                                                      \
-   .lower_ldexp = true,                                                       \
    .lower_uniforms_to_ubo = true,                                             \
    .lower_cs_local_index_to_id = true,                                        \
    .max_unroll_iterations = 32
@@ -558,6 +557,7 @@ svga_init_screen_caps(struct svga_screen *svgascreen)
       get_uint_cap(sws, SVGA3D_DEVCAP_MAX_TEXTURE_ANISOTROPY, 4);
 
    caps->max_texture_lod_bias = 15.0;
+   caps->query_pipeline_statistics = sws->have_vgpu10;
 }
 
 static void
