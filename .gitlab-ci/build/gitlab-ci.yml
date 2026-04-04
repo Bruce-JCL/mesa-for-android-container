@@ -341,6 +341,7 @@ debian-android:
       -D mesa-clc=system
       -D precomp-compiler=system
       -D perfetto=true
+      -D freedreno-kmds=msm,virtio
     GALLIUM_ST: >
       -D gallium-va=disabled
       -D gallium-rusticl=false
@@ -472,6 +473,7 @@ debian-arm64:
       -D perfetto=true
     GALLIUM_ST:
       -D gallium-rusticl=true
+      -D legacy-wayland=bind-wayland-display
     RUN_MESON_TESTS: "false"  # run by debian-arm64-build-testing
     S3_ARTIFACT_NAME: mesa-arm64-default-${BUILDTYPE}
 
@@ -547,10 +549,11 @@ debian-no-libdrm:
     BUILDTYPE: release
     EXTRA_OPTION: >
       -D freedreno-kmds=kgsl
-      -D glx=disabled
+      -D glx=dri
       -D gbm=disabled
-      -D egl=disabled
+      -D egl=enabled
       -D perfetto=true
+      -D platforms=x11,wayland
 
 debian-clang:
   extends:

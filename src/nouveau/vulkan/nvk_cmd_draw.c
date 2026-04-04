@@ -32,6 +32,7 @@
 #include "nv_push_clc597.h"
 #include "nv_push_clcb97.h"
 #include "nv_push_clcd97.h"
+#include "clc7c0.h"
 #include "clcb97.h"
 #include "clcd97.h"
 #include "drf.h"
@@ -2373,102 +2374,157 @@ nvk_flush_ts_state(struct nvk_cmd_buffer *cmd)
 }
 
 static void
-nvk_flush_vp_state(struct nvk_cmd_buffer *cmd)
+nvk_emit_viewport(struct nvk_cmd_buffer *cmd, struct nv_push *p, const VkViewport *vp, int i)
 {
    struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
-   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
 
    const struct vk_dynamic_graphics_state *dyn =
       &cmd->vk.dynamic_graphics_state;
+   /* These exactly match the spec values.  Nvidia hardware oddities
+    * are accounted for later.
+    */
+   const float o_x = vp->x + 0.5f * vp->width;
+   const float o_y = vp->y + 0.5f * vp->height;
+   const float o_z = !dyn->vp.depth_clip_negative_one_to_one ?
+                     vp->minDepth :
+                     (vp->maxDepth + vp->minDepth) * 0.5f;
+
+   const float p_x = vp->width;
+   const float p_y = vp->height;
+   const float p_z = !dyn->vp.depth_clip_negative_one_to_one ?
+                     vp->maxDepth - vp->minDepth :
+                     (vp->maxDepth - vp->minDepth) * 0.5f;
+
+   P_MTHD(p, NV9097, SET_VIEWPORT_SCALE_X(i));
+   P_NV9097_SET_VIEWPORT_SCALE_X(p, i, fui(0.5f * p_x));
+   P_NV9097_SET_VIEWPORT_SCALE_Y(p, i, fui(0.5f * p_y));
+   P_NV9097_SET_VIEWPORT_SCALE_Z(p, i, fui(p_z));
+
+   P_NV9097_SET_VIEWPORT_OFFSET_X(p, i, fui(o_x));
+   P_NV9097_SET_VIEWPORT_OFFSET_Y(p, i, fui(o_y));
+   P_NV9097_SET_VIEWPORT_OFFSET_Z(p, i, fui(o_z));
+
+   const bool user_defined_range =
+      dyn->vp.depth_clamp_mode == VK_DEPTH_CLAMP_MODE_USER_DEFINED_RANGE_EXT;
+   float xmin = vp->x;
+   float xmax = vp->x + vp->width;
+   float ymin = MIN2(vp->y, vp->y + vp->height);
+   float ymax = MAX2(vp->y, vp->y + vp->height);
+   float zmin = user_defined_range ?
+                dyn->vp.depth_clamp_range.minDepthClamp :
+                MIN2(vp->minDepth, vp->maxDepth);
+   float zmax = user_defined_range ?
+                dyn->vp.depth_clamp_range.maxDepthClamp :
+                MAX2(vp->minDepth, vp->maxDepth);
+   assert(xmin <= xmax && ymin <= ymax && zmin <= zmax);
+
+   const float max_dim = (float)0xffff;
+   xmin = CLAMP(xmin, 0, max_dim);
+   xmax = CLAMP(xmax, 0, max_dim);
+   ymin = CLAMP(ymin, 0, max_dim);
+   ymax = CLAMP(ymax, 0, max_dim);
+
+   if (!dev->vk.enabled_extensions.EXT_depth_range_unrestricted) {
+      assert(0.0 <= zmin && zmin <= 1.0);
+      assert(0.0 <= zmax && zmax <= 1.0);
+   }
+
+   P_MTHD(p, NV9097, SET_VIEWPORT_CLIP_HORIZONTAL(i));
+   P_NV9097_SET_VIEWPORT_CLIP_HORIZONTAL(p, i, {
+      .x0      = xmin,
+      .width   = xmax - xmin,
+   });
+   P_NV9097_SET_VIEWPORT_CLIP_VERTICAL(p, i, {
+      .y0      = ymin,
+      .height  = ymax - ymin,
+   });
+
+   if (nvk_cmd_buffer_3d_cls(cmd) >= VOLTA_A) {
+      P_NV9097_SET_VIEWPORT_CLIP_MIN_Z(p, i, fui(zmin));
+      P_NV9097_SET_VIEWPORT_CLIP_MAX_Z(p, i, fui(zmax));
+   } else {
+      P_1INC(p, NVB197, CALL_MME_MACRO(NVK_MME_SET_VIEWPORT_MIN_MAX_Z));
+      P_INLINE_DATA(p, i);
+      P_INLINE_DATA(p, fui(zmin));
+      P_INLINE_DATA(p, fui(zmax));
+   }
+
+   if (nvk_cmd_buffer_3d_cls(cmd) >= MAXWELL_B) {
+      P_IMMD(p, NVB197, SET_VIEWPORT_COORDINATE_SWIZZLE(i), {
+         .x = X_POS_X,
+         .y = Y_POS_Y,
+         .z = Z_POS_Z,
+         .w = W_POS_W,
+      });
+   }
+}
+
+static void
+nvk_emit_scissor(struct nvk_cmd_buffer *cmd, struct nv_push *p, const VkRect2D *s, int i)
+{
+   struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
+   const uint32_t sr_max =
+      nvk_image_max_dimension(&pdev->info, VK_IMAGE_TYPE_2D);
+
+   const uint32_t xmin = MIN2(sr_max, s->offset.x);
+   const uint32_t xmax = MIN2(sr_max, s->offset.x + s->extent.width);
+   const uint32_t ymin = MIN2(sr_max, s->offset.y);
+   const uint32_t ymax = MIN2(sr_max, s->offset.y + s->extent.height);
+
+   P_MTHD(p, NV9097, SET_SCISSOR_ENABLE(i));
+   P_NV9097_SET_SCISSOR_ENABLE(p, i, V_TRUE);
+   P_NV9097_SET_SCISSOR_HORIZONTAL(p, i, {
+      .xmin = xmin,
+      .xmax = xmax,
+   });
+   P_NV9097_SET_SCISSOR_VERTICAL(p, i, {
+      .ymin = ymin,
+      .ymax = ymax,
+   });
+}
+
+static void
+nvk_flush_vp_state(struct nvk_cmd_buffer *cmd)
+{
+   const struct vk_dynamic_graphics_state *dyn =
+      &cmd->vk.dynamic_graphics_state;
+
+   /* From the Vulkan 1.4.341 spec:
+   *
+   *    "If the pipeline requires pre-rasterization shader state and the
+   *     primitiveFragmentShadingRateWithMultipleViewports limit is not
+   *     supported VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT is not included in
+   *     pDynamicState->pDynamicStates, and
+   *     VkPipelineViewportStateCreateInfo::viewportCount is greater than 1,
+   *     entry points specified in pStages must not write to the
+   *     PrimitiveShadingRateKHR built-in"
+   *
+   * This means that, in Turing case of FSR, we expect only one viewport to be
+   * present. Therefore, to handle FSR, we need to replicate viewport and
+   * scissor 0.
+   */
+   const bool vp_broadcast_dirty = BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_FSR) &&
+                                   nvk_cmd_buffer_3d_cls(cmd) == TURING_A;
+   const bool need_turing_vp_broadcast = nvk_cmd_buffer_3d_cls(cmd) == TURING_A &&
+                                         !vk_fragment_shading_rate_is_disabled(&dyn->fsr);
+   const uint8_t viewport_count = need_turing_vp_broadcast ? NVK_MAX_VIEWPORTS :
+                                                             dyn->vp.viewport_count;
+   const uint8_t scissor_count = need_turing_vp_broadcast ? NVK_MAX_VIEWPORTS :
+                                                            dyn->vp.scissor_count;
 
    struct nv_push *p =
-      nvk_cmd_buffer_push(cmd, 18 * dyn->vp.viewport_count + 4 * NVK_MAX_VIEWPORTS);
+      nvk_cmd_buffer_push(cmd, 18 * viewport_count + 4 * NVK_MAX_VIEWPORTS);
 
    /* Nothing to do for MESA_VK_DYNAMIC_VP_VIEWPORT_COUNT */
 
    if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_VIEWPORTS) ||
        BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE) ||
-       BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_DEPTH_CLAMP_RANGE)) {
-      for (uint32_t i = 0; i < dyn->vp.viewport_count; i++) {
-         const VkViewport *vp = &dyn->vp.viewports[i];
-
-         /* These exactly match the spec values.  Nvidia hardware oddities
-          * are accounted for later.
-          */
-         const float o_x = vp->x + 0.5f * vp->width;
-         const float o_y = vp->y + 0.5f * vp->height;
-         const float o_z = !dyn->vp.depth_clip_negative_one_to_one ?
-                           vp->minDepth :
-                           (vp->maxDepth + vp->minDepth) * 0.5f;
-
-         const float p_x = vp->width;
-         const float p_y = vp->height;
-         const float p_z = !dyn->vp.depth_clip_negative_one_to_one ?
-                           vp->maxDepth - vp->minDepth :
-                           (vp->maxDepth - vp->minDepth) * 0.5f;
-
-         P_MTHD(p, NV9097, SET_VIEWPORT_SCALE_X(i));
-         P_NV9097_SET_VIEWPORT_SCALE_X(p, i, fui(0.5f * p_x));
-         P_NV9097_SET_VIEWPORT_SCALE_Y(p, i, fui(0.5f * p_y));
-         P_NV9097_SET_VIEWPORT_SCALE_Z(p, i, fui(p_z));
-
-         P_NV9097_SET_VIEWPORT_OFFSET_X(p, i, fui(o_x));
-         P_NV9097_SET_VIEWPORT_OFFSET_Y(p, i, fui(o_y));
-         P_NV9097_SET_VIEWPORT_OFFSET_Z(p, i, fui(o_z));
-
-         const bool user_defined_range =
-            dyn->vp.depth_clamp_mode == VK_DEPTH_CLAMP_MODE_USER_DEFINED_RANGE_EXT;
-         float xmin = vp->x;
-         float xmax = vp->x + vp->width;
-         float ymin = MIN2(vp->y, vp->y + vp->height);
-         float ymax = MAX2(vp->y, vp->y + vp->height);
-         float zmin = user_defined_range ?
-                      dyn->vp.depth_clamp_range.minDepthClamp :
-                      MIN2(vp->minDepth, vp->maxDepth);
-         float zmax = user_defined_range ?
-                      dyn->vp.depth_clamp_range.maxDepthClamp :
-                      MAX2(vp->minDepth, vp->maxDepth);
-         assert(xmin <= xmax && ymin <= ymax && zmin <= zmax);
-
-         const float max_dim = (float)0xffff;
-         xmin = CLAMP(xmin, 0, max_dim);
-         xmax = CLAMP(xmax, 0, max_dim);
-         ymin = CLAMP(ymin, 0, max_dim);
-         ymax = CLAMP(ymax, 0, max_dim);
-
-         if (!dev->vk.enabled_extensions.EXT_depth_range_unrestricted) {
-            assert(0.0 <= zmin && zmin <= 1.0);
-            assert(0.0 <= zmax && zmax <= 1.0);
-         }
-
-         P_MTHD(p, NV9097, SET_VIEWPORT_CLIP_HORIZONTAL(i));
-         P_NV9097_SET_VIEWPORT_CLIP_HORIZONTAL(p, i, {
-            .x0      = xmin,
-            .width   = xmax - xmin,
-         });
-         P_NV9097_SET_VIEWPORT_CLIP_VERTICAL(p, i, {
-            .y0      = ymin,
-            .height  = ymax - ymin,
-         });
-
-         if (nvk_cmd_buffer_3d_cls(cmd) >= VOLTA_A) {
-            P_NV9097_SET_VIEWPORT_CLIP_MIN_Z(p, i, fui(zmin));
-            P_NV9097_SET_VIEWPORT_CLIP_MAX_Z(p, i, fui(zmax));
-         } else {
-            P_1INC(p, NVB197, CALL_MME_MACRO(NVK_MME_SET_VIEWPORT_MIN_MAX_Z));
-            P_INLINE_DATA(p, i);
-            P_INLINE_DATA(p, fui(zmin));
-            P_INLINE_DATA(p, fui(zmax));
-         }
-
-         if (nvk_cmd_buffer_3d_cls(cmd) >= MAXWELL_B) {
-            P_IMMD(p, NVB197, SET_VIEWPORT_COORDINATE_SWIZZLE(i), {
-               .x = X_POS_X,
-               .y = Y_POS_Y,
-               .z = Z_POS_Z,
-               .w = W_POS_W,
-            });
-         }
+       BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_DEPTH_CLAMP_RANGE) ||
+       vp_broadcast_dirty) {
+      for (uint32_t i = 0; i < viewport_count; i++) {
+         const VkViewport *vp = &dyn->vp.viewports[need_turing_vp_broadcast ? 0 : i];
+         nvk_emit_viewport(cmd, p, vp, i);
       }
    }
 
@@ -2479,33 +2535,15 @@ nvk_flush_vp_state(struct nvk_cmd_buffer *cmd)
              RANGE_ZERO_TO_POSITIVE_W);
    }
 
-   if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_SCISSOR_COUNT)) {
-      for (unsigned i = dyn->vp.scissor_count; i < NVK_MAX_VIEWPORTS; i++)
+   if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_SCISSOR_COUNT) || vp_broadcast_dirty) {
+      for (unsigned i = scissor_count; i < NVK_MAX_VIEWPORTS; i++)
          P_IMMD(p, NV9097, SET_SCISSOR_ENABLE(i), V_FALSE);
    }
 
-   if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_SCISSORS)) {
-      const uint32_t sr_max =
-         nvk_image_max_dimension(&pdev->info, VK_IMAGE_TYPE_2D);
-
-      for (unsigned i = 0; i < dyn->vp.scissor_count; i++) {
-         const VkRect2D *s = &dyn->vp.scissors[i];
-
-         const uint32_t xmin = MIN2(sr_max, s->offset.x);
-         const uint32_t xmax = MIN2(sr_max, s->offset.x + s->extent.width);
-         const uint32_t ymin = MIN2(sr_max, s->offset.y);
-         const uint32_t ymax = MIN2(sr_max, s->offset.y + s->extent.height);
-
-         P_MTHD(p, NV9097, SET_SCISSOR_ENABLE(i));
-         P_NV9097_SET_SCISSOR_ENABLE(p, i, V_TRUE);
-         P_NV9097_SET_SCISSOR_HORIZONTAL(p, i, {
-            .xmin = xmin,
-            .xmax = xmax,
-         });
-         P_NV9097_SET_SCISSOR_VERTICAL(p, i, {
-            .ymin = ymin,
-            .ymax = ymax,
-         });
+   if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_VP_SCISSORS) || vp_broadcast_dirty) {
+      for (unsigned i = 0; i < scissor_count; i++) {
+         const VkRect2D *s = &dyn->vp.scissors[need_turing_vp_broadcast ? 0 : i];
+         nvk_emit_scissor(cmd, p, s, i);
       }
    }
 }
@@ -5392,11 +5430,10 @@ nvk_CmdEndTransformFeedbackEXT(VkCommandBuffer commandBuffer,
    }
 }
 
-VKAPI_ATTR void VKAPI_CALL
-nvk_CmdBeginConditionalRenderingEXT(VkCommandBuffer commandBuffer,
-                                    const VkConditionalRenderingBeginInfoEXT *pConditionalRenderingBegin)
+static void
+nvk_cmd_begin_cond_render_copy_engine(struct nvk_cmd_buffer *cmd,
+                                      const VkConditionalRenderingBeginInfoEXT *pConditionalRenderingBegin)
 {
-   VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(nvk_buffer, buffer, pConditionalRenderingBegin->buffer);
 
    const uint64_t addr =
@@ -5432,7 +5469,7 @@ nvk_CmdBeginConditionalRenderingEXT(VkCommandBuffer commandBuffer,
    /* Frustratingly, the u64s are not packed together */
    const uint64_t operand_a_addr = tmp_addr + 0;
 
-   struct nv_push *p = nvk_cmd_buffer_push(cmd, 19);
+   struct nv_push *p = nvk_cmd_buffer_push(cmd, 15);
 
    /* Copy value into operand A */
    P_MTHD(p, NV90B5, OFFSET_IN_UPPER);
@@ -5455,15 +5492,90 @@ nvk_CmdBeginConditionalRenderingEXT(VkCommandBuffer commandBuffer,
    });
 
    /* Compare the operands */
-   P_MTHD(p, NV9097, SET_RENDER_ENABLE_A);
-   P_NV9097_SET_RENDER_ENABLE_A(p, tmp_addr >> 32);
-   P_NV9097_SET_RENDER_ENABLE_B(p, tmp_addr & 0xfffffff0);
-   P_NV9097_SET_RENDER_ENABLE_C(p, inverted ? MODE_RENDER_IF_EQUAL : MODE_RENDER_IF_NOT_EQUAL);
+   if (nvk_cmd_buffer_last_subchannel(cmd) == SUBC_NV9097) {
+      P_MTHD(p, NV9097, SET_GLOBAL_RENDER_ENABLE_A);
+      P_NV9097_SET_GLOBAL_RENDER_ENABLE_A(p, tmp_addr >> 32);
+      P_NV9097_SET_GLOBAL_RENDER_ENABLE_B(p, tmp_addr & 0xfffffff0);
+      P_NV9097_SET_GLOBAL_RENDER_ENABLE_C(p, inverted ? MODE_RENDER_IF_EQUAL : MODE_RENDER_IF_NOT_EQUAL);
+   } else {
+      P_MTHD(p, NV90C0, SET_GLOBAL_RENDER_ENABLE_A);
+      P_NV90C0_SET_GLOBAL_RENDER_ENABLE_A(p, tmp_addr >> 32);
+      P_NV90C0_SET_GLOBAL_RENDER_ENABLE_B(p, tmp_addr & 0xfffffff0);
+      P_NV90C0_SET_GLOBAL_RENDER_ENABLE_C(p, inverted ? MODE_RENDER_IF_EQUAL : MODE_RENDER_IF_NOT_EQUAL);
+   }
+}
 
-   P_MTHD(p, NV90C0, SET_RENDER_ENABLE_A);
-   P_NV90C0_SET_RENDER_ENABLE_A(p, tmp_addr >> 32);
-   P_NV90C0_SET_RENDER_ENABLE_B(p, tmp_addr & 0xfffffff0);
-   P_NV90C0_SET_RENDER_ENABLE_C(p, inverted ? MODE_RENDER_IF_EQUAL : MODE_RENDER_IF_NOT_EQUAL);
+void
+nvk_mme_begin_cond_render(struct mme_builder *b)
+{
+   if (b->devinfo->cls_eng3d < TURING_A)
+      return;
+
+   struct mme_value64 cond_render_addr = mme_load_addr64(b);
+
+   struct mme_value inverted = mme_merge(b, mme_zero(), cond_render_addr.lo, 0, 1, 0);
+   mme_merge_to(b, cond_render_addr.lo, mme_zero(), cond_render_addr.lo, 1, 31, 1);
+
+   mme_tu104_read_fifoed(b, cond_render_addr, mme_imm(1));
+   struct mme_value read_value = mme_load(b);
+
+   struct mme_value enable = mme_mov(b, mme_zero());
+   mme_if(b, ine, read_value, mme_zero()) {
+      mme_mov_to(b, enable, mme_imm(1));
+   }
+   mme_xor_to(b, enable, enable, inverted);
+
+   mme_if(b, ieq, enable, mme_zero()) {
+      STATIC_ASSERT(NV9097_SET_GLOBAL_RENDER_ENABLE_A ==
+                    NV90C0_SET_GLOBAL_RENDER_ENABLE_A);
+      mme_mthd(b, NV9097_SET_GLOBAL_RENDER_ENABLE_A);
+      mme_emit(b, mme_zero());
+      mme_emit(b, mme_zero());
+      mme_emit(b, mme_imm(NV9097_SET_GLOBAL_RENDER_ENABLE_C_MODE_FALSE));
+   }
+}
+
+static void
+nvk_cmd_begin_cond_render_mme(struct nvk_cmd_buffer *cmd,
+                              const VkConditionalRenderingBeginInfoEXT *pConditionalRenderingBegin)
+{
+   VK_FROM_HANDLE(nvk_buffer, buffer, pConditionalRenderingBegin->buffer);
+   struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
+
+   uint64_t addr =
+      vk_buffer_address(&buffer->vk, pConditionalRenderingBegin->offset);
+   bool inverted = pConditionalRenderingBegin->flags &
+      VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT;
+
+   if (inverted)
+      addr |= 1;
+
+   struct nv_push *p = nvk_cmd_buffer_push(cmd, 4);
+
+   if (pdev->info.cls_compute >= AMPERE_COMPUTE_B &&
+       nvk_cmd_buffer_last_subchannel(cmd) != SUBC_NV9097)
+      P_1INC(p, NV90C0, CALL_MME_MACRO(NVK_MME_BEGIN_COND_RENDER));
+   else
+      P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_BEGIN_COND_RENDER));
+
+   P_INLINE_DATA(p, addr >> 32);
+   P_INLINE_DATA(p, addr);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+nvk_CmdBeginConditionalRenderingEXT(VkCommandBuffer commandBuffer,
+                                    const VkConditionalRenderingBeginInfoEXT *pConditionalRenderingBegin)
+{
+   VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
+   struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
+
+   if (pdev->info.cls_eng3d >= TURING_A) {
+      nvk_cmd_begin_cond_render_mme(cmd, pConditionalRenderingBegin);
+   } else {
+      nvk_cmd_begin_cond_render_copy_engine(cmd, pConditionalRenderingBegin);
+   }
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -5471,14 +5583,17 @@ nvk_CmdEndConditionalRenderingEXT(VkCommandBuffer commandBuffer)
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
 
-   struct nv_push *p = nvk_cmd_buffer_push(cmd, 12);
-   P_MTHD(p, NV9097, SET_RENDER_ENABLE_A);
-   P_NV9097_SET_RENDER_ENABLE_A(p, 0);
-   P_NV9097_SET_RENDER_ENABLE_B(p, 0);
-   P_NV9097_SET_RENDER_ENABLE_C(p, MODE_TRUE);
-
-   P_MTHD(p, NV90C0, SET_RENDER_ENABLE_A);
-   P_NV90C0_SET_RENDER_ENABLE_A(p, 0);
-   P_NV90C0_SET_RENDER_ENABLE_B(p, 0);
-   P_NV90C0_SET_RENDER_ENABLE_C(p, MODE_TRUE);
+   struct nv_push *p = nvk_cmd_buffer_push(cmd, 4);
+   if (nvk_cmd_buffer_last_subchannel(cmd) == SUBC_NV9097) {
+      /* The GLOBAL variant sets render enable across both 3d and compute */
+      P_MTHD(p, NV9097, SET_GLOBAL_RENDER_ENABLE_A);
+      P_NV9097_SET_GLOBAL_RENDER_ENABLE_A(p, 0);
+      P_NV9097_SET_GLOBAL_RENDER_ENABLE_B(p, 0);
+      P_NV9097_SET_GLOBAL_RENDER_ENABLE_C(p, MODE_TRUE);
+   } else {
+      P_MTHD(p, NV90C0, SET_GLOBAL_RENDER_ENABLE_A);
+      P_NV90C0_SET_GLOBAL_RENDER_ENABLE_A(p, 0);
+      P_NV90C0_SET_GLOBAL_RENDER_ENABLE_B(p, 0);
+      P_NV90C0_SET_GLOBAL_RENDER_ENABLE_C(p, MODE_TRUE);
+   }
 }

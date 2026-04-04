@@ -20,6 +20,21 @@
 #include "util/u_math.h"
 
 void
+brw_assign_urb_setup(brw_shader &s)
+{
+   struct brw_vue_prog_data *vue_prog_data = brw_vue_prog_data(s.prog_data);
+   const unsigned verts =
+      s.stage == MESA_SHADER_GEOMETRY ? s.nir->info.gs.vertices_in : 1;
+
+   s.first_non_payload_grf += 8 * vue_prog_data->urb_read_length * verts;
+
+   /* Rewrite all ATTR file references to HW_REGs. */
+   foreach_block_and_inst(block, brw_inst, inst, s.cfg) {
+      s.convert_attr_sources_to_hw_regs(inst);
+   }
+}
+
+void
 brw_shader::emit_tes_terminate()
 {
    assert(stage == MESA_SHADER_TESS_EVAL);
@@ -156,7 +171,6 @@ brw_shader::brw_shader(const brw_shader_params *params)
    this->fail_msg = NULL;
 
    this->payload_ = NULL;
-   this->source_depth_to_render_target = false;
    this->first_non_payload_grf = 0;
 
    this->last_scratch = 0;
@@ -311,47 +325,12 @@ brw_barycentric_mode(const struct brw_fs_prog_key *key,
 bool
 brw_shader::mark_last_urb_write_with_eot()
 {
-   brw_inst *limit = NULL;
-   foreach_block_reverse(block, cfg) {
-      foreach_inst_in_block_reverse(brw_inst, inst, block) {
-         if (inst->opcode == SHADER_OPCODE_URB_WRITE_LOGICAL) {
-            inst->eot = true;
-            limit = inst;
-            break;
-         } else if (inst->is_control_flow() || inst->has_side_effects()) {
-            limit = inst;
-            break;
-         }
-      }
-
-      if (limit)
-         break;
+   brw_inst *inst = cfg->last_block()->end();
+   if (inst && inst->opcode == SHADER_OPCODE_URB_WRITE_LOGICAL) {
+      inst->eot = true;
+      return true;
    }
-
-   if (!limit || !limit->eot)
-      return false;
-
-   brw_analysis_dependency_class dep = BRW_DEPENDENCY_INSTRUCTION_DETAIL;
-
-   /* Delete now dead instructions. */
-   bool done = false;
-   foreach_block_reverse(block, cfg) {
-      foreach_inst_in_block_reverse_safe(brw_inst, dead, block) {
-         if (dead == limit) {
-            done = true;
-            break;
-         }
-
-         dep = dep | BRW_DEPENDENCY_INSTRUCTION_IDENTITY;
-         dead->remove();
-      }
-
-      if (done)
-         break;
-   }
-
-   invalidate_analysis(dep);
-   return true;
+   return false;
 }
 
 void
@@ -866,6 +845,17 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
       if (OPT(brw_opt_cmod_propagation))
          OPT(brw_opt_dead_code_eliminate);
 
+      if (OPT(brw_opt_cmp_flag_destination,
+               /* We want something like
+                * brw_wm_prog_data(s.prog_data)->uses_kill, but there are
+                * other things that can cause the sample_mask_flag_subreg to
+                * be used.
+                */
+              s.stage == MESA_SHADER_FRAGMENT)) {
+         OPT(brw_opt_cmod_propagation);
+         OPT(brw_opt_dead_code_eliminate);
+      }
+
       allocated = brw_assign_regs(s, allow_spilling, spill_all);
    }
 
@@ -925,6 +915,15 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
     * and final scheduling has already happend, this won't help.
     */
    OPT(brw_opt_cmod_propagation);
+
+   if (OPT(brw_opt_cmp_flag_destination,
+           /* We want something like brw_wm_prog_data(s.prog_data)->uses_kill,
+            * but there are other things that can cause the
+            * sample_mask_flag_subreg to be used.
+            */
+           s.stage == MESA_SHADER_FRAGMENT)) {
+      OPT(brw_opt_cmod_propagation);
+   }
 
    if (s.devinfo->ver >= 30)
       OPT(brw_lower_send_gather);

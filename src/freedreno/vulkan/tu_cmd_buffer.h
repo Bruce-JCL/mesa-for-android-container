@@ -442,7 +442,7 @@ enum tu_suspend_resume_state
    SR_IN_CHAIN_AFTER_PRE_CHAIN,
 };
 
-typedef char tu_sha1_str[SHA1_DIGEST_STRING_LENGTH];
+typedef char tu_blake3_str[BLAKE3_HEX_LEN];
 
 struct tu_cmd_state
 {
@@ -455,6 +455,7 @@ struct tu_cmd_state
    struct tu_render_pass_state rp;
 
    struct vk_render_pass_state vk_rp;
+   struct vk_multiview_state vk_mv;
    struct vk_vertex_input_state vi;
    struct vk_sample_locations_state sl;
 

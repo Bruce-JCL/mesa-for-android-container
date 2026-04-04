@@ -55,8 +55,8 @@ uint64_t os_page_size = 4096;
 static int
 tu_device_get_cache_uuid(struct tu_physical_device *device, void *uuid)
 {
-   struct mesa_sha1 ctx;
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
+   blake3_hasher ctx;
+   unsigned char blake3[BLAKE3_KEY_LEN];
    /* Note: IR3_SHADER_DEBUG also affects compilation, but it's not
     * initialized until after compiler creation so we have to add it to the
     * shader hash instead, since the compiler is only created with the logical
@@ -66,17 +66,17 @@ tu_device_get_cache_uuid(struct tu_physical_device *device, void *uuid)
    uint16_t family = fd_dev_gpu_id(&device->dev_id);
 
    memset(uuid, 0, VK_UUID_SIZE);
-   _mesa_sha1_init(&ctx);
+   _mesa_blake3_init(&ctx);
 
    if (!disk_cache_get_function_identifier((void *)tu_device_get_cache_uuid, &ctx))
       return -1;
 
-   _mesa_sha1_update(&ctx, &family, sizeof(family));
-   _mesa_sha1_update(&ctx, &driver_flags, sizeof(driver_flags));
-   _mesa_sha1_update(&ctx, &device->uche_trap_base, sizeof(device->uche_trap_base));
-   _mesa_sha1_final(&ctx, sha1);
+   _mesa_blake3_update(&ctx, &family, sizeof(family));
+   _mesa_blake3_update(&ctx, &driver_flags, sizeof(driver_flags));
+   _mesa_blake3_update(&ctx, &device->uche_trap_base, sizeof(device->uche_trap_base));
+   _mesa_blake3_final(&ctx, blake3);
 
-   memcpy(uuid, sha1, VK_UUID_SIZE);
+   memcpy(uuid, blake3, VK_UUID_SIZE);
    return 0;
 }
 
@@ -274,6 +274,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .EXT_conservative_rasterization = device->info->chip >= 7,
       .EXT_custom_border_color = true,
       .EXT_custom_resolve = true,
+      .EXT_depth_clamp_control = true,
       .EXT_depth_clamp_zero_one = true,
       .EXT_depth_clip_control = true,
       .EXT_depth_clip_enable = true,
@@ -629,6 +630,9 @@ tu_get_features(struct tu_physical_device *pdevice,
    /* VK_EXT_custom_border_color */
    features->customBorderColors = true;
    features->customBorderColorWithoutFormat = true;
+
+   /* VK_EXT_depth_clamp_control */
+   features->depthClampControl = true;
 
    /* VK_KHR_depth_clamp_zero_one */
    features->depthClampZeroOne = true;
@@ -1149,6 +1153,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->maxFragmentDualSrcAttachments = 1;
    props->maxFragmentCombinedOutputResources = MAX_RTS + max_descriptor_set_size * 2;
    props->maxComputeSharedMemorySize = pdevice->info->cs_shared_mem_size;
+   /* keep in sync with nir_shader_compiler_options */
    props->maxComputeWorkGroupCount[0] =
       props->maxComputeWorkGroupCount[1] =
       props->maxComputeWorkGroupCount[2] = 65535;
@@ -1389,7 +1394,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->samplerCaptureReplayDescriptorDataSize = 0;
    props->accelerationStructureCaptureReplayDescriptorDataSize = 0;
    /* Note: these sizes must match descriptor_size() */
-   props->samplerDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
+   props->EDBsamplerDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
    props->combinedImageSamplerDescriptorSize = 2 * FDL6_TEX_CONST_DWORDS * 4;
    props->sampledImageDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
    props->storageImageDescriptorSize = FDL6_TEX_CONST_DWORDS * 4;
@@ -1491,26 +1496,26 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->identicalMemoryTypeRequirements = true;
 
    {
-      struct mesa_sha1 sha1_ctx;
-      uint8_t sha1[SHA1_DIGEST_LENGTH];
+      blake3_hasher blake3_ctx;
+      uint8_t blake3[BLAKE3_KEY_LEN];
 
-      _mesa_sha1_init(&sha1_ctx);
+      _mesa_blake3_init(&blake3_ctx);
 
       /* Make sure we don't match with other vendors */
       const char *driver = "turnip-v1";
-      _mesa_sha1_update(&sha1_ctx, driver, strlen(driver));
+      _mesa_blake3_update(&blake3_ctx, driver, strlen(driver));
 
       /* Hash in UBWC configuration */
-      _mesa_sha1_update(&sha1_ctx, &pdevice->ubwc_config.highest_bank_bit,
+      _mesa_blake3_update(&blake3_ctx, &pdevice->ubwc_config.highest_bank_bit,
                         sizeof(pdevice->ubwc_config.highest_bank_bit));
-      _mesa_sha1_update(&sha1_ctx, &pdevice->ubwc_config.bank_swizzle_levels,
+      _mesa_blake3_update(&blake3_ctx, &pdevice->ubwc_config.bank_swizzle_levels,
                         sizeof(pdevice->ubwc_config.bank_swizzle_levels));
-      _mesa_sha1_update(&sha1_ctx, &pdevice->ubwc_config.macrotile_mode,
+      _mesa_blake3_update(&blake3_ctx, &pdevice->ubwc_config.macrotile_mode,
                         sizeof(pdevice->ubwc_config.macrotile_mode));
 
-      _mesa_sha1_final(&sha1_ctx, sha1);
+      _mesa_blake3_final(&blake3_ctx, blake3);
 
-      memcpy(props->optimalTilingLayoutUUID, sha1, VK_UUID_SIZE);
+      memcpy(props->optimalTilingLayoutUUID, blake3, VK_UUID_SIZE);
    }
 
    /* VK_KHR_acceleration_structure */
@@ -1825,6 +1830,7 @@ static const driOptionDescription tu_dri_options[] = {
       DRI_CONF_TU_USE_TEX_COORD_ROUND_NEAREST_EVEN_MODE(false)
       DRI_CONF_TU_IGNORE_FRAG_DEPTH_DIRECTION(false)
       DRI_CONF_TU_ENABLE_SOFTFLOAT32(false)
+      DRI_CONF_TU_EMULATE_ALPHA_TO_COVERAGE(false)
    DRI_CONF_SECTION_END
 };
 
@@ -1855,6 +1861,8 @@ tu_init_dri_options(struct tu_instance *instance)
          driQueryOptionb(&instance->dri_options, "tu_ignore_frag_depth_direction");
    instance->enable_softfloat32 =
          driQueryOptionb(&instance->dri_options, "tu_enable_softfloat32");
+   instance->emulate_alpha_to_coverage =
+         driQueryOptionb(&instance->dri_options, "tu_emulate_alpha_to_coverage");
 }
 
 static uint32_t instance_count = 0;
@@ -2336,9 +2344,10 @@ tu_create_copy_timestamp_cs(struct tu_u_trace_submission_data *submission_data,
 
       tu_cs_init(&submission_data->timestamp_copy_data->cs, device,
                  TU_CS_MODE_GROW, cs_size, "trace copy timestamp cs");
-      u_trace_init(&submission_data->timestamp_copy_data->trace,
-                   &device->trace_context);
    }
+
+   u_trace_init(&submission_data->timestamp_copy_data->trace,
+                &device->trace_context);
 
    tu_cs *cs = &submission_data->timestamp_copy_data->cs;
 
@@ -3566,6 +3575,16 @@ tu_AllocateMemory(VkDevice _device,
    mem->size = pAllocateInfo->allocationSize;
    mem->refcnt = 1;
 
+   BITMASK_ENUM(tu_bo_alloc_flags) alloc_flags = TU_BO_ALLOC_NO_FLAGS;
+
+   const VkMemoryAllocateFlagsInfo *flags_info = vk_find_struct_const(
+      pAllocateInfo->pNext, MEMORY_ALLOCATE_FLAGS_INFO);
+   if (flags_info &&
+       (flags_info->flags &
+        VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT)) {
+      alloc_flags |= TU_BO_ALLOC_REPLAYABLE;
+   }
+
    const VkImportMemoryFdInfoKHR *fd_info =
       vk_find_struct_const(pAllocateInfo->pNext, IMPORT_MEMORY_FD_INFO_KHR);
 
@@ -3580,8 +3599,9 @@ tu_AllocateMemory(VkDevice _device,
        * reference counting.  We need to maintain a per-instance handle-to-bo
        * table and add reference count to tu_bo.
        */
-      result = tu_bo_init_dmabuf(device, &mem->bo,
-                                 pAllocateInfo->allocationSize, fd_info->fd);
+      result =
+         tu_bo_init_dmabuf(device, &mem->bo, pAllocateInfo->allocationSize,
+                           alloc_flags, fd_info->fd);
       if (result == VK_SUCCESS) {
          /* take ownership and close the fd */
          close(fd_info->fd);
@@ -3591,27 +3611,19 @@ tu_AllocateMemory(VkDevice _device,
       const native_handle_t *handle = AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
       assert(handle->numFds > 0);
       size_t size = lseek(handle->data[0], 0, SEEK_END);
-      result = tu_bo_init_dmabuf(device, &mem->bo, size, handle->data[0]);
+      result = tu_bo_init_dmabuf(device, &mem->bo, size, alloc_flags,
+                                 handle->data[0]);
 #else
       result = VK_ERROR_FEATURE_NOT_PRESENT;
 #endif
    } else {
       uint64_t client_address = 0;
-      BITMASK_ENUM(tu_bo_alloc_flags) alloc_flags = TU_BO_ALLOC_NO_FLAGS;
 
       const VkMemoryOpaqueCaptureAddressAllocateInfo *replay_info =
          vk_find_struct_const(pAllocateInfo->pNext,
                               MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO);
       if (replay_info && replay_info->opaqueCaptureAddress) {
          client_address = replay_info->opaqueCaptureAddress;
-         alloc_flags |= TU_BO_ALLOC_REPLAYABLE;
-      }
-
-      const VkMemoryAllocateFlagsInfo *flags_info = vk_find_struct_const(
-         pAllocateInfo->pNext, MEMORY_ALLOCATE_FLAGS_INFO);
-      if (flags_info &&
-          (flags_info->flags &
-           VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT)) {
          alloc_flags |= TU_BO_ALLOC_REPLAYABLE;
       }
 

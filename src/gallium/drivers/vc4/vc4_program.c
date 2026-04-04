@@ -2148,7 +2148,6 @@ static const nir_shader_compiler_options nir_options = {
         .lower_fpow = true,
         .lower_fsat = true,
         .lower_fsqrt = true,
-        .lower_ldexp = true,
         .lower_fneg = true,
         .lower_ineg = true,
         .lower_to_scalar = true,
@@ -2507,7 +2506,7 @@ vc4_shader_state_create(struct pipe_context *pctx,
         }
 
         if (s->info.stage == MESA_SHADER_VERTEX)
-                NIR_PASS(_, s, nir_lower_point_size, 1.0f, 0.0f, nir_type_invalid);
+                NIR_PASS(_, s, nir_lower_point_size, 1.0f, 0.0f);
 
         NIR_PASS(_, s, nir_lower_io,
                  nir_var_shader_in | nir_var_shader_out | nir_var_uniform,

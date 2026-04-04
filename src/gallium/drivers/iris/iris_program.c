@@ -757,7 +757,7 @@ iris_lower_storage_image_derefs_instr(nir_builder *b,
       nir_def *index =
          nir_iadd_imm(b, get_aoa_deref_offset(b, deref, 1),
                       var->data.driver_location);
-      nir_rewrite_image_intrinsic(intrin, index, false);
+      nir_rewrite_image_intrinsic(intrin, index, nir_image_intrinsic_type_default);
       return true;
    }
 
@@ -1815,19 +1815,19 @@ iris_debug_archiver_open(void *tmp_ctx, struct iris_screen *screen,
    if (!INTEL_DEBUG(DEBUG_MDA) || !screen->brw)
       return NULL;
 
-   char name[SHA1_DIGEST_STRING_LENGTH + 5] = {};
+   char name[BLAKE3_HEX_LEN + 5] = {};
    {
-      struct mesa_sha1 ctx;
-      unsigned char hash[SHA1_DIGEST_LENGTH];
+      blake3_hasher ctx;
+      unsigned char hash[BLAKE3_KEY_LEN];
 
-      _mesa_sha1_init(&ctx);
-      _mesa_sha1_update(&ctx, nir->info.source_blake3, BLAKE3_OUT_LEN);
-      _mesa_sha1_update(&ctx, key, key_size);
-      _mesa_sha1_final(&ctx, hash);
+      _mesa_blake3_init(&ctx);
+      _mesa_blake3_update(&ctx, nir->info.source_blake3, BLAKE3_OUT_LEN);
+      _mesa_blake3_update(&ctx, key, key_size);
+      _mesa_blake3_final(&ctx, hash);
 
-      _mesa_sha1_format(name, hash);
+      _mesa_blake3_format(name, hash);
    }
-   memcpy(&name[SHA1_DIGEST_STRING_LENGTH - 1], ".iris", 5);
+   memcpy(&name[BLAKE3_HEX_LEN - 1], ".iris", 5);
 
    debug_archiver *debug_archiver =
       debug_archiver_open(tmp_ctx, name, PACKAGE_VERSION MESA_GIT_SHA1);
@@ -3380,7 +3380,7 @@ iris_create_uncompiled_shader(struct iris_screen *screen,
       struct blob blob;
       blob_init(&blob);
       nir_serialize(&blob, nir, true);
-      _mesa_sha1_compute(blob.data, blob.size, ish->nir_sha1);
+      _mesa_blake3_compute(blob.data, blob.size, ish->nir_blake3);
       blob_finish(&blob);
    }
 

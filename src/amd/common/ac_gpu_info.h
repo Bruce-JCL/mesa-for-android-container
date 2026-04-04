@@ -262,6 +262,7 @@ struct radeon_info {
    bool has_small_prim_filter_sample_loc_bug;
    bool has_pops_missed_overlap_bug;
    bool has_zero_index_buffer_bug;
+   bool has_db_force_stencil_valid_bug;
    bool has_two_planes_iterate256_bug;
    bool has_vgt_flush_ngg_legacy_bug;
    bool has_prim_restart_sync_bug;
@@ -278,6 +279,7 @@ struct radeon_info {
    bool has_export_conflict_bug;
    bool cp_dma_supports_sparse;
    bool has_vrs_ds_export_bug;
+   bool has_vrs_export_bug;
    bool has_taskmesh_indirect0_bug;
    bool sdma_supports_sparse;      /* Whether SDMA can safely access sparse resources. */
    bool sdma_supports_compression; /* Whether SDMA supports DCC and HTILE. */
@@ -382,10 +384,7 @@ struct radeon_info {
    bool has_sparse_image_standard_3d;
    /* Mip levels do not need to be aligned to the sparse block size */
    bool has_sparse_unaligned_mip_size;
-   bool has_gang_submit;
    bool has_gpuvm_fault_query;
-   bool has_pcie_bandwidth_info;
-   bool has_stable_pstate;
    /* Whether SR-IOV is enabled or amdgpu.mcbp=1 was set on the kernel command line. */
    bool has_kernelq_reg_shadowing;
    bool has_default_zerovram_support;
@@ -462,6 +461,11 @@ struct radeon_info {
    /* AMD_CU_MASK environment variable or ~0. */
    bool spi_cu_en_has_effect;
    uint32_t spi_cu_en;
+
+   /* Raster config. */
+   uint32_t pa_sc_raster_config;
+   uint32_t pa_sc_raster_config_1;
+   uint32_t se_tile_repeat;
 
    struct {
       uint32_t shadow_size;

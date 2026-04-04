@@ -561,6 +561,32 @@ lower_boolean_shuffle(nir_builder *b, nir_intrinsic_instr *intrin,
 }
 
 static nir_def *
+lower_intel_shuffle(nir_builder *b, nir_intrinsic_instr *intrin)
+{
+   nir_def *size = nir_load_subgroup_size(b);
+   nir_def *delta = intrin->src[2].ssa;
+
+   assert(delta->bit_size == 32);
+
+   /* Rewrite UP in terms of DOWN.
+    *
+    *   UP(a, b, delta) == DOWN(a, b, size - delta)
+    *
+    * Note the argument order for UP is (Previous, Current) and
+    * for DOWN is (Current, Next) so there's no need to flip the
+    * arguments.
+    */
+   if (intrin->intrinsic == nir_intrinsic_shuffle_up_intel)
+      delta = nir_isub(b, size, delta);
+
+   nir_def *index = nir_iadd(b, nir_load_subgroup_invocation(b), delta);
+   nir_def *current = nir_shuffle(b, intrin->src[0].ssa, index);
+   nir_def *next = nir_shuffle(b, intrin->src[1].ssa, nir_isub(b, index, size));
+
+   return nir_bcsel(b, nir_ilt(b, index, size), current, next);
+}
+
+static nir_def *
 vec_bit_count(nir_builder *b, nir_def *value)
 {
    nir_def *vec_result = nir_bit_count(b, value);
@@ -645,10 +671,12 @@ lower_boolean_reduce(nir_builder *b, nir_intrinsic_instr *intrin,
    nir_op op = nir_intrinsic_reduction_op(intrin);
 
    /* For certain cluster sizes, reductions of iand and ior can be implemented
-    * more efficiently.
+    * more efficiently. This also avoids a special case in
+    * lower_boolean_reduce_internal.
     */
    if (intrin->intrinsic == nir_intrinsic_reduce) {
-      if (cluster_size == 0) {
+      if (cluster_size == 0 || cluster_size >= options->ballot_components *
+                                                  options->ballot_bit_size) {
          if (op == nir_op_iand)
             return nir_vote_all(b, 1, intrin->src[0].ssa);
          else if (op == nir_op_ior)
@@ -1330,6 +1358,10 @@ lower_subgroups_instr(nir_builder *b, nir_instr *instr, void *_options)
       else if (options->lower_shuffle_to_32bit && intrin->src[0].ssa->bit_size == 64)
          return lower_subgroup_op_to_32bit(b, intrin);
       break;
+
+   case nir_intrinsic_shuffle_up_intel:
+   case nir_intrinsic_shuffle_down_intel:
+      return lower_intel_shuffle(b, intrin);
 
    case nir_intrinsic_quad_broadcast:
    case nir_intrinsic_quad_swap_horizontal:

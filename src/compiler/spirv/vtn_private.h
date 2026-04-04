@@ -1,24 +1,6 @@
 /*
  * Copyright © 2015 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef _VTN_PRIVATE_H_
@@ -297,6 +279,7 @@ enum vtn_base_type {
    vtn_base_type_function,
    vtn_base_type_event,
    vtn_base_type_cooperative_matrix,
+   vtn_base_type_buffer,
 };
 
 struct vtn_type {
@@ -364,7 +347,7 @@ struct vtn_type {
          bool packed:1;
       };
 
-      /* Members for pointer types */
+      /* Members for pointer and buffer types */
       struct {
          /* For regular pointers, the vtn_type of the object pointed to;
           * for untyped pointers it must be NULL.
@@ -1062,7 +1045,8 @@ nir_def *
 vtn_mediump_downconvert(struct vtn_builder *b, enum glsl_base_type base_type, nir_def *def);
 struct vtn_ssa_value *
 vtn_mediump_downconvert_value(struct vtn_builder *b, struct vtn_ssa_value *src);
-void vtn_mediump_upconvert_value(struct vtn_builder *b, struct vtn_ssa_value *value);
+struct vtn_ssa_value *
+vtn_mediump_upconvert_value(struct vtn_builder *b, struct vtn_ssa_value *value);
 
 static inline int
 cmp_uint32_t(const void *pa, const void *pb)

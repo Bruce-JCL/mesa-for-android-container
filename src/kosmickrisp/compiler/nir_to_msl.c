@@ -185,7 +185,7 @@ alu_src_to_msl(struct nir_to_msl_ctx *ctx, nir_alu_instr *instr, int srcn)
 {
    nir_alu_src *src = &instr->src[srcn];
    src_to_msl(ctx, &src->src);
-   if (!nir_alu_src_is_trivial_ssa(instr, srcn) &&
+   if (!nir_alu_has_trivial_src(instr, srcn) &&
        src->src.ssa->num_components > 1) {
       int num_components = nir_src_num_components(src->src);
       assert(num_components <= 4);
@@ -1986,17 +1986,13 @@ msl_preprocess_nir(struct nir_shader *nir)
             nir_var_function_temp | nir_var_shader_in | nir_var_shader_out);
    NIR_PASS(_, nir, nir_lower_alu_to_scalar, kk_scalarize_filter, NULL);
 
+   /* If we do 256 here MSL compiler crashes with
+    * dEQP-VK.graphicsfuzz.stable-binarysearch-tree-nested-if-and-conditional */
+   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 32,
+            glsl_get_natural_size_align_bytes, glsl_get_word_size_align_bytes);
    NIR_PASS(_, nir, nir_lower_indirect_derefs_to_if_else_trees,
-            nir_var_shader_in | nir_var_shader_out, UINT32_MAX);
-   NIR_PASS(_, nir, nir_lower_vars_to_scratch, 0,
-            glsl_get_natural_size_align_bytes,
-            glsl_get_natural_size_align_bytes);
-
-   nir_lower_compute_system_values_options csv_options = {
-      .has_base_global_invocation_id = 0,
-      .has_base_workgroup_id = true,
-   };
-   NIR_PASS(_, nir, nir_lower_compute_system_values, &csv_options);
+            nir_var_function_temp | nir_var_shader_in | nir_var_shader_out,
+            UINT32_MAX);
 
    msl_nir_lower_subgroups(nir);
 }
@@ -2043,7 +2039,7 @@ msl_optimize_nir(struct nir_shader *nir)
    NIR_PASS(_, nir, nir_lower_load_const_to_scalar);
    NIR_PASS(_, nir, msl_nir_lower_algebraic_late);
    NIR_PASS(_, nir, nir_convert_from_ssa, true, false);
-   nir_trivialize_registers(nir);
+   NIR_PASS(_, nir, nir_trivialize_registers);
    NIR_PASS(_, nir, nir_opt_copy_prop);
 
    return progress;

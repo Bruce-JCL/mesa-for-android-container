@@ -1788,7 +1788,7 @@ impl SM50Op for OpF2F {
         e.set_field(10..12, (self.src_type.bits() / 8).ilog2());
 
         e.set_rnd_mode(39..41, self.rnd_mode);
-        e.set_bit(41, self.is_high());
+        e.set_bit(41, self.src.src_swizzle == SrcSwizzle::Yy);
         e.set_bit(42, self.integer_rnd);
         e.set_bit(44, self.ftz);
         e.set_bit(50, false); // saturate
@@ -1833,6 +1833,7 @@ impl SM50Op for OpF2I {
         e.set_bit(12, self.dst_type.is_signed());
 
         e.set_rnd_mode(39..41, self.rnd_mode);
+        e.set_bit(41, self.src.src_swizzle == SrcSwizzle::Yy);
         e.set_bit(44, self.ftz);
         e.set_bit(47, false); // .CC
     }
@@ -2598,6 +2599,7 @@ impl SM50Op for OpLd {
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
         assert_eq!(self.stride, OffsetStride::X1);
+        assert!(self.pred.is_true());
         e.set_opcode(match self.access.space {
             MemSpace::Global(_) => 0xeed0,
             MemSpace::Local => 0xef40,
@@ -3152,9 +3154,13 @@ impl SM50Op for OpIsberd {
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
+        assert!(
+            self.access_type == IsbeAccessType::Map && self.imm_offset == 0
+        );
+
         e.set_opcode(0xefd0);
         e.set_dst(&self.dst);
-        e.set_reg_src(8..16, &self.idx);
+        e.set_reg_src(8..16, &self.offset);
     }
 }
 

@@ -969,6 +969,10 @@ typedef enum
    SYSTEM_VALUE_WARP_ID_ARM,
    SYSTEM_VALUE_WARP_MAX_ID_ARM,
 
+   /* SPV_EXT_descriptor_heap */
+   SYSTEM_VALUE_SAMPLER_HEAP_PTR,
+   SYSTEM_VALUE_RESOURCE_HEAP_PTR,
+
    SYSTEM_VALUE_MAX             /**< Number of values */
 } gl_system_value;
 
@@ -1266,6 +1270,24 @@ enum gl_access_qualifier
     *       intrinsics for sparse.
     */
    ACCESS_SPARSE = (1 << 20),
+
+   /**
+    * Internal streaming access (v9+)
+    *
+    * Whether the memory is accessed in a streaming fashion inside of the GPU.
+    * Since the data is likely to be read inside of the GPU, the hardware will
+    * try to store it in level 2 cache.
+    */
+   ACCESS_ISTREAM_PAN = (1 << 21),
+
+   /**
+    * External streaming access (v9+)
+    *
+    * Whether the memory is accessed in a streaming fashion outside of the GPU.
+    * This hints the hardware to not cache the data, it could be useful for
+    * one-time accesses or if the data is larger than what the memory can store.
+    */
+   ACCESS_ESTREAM_PAN = (1 << 22),
 };
 
 enum gl_tess_spacing

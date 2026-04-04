@@ -79,7 +79,7 @@ radv_probe_video_encode(struct radv_physical_device *pdev)
       return;
    }
 
-   pdev->video_encode_enabled = !!(instance->perftest_flags & RADV_PERFTEST_VIDEO_ENCODE);
+   pdev->video_encode_enabled = !!(instance->experimental_flags & RADV_EXPERIMENTAL_VIDEO_ENCODE);
 }
 
 void
@@ -609,8 +609,30 @@ radv_enc_slice_control(struct radv_cmd_buffer *cmd_buffer, const struct VkVideoE
    uint32_t height_in_mbs = DIV_ROUND_UP(cmd_buffer->video.enc.coded_height, 16);
    num_mbs_in_slice = DIV_ROUND_UP(width_in_mbs * height_in_mbs, h264_picture_info->naluSliceEntryCount);
 
+   uint32_t slice_control_mode = RENCODE_H264_SLICE_CONTROL_MODE_FIXED_MBS;
+
+   if (ac_vcn_enc_variable_slice_mode_supported(&pdev->info, false) &&
+       h264_picture_info->naluSliceEntryCount <= RENCODE_MAX_NUM_SLICES) {
+      uint32_t last_mb = 0;
+      slice_control_mode = RENCODE_H264_SLICE_CONTROL_MODE_VARIABLE_MBS;
+
+      RADEON_ENC_BEGIN(pdev->vcn_enc_cmds.slice_info_h264);
+      RADEON_ENC_CS(h264_picture_info->naluSliceEntryCount);
+      for (uint32_t i = 1; i < h264_picture_info->naluSliceEntryCount; ++i) {
+         uint32_t slice_size = h264_picture_info->pNaluSliceEntries[i].pStdSliceHeader->first_mb_in_slice - last_mb;
+         RADEON_ENC_CS(slice_size);
+         last_mb = h264_picture_info->pNaluSliceEntries[i].pStdSliceHeader->first_mb_in_slice;
+
+         /* Preserve compatibility with apps that simply copy pNaluSliceEntries */
+         if (slice_size == 0)
+            slice_control_mode = RENCODE_H264_SLICE_CONTROL_MODE_FIXED_MBS;
+      }
+      RADEON_ENC_CS(width_in_mbs * height_in_mbs - last_mb);
+      RADEON_ENC_END();
+   }
+
    RADEON_ENC_BEGIN(pdev->vcn_enc_cmds.slice_control_h264);
-   RADEON_ENC_CS(RENCODE_H264_SLICE_CONTROL_MODE_FIXED_MBS); // slice control mode
+   RADEON_ENC_CS(slice_control_mode);                        // slice control mode
    RADEON_ENC_CS(num_mbs_in_slice);                          // num mbs per slice
    RADEON_ENC_END();
 }
@@ -695,8 +717,32 @@ radv_enc_slice_control_hevc(struct radv_cmd_buffer *cmd_buffer, const struct VkV
    height_in_ctb = DIV_ROUND_UP(cmd_buffer->video.enc.coded_height, 64);
    num_ctbs_in_slice = DIV_ROUND_UP(width_in_ctb * height_in_ctb, h265_picture_info->naluSliceSegmentEntryCount);
 
+   uint32_t slice_control_mode = RENCODE_HEVC_SLICE_CONTROL_MODE_FIXED_CTBS;
+   if (ac_vcn_enc_variable_slice_mode_supported(&pdev->info, false) &&
+       h265_picture_info->naluSliceSegmentEntryCount <= RENCODE_MAX_NUM_SLICES) {
+      uint32_t last_ctb = 0;
+      slice_control_mode = RENCODE_HEVC_SLICE_CONTROL_MODE_VARIABLE_CTBS;
+
+      RADEON_ENC_BEGIN(pdev->vcn_enc_cmds.slice_info_hevc);
+      RADEON_ENC_CS(h265_picture_info->naluSliceSegmentEntryCount);
+      for (uint32_t i = 1; i < h265_picture_info->naluSliceSegmentEntryCount; ++i) {
+         uint32_t slice_size =
+            h265_picture_info->pNaluSliceSegmentEntries[i].pStdSliceSegmentHeader->slice_segment_address - last_ctb;
+         RADEON_ENC_CS(slice_size);
+         RADEON_ENC_CS(1); // is_independent
+         last_ctb = h265_picture_info->pNaluSliceSegmentEntries[i].pStdSliceSegmentHeader->slice_segment_address;
+
+         /* Preserve compatibility with apps that simply copy pNaluSliceSegmentEntries */
+         if (slice_size == 0)
+            slice_control_mode = RENCODE_HEVC_SLICE_CONTROL_MODE_FIXED_CTBS;
+      }
+      RADEON_ENC_CS(width_in_ctb * height_in_ctb - last_ctb);
+      RADEON_ENC_CS(1); // is_independent
+      RADEON_ENC_END();
+   }
+
    RADEON_ENC_BEGIN(pdev->vcn_enc_cmds.slice_control_hevc);
-   RADEON_ENC_CS(RENCODE_HEVC_SLICE_CONTROL_MODE_FIXED_CTBS);
+   RADEON_ENC_CS(slice_control_mode);
    RADEON_ENC_CS(num_ctbs_in_slice); // num_ctbs_in_slice
    RADEON_ENC_CS(num_ctbs_in_slice); // num_ctbs_in_slice_segment
    RADEON_ENC_END();
@@ -1032,7 +1078,8 @@ radv_enc_latency(struct radv_cmd_buffer *cmd_buffer, VkVideoEncodeTuningModeKHR 
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    const bool low_latency = tuning_mode == VK_VIDEO_ENCODE_TUNING_MODE_LOW_LATENCY_KHR ||
-                            tuning_mode == VK_VIDEO_ENCODE_TUNING_MODE_ULTRA_LOW_LATENCY_KHR;
+                            tuning_mode == VK_VIDEO_ENCODE_TUNING_MODE_ULTRA_LOW_LATENCY_KHR ||
+                            radv_physical_device_instance(pdev)->perftest_flags & RADV_PERFTEST_LOWLATENCYENC;
 
    RADEON_ENC_BEGIN(pdev->vcn_enc_cmds.enc_latency);
    RADEON_ENC_CS(low_latency ? 1000 : 0);
@@ -1099,7 +1146,7 @@ radv_enc_slice_header(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
       radv_enc_code_ue(cmd_buffer, 6);
       break;
    }
-   radv_enc_code_ue(cmd_buffer, 0x0);
+   radv_enc_code_ue(cmd_buffer, pic->pic_parameter_set_id);
 
    unsigned int max_frame_num_bits = sps->log2_max_frame_num_minus4 + 4;
    radv_enc_code_fixed_bits(cmd_buffer, pic->frame_num % (1 << max_frame_num_bits), max_frame_num_bits);

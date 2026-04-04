@@ -182,15 +182,17 @@ remap_patch_urb_offsets(nir_block *block, nir_builder *b,
          if (remap_tess_levels(b, intrin, tes_primitive_mode))
             continue;
 
-         int vue_slot = vue_map->varying_to_slot[intrin->const_index[0]];
+         int vue_slot = vue_map->varying_to_slot[nir_intrinsic_base(intrin)];
          assert(vue_slot != -1);
-         intrin->const_index[0] = vue_slot;
+         nir_intrinsic_set_base(intrin, vue_slot);
 
          nir_src *vertex = nir_get_io_arrayed_index_src(intrin);
          if (vertex) {
             if (nir_src_is_const(*vertex)) {
-               intrin->const_index[0] += nir_src_as_uint(*vertex) *
-                                         vue_map->num_per_vertex_slots;
+               nir_intrinsic_set_base(intrin,
+                                      nir_intrinsic_base(intrin) +
+                                      nir_src_as_uint(*vertex) *
+                                      vue_map->num_per_vertex_slots);
             } else {
                b->cursor = nir_before_instr(&intrin->instr);
 
@@ -840,6 +842,8 @@ lower_bit_size_callback(const nir_instr *instr, UNUSED void *data)
       case nir_intrinsic_shuffle_xor:
       case nir_intrinsic_shuffle_up:
       case nir_intrinsic_shuffle_down:
+      case nir_intrinsic_shuffle_up_intel:
+      case nir_intrinsic_shuffle_down_intel:
       case nir_intrinsic_quad_broadcast:
       case nir_intrinsic_quad_swap_horizontal:
       case nir_intrinsic_quad_swap_vertical:

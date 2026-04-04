@@ -1410,8 +1410,8 @@ dgc_emit_pkt3_draw_indirect(struct dgc_cmdbuf *cs, nir_def *has_drawid, bool ind
       dgc_cs_emit_imm(0);
       dgc_cs_emit(vertex_offset_reg);
       dgc_cs_emit(nir_bcsel(b, has_baseinstance, start_instance_reg, nir_imm_int(b, 0)));
-      dgc_cs_emit(nir_ior_imm(b, nir_ior(b, draw_id_reg, nir_imm_int(b, S_2C3_DRAW_INDEX_ENABLE(1))),
-                              S_2C3_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
+      dgc_cs_emit(nir_ior_imm(b, nir_ior(b, draw_id_reg, nir_imm_int(b, S_2C_4_DRAW_INDEX_ENABLE(1))),
+                              S_2C_4_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
       dgc_cs_emit_imm(1); /* draw count */
       dgc_cs_emit_imm(0); /* count va low */
       dgc_cs_emit_imm(0); /* count va high */
@@ -1542,7 +1542,7 @@ dgc_emit_draw_with_count(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *s
    nir_def *start_instance_reg =
       nir_bcsel(b, has_baseinstance, nir_iadd(b, vertex_offset_reg, start_instance_offset), nir_imm_int(b, 0));
    nir_def *draw_id_reg = nir_bcsel(
-      b, has_drawid, nir_ior_imm(b, nir_iadd(b, vertex_offset_reg, nir_imm_int(b, 1)), S_2C3_DRAW_INDEX_ENABLE(1)),
+      b, has_drawid, nir_ior_imm(b, nir_iadd(b, vertex_offset_reg, nir_imm_int(b, 1)), S_2C_4_DRAW_INDEX_ENABLE(1)),
       nir_imm_int(b, 0));
 
    nir_def *di_src_sel = nir_imm_int(b, indexed ? V_0287F0_DI_SRC_SEL_DMA : V_0287F0_DI_SRC_SEL_AUTO_INDEX);
@@ -1555,7 +1555,7 @@ dgc_emit_draw_with_count(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *s
    dgc_cs_emit_imm(0);
    dgc_cs_emit(vertex_offset_reg);
    dgc_cs_emit(start_instance_reg);
-   dgc_cs_emit(nir_ior_imm(b, draw_id_reg, S_2C3_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
+   dgc_cs_emit(nir_ior_imm(b, draw_id_reg, S_2C_4_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
    dgc_cs_emit(draw_count);
    dgc_cs_emit_imm(0);
    dgc_cs_emit_imm(0);
@@ -1754,8 +1754,10 @@ dgc_alloc_push_constant(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *se
    nir_variable *idx = nir_variable_create(b->shader, nir_var_shader_temp, glsl_uint_type(), "idx");
    nir_store_var(b, idx, nir_imm_int(b, 0), 0x1);
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      nir_loop_add_continue_construct(loop);
+
       nir_def *cur_idx = nir_load_var(b, idx);
 
       nir_break_if(b, nir_ieq(b, cur_idx, load_param8(b, push_constant_size)));
@@ -1777,7 +1779,7 @@ dgc_alloc_push_constant(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *se
 
       nir_store_var(b, idx, nir_iadd_imm(b, cur_idx, 1), 0x1);
    }
-   nir_pop_loop(b, NULL);
+   nir_pop_loop(b, loop);
 
    /* Store push constants set by DGC tokens. */
    u_foreach_bit64 (i, layout->push_constant_mask) {
@@ -2025,8 +2027,10 @@ dgc_emit_vertex_buffer(struct dgc_cmdbuf *cs, nir_def *stream_addr)
    nir_variable *vbo_idx = nir_variable_create(b->shader, nir_var_shader_temp, glsl_uint_type(), "vbo_idx");
    nir_store_var(b, vbo_idx, nir_imm_int(b, 0), 0x1);
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      nir_loop_add_continue_construct(loop);
+
       nir_def *cur_idx = nir_load_var(b, vbo_idx);
 
       nir_break_if(b, nir_uge_imm(b, cur_idx, 32 /* bits in vb_desc_usage_mask */));
@@ -2097,7 +2101,7 @@ dgc_emit_vertex_buffer(struct dgc_cmdbuf *cs, nir_def *stream_addr)
 
       nir_store_var(b, vbo_idx, nir_iadd_imm(b, cur_idx, 1), 0x1);
    }
-   nir_pop_loop(b, NULL);
+   nir_pop_loop(b, loop);
 }
 
 /**
@@ -2884,7 +2888,7 @@ build_dgc_prepare_shader(struct radv_device *dev, struct radv_indirect_command_l
 {
    const struct radv_physical_device *pdev = radv_device_physical(dev);
 
-   nir_builder b = radv_meta_nir_init_shader(dev, MESA_SHADER_COMPUTE, "meta_dgc_prepare");
+   nir_builder b = radv_meta_nir_init_shader(MESA_SHADER_COMPUTE, "meta_dgc_prepare");
    b.shader->info.workgroup_size[0] = 64;
 
    struct dgc_cmdbuf cmd_buf = {
@@ -2958,6 +2962,8 @@ build_dgc_prepare_shader(struct radv_device *dev, struct radv_indirect_command_l
       build_dgc_buffer_preamble_ace(&cmd_buf, sequence_count);
    }
    nir_pop_if(&b, NULL);
+
+   nir_lower_continue_constructs(b.shader);
 
    return b.shader;
 }

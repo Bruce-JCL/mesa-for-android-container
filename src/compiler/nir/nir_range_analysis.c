@@ -188,12 +188,7 @@ push_fp_query(struct analysis_state *state, const nir_def *def)
 static uint32_t
 get_fp_key(struct analysis_query *q)
 {
-   struct fp_query *fp_q = (struct fp_query *)q;
-
-   if (!nir_def_is_alu(fp_q->def))
-      return UINT32_MAX;
-
-   return fp_q->def->index;
+   return ((struct fp_query *)q)->def->index;
 }
 
 static bool
@@ -201,7 +196,7 @@ fp_lookup(void *table, uint32_t key, uint32_t *value)
 {
    nir_fp_analysis_state *state = table;
    if (BITSET_TEST(state->bitset, key)) {
-      *value = *(uint32_t *)util_sparse_array_get(&state->arr, key);
+      *value = state->arr[key];
       return true;
    } else {
       return false;
@@ -214,7 +209,7 @@ fp_insert(void *table, uint32_t key, uint32_t value)
    nir_fp_analysis_state *state = table;
    BITSET_SET(state->bitset, key);
    state->max = MAX2(state->max, (int)key);
-   *(uint32_t *)util_sparse_array_get(&state->arr, key) = value;
+   state->arr[key] = value;
 }
 
 static fp_class_mask
@@ -810,8 +805,8 @@ process_fp_query(struct analysis_state *state, struct analysis_query *aq, uint32
       case nir_op_ffract:
       case nir_op_fsin:
       case nir_op_fcos:
-      case nir_op_fsin_amd:
-      case nir_op_fcos_amd:
+      case nir_op_fsin_normalized_2_pi:
+      case nir_op_fcos_normalized_2_pi:
       case nir_op_f2f16:
       case nir_op_f2f16_rtz:
       case nir_op_f2f16_rtne:
@@ -1208,8 +1203,8 @@ process_fp_query(struct analysis_state *state, struct analysis_query *aq, uint32
 
    case nir_op_fsin:
    case nir_op_fcos:
-   case nir_op_fsin_amd:
-   case nir_op_fcos_amd: {
+   case nir_op_fsin_normalized_2_pi:
+   case nir_op_fcos_normalized_2_pi: {
       /* [-1, +1], and sin/cos(Inf) is NaN */
       r = FP_CLASS_NEG_ONE | FP_CLASS_LT_ZERO_GT_NEG_ONE | FP_CLASS_ANY_ZERO |
           FP_CLASS_GT_ZERO_LT_POS_ONE | FP_CLASS_POS_ONE | FP_CLASS_NON_INTEGRAL;
@@ -1393,22 +1388,25 @@ nir_create_fp_analysis_state(nir_function_impl *impl)
 {
    nir_fp_analysis_state state;
    state.impl = impl;
-   /* Over-allocate the bitset, so that we can keep using the allocated table memory
+   /* Over-allocate, so that we can keep using the allocated table memory
     * even when new SSA values are added. */
-   state.size = BITSET_BYTES(impl->ssa_alloc + impl->ssa_alloc / 4u);
+   state.size = (impl->ssa_alloc + impl->ssa_alloc / 4u);
    state.max = -1;
-   state.bitset = calloc(state.size, 1);
-   util_sparse_array_init(&state.arr, 4, 256);
+   state.bitset = calloc(BITSET_BYTES(state.size), 1);
+   state.arr = malloc(state.size * sizeof(uint16_t));
    return state;
 }
 
 void
 nir_invalidate_fp_analysis_state(nir_fp_analysis_state *state)
 {
-   if (BITSET_BYTES(state->impl->ssa_alloc) > state->size) {
-      state->size = BITSET_BYTES(state->impl->ssa_alloc + state->impl->ssa_alloc / 4u);
+   if (state->impl->ssa_alloc > state->size) {
+      state->size = state->impl->ssa_alloc + state->impl->ssa_alloc / 4u;
+
+      free(state->arr);
       free(state->bitset);
-      state->bitset = calloc(state->size, 1);
+      state->arr = malloc(state->size * sizeof(uint16_t));
+      state->bitset = calloc(BITSET_BYTES(state->size), 1);
    } else if (state->max >= 0) {
       memset(state->bitset, 0, BITSET_BYTES(state->max + 1));
    }
@@ -1418,7 +1416,7 @@ nir_invalidate_fp_analysis_state(nir_fp_analysis_state *state)
 void
 nir_free_fp_analysis_state(nir_fp_analysis_state *state)
 {
-   util_sparse_array_finish(&state->arr);
+   free(state->arr);
    free(state->bitset);
 }
 
@@ -1685,6 +1683,16 @@ get_intrinsic_uub(struct analysis_state *state, struct scalar_query q, uint32_t 
 
       break;
    }
+   case nir_intrinsic_shuffle_up_intel:
+   case nir_intrinsic_shuffle_down_intel:
+      if (!q.head.pushed_queries) {
+         push_scalar_query(state, nir_get_scalar(intrin->src[0].ssa, q.scalar.comp));
+         push_scalar_query(state, nir_get_scalar(intrin->src[1].ssa, q.scalar.comp));
+         return;
+      } else {
+         *result = MAX2(src[0], src[1]);
+      }
+      break;
    case nir_intrinsic_read_first_invocation:
    case nir_intrinsic_read_invocation:
    case nir_intrinsic_shuffle:
@@ -2135,7 +2143,6 @@ nir_unsigned_upper_bound(nir_shader *shader, struct hash_table *range_ht,
 
    push_scalar_query(&state, scalar);
 
-   _mesa_hash_table_set_deleted_key(range_ht, (void *)(uintptr_t)UINT32_MAX);
    return perform_analysis(&state);
 }
 
@@ -2344,6 +2351,16 @@ ssa_def_bits_used(const nir_def *def, int recur)
          unsigned src_idx = src - use_intrin->src;
 
          switch (use_intrin->intrinsic) {
+         case nir_intrinsic_shuffle_up_intel:
+         case nir_intrinsic_shuffle_down_intel:
+            if (src_idx == 0 || src_idx == 1) {
+               bits_used |= ssa_def_bits_used(&use_intrin->def, recur);
+            } else {
+               /* Subgroups larger than 128 are not a thing */
+               bits_used |= 127;
+            }
+            break;
+
          case nir_intrinsic_read_invocation:
          case nir_intrinsic_shuffle:
          case nir_intrinsic_shuffle_up:
@@ -2529,6 +2546,5 @@ nir_def_num_lsb_zero(struct hash_table *numlsb_ht, nir_scalar def)
 
    push_scalar_query(&state, def);
 
-   _mesa_hash_table_set_deleted_key(numlsb_ht, (void *)(uintptr_t)UINT32_MAX);
    return perform_analysis(&state);
 }

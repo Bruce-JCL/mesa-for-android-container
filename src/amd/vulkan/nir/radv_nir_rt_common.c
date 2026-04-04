@@ -857,8 +857,11 @@ radv_build_ray_traversal(struct radv_device *device, nir_builder *b, const struc
    nir_def *desc = create_bvh_descriptor(b, pdev, &ray_flags);
    nir_def *vec3ones = nir_imm_vec3(b, 1.0, 1.0, 1.0);
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      if (!args->use_bvh_stack_rtn)
+         nir_loop_add_continue_construct(loop);
+
       /* When exiting instances via stack, current_node won't ever be invalid with ds_bvh_stack_rtn */
       if (args->use_bvh_stack_rtn) {
          /* Early-exit when the stack is empty and there are no more nodes to process. */
@@ -878,7 +881,7 @@ radv_build_ray_traversal(struct radv_device *device, nir_builder *b, const struc
          /* Early exit if we never overflowed the stack, to avoid having to backtrack to
           * the root for no reason. */
          if (!args->use_bvh_stack_rtn) {
-            nir_push_if(b, nir_ilt_imm(b, nir_load_deref(b, args->vars.stack), args->stack_base + args->stack_stride));
+            nir_push_if(b, nir_ilt_imm(b, nir_load_deref(b, args->vars.stack), args->stack_stride));
             {
                nir_store_var(b, incomplete, nir_imm_false(b), 0x1);
                nir_jump(b, nir_jump_break);
@@ -1154,8 +1157,11 @@ radv_build_ray_traversal_gfx12(struct radv_device *device, nir_builder *b, const
 
    nir_def *desc = create_bvh_descriptor(b, pdev, &ray_flags);
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      if (!args->use_bvh_stack_rtn)
+         nir_loop_add_continue_construct(loop);
+
       /* When exiting instances via stack, current_node won't ever be invalid with ds_bvh_stack_rtn */
       if (args->use_bvh_stack_rtn) {
          /* Early-exit when the stack is empty and there are no more nodes to process. */
@@ -1174,7 +1180,7 @@ radv_build_ray_traversal_gfx12(struct radv_device *device, nir_builder *b, const
          /* Early exit if we never overflowed the stack, to avoid having to backtrack to
           * the root for no reason. */
          if (!args->use_bvh_stack_rtn) {
-            nir_push_if(b, nir_ilt_imm(b, nir_load_deref(b, args->vars.stack), args->stack_base + args->stack_stride));
+            nir_push_if(b, nir_ilt_imm(b, nir_load_deref(b, args->vars.stack), args->stack_stride));
             {
                nir_store_var(b, incomplete, nir_imm_false(b), 0x1);
                nir_jump(b, nir_jump_break);

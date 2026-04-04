@@ -90,6 +90,7 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader *shader,
    /* nir_opt_algebraic() above would have unfused our ffmas, re-fuse them. */
    if (needs_late_alg) {
       NIR_PASS(progress, ctx->s, nir_opt_algebraic_late);
+      NIR_PASS(progress, ctx->s, ir3_nir_opt_algebraic_late);
       NIR_PASS(progress, ctx->s, nir_opt_dce);
    }
 
@@ -441,6 +442,16 @@ ir3_get_predicate(struct ir3_context *ctx, struct ir3_instruction *src)
    }
 
    _mesa_hash_table_insert(ctx->predicate_conversions, src, cond);
+
+   /* If we are currently emitting instructions after src, update the context
+    * builder to point after the predicate conversion. Otherwise, we will insert
+    * its uses before its def.
+    */
+   if (ctx->build.cursor.option == IR3_CURSOR_AFTER_INSTR &&
+       ctx->build.cursor.instr == src) {
+      ctx->build = b;
+   }
+
    return cond;
 }
 

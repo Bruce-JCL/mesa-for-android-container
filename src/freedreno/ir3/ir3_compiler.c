@@ -125,11 +125,22 @@ static const nir_shader_compiler_options ir3_base_options = {
    .lower_fmod = true,
    .lower_fdiv = true,
    .lower_isign = true,
-   .lower_ldexp = true,
    .lower_uadd_carry = true,
    .lower_usub_borrow = true,
    .lower_mul_high = true,
    .lower_mul_2x32_64 = true,
+   /* ir3's mad is an unfused mul-add instruction, so we need to flag fma
+    * lowering so that CL can implement fused fma in software.  GLSL,
+    * SPIRV, and NIR don't require either fused or unfused behavior from
+    * fma, and we'll turn mul+adds back into nir_op_ffma (again, implemented
+    * as unfused) during nir_opt_algebraic_late() (assuming it's not
+    * decorated with GLSL's precise, or SPIRV's NoContraction), or
+    * ir3_nir_opt_algebraic_late (if it is, since ir3's unfused mul-add is
+    * precise).
+    */
+   .lower_ffma16 = true,
+   .lower_ffma32 = true,
+   .lower_ffma64 = true,
    .fuse_ffma16 = true,
    .fuse_ffma32 = true,
    .fuse_ffma64 = true,
@@ -411,6 +422,17 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    } else if (compiler->gen <= 2) {
       /* a2xx compiler doesn't handle indirect: */
       compiler->nir_options.force_indirect_unrolling = nir_var_all;
+   }
+
+   if (compiler->gen >= 5) {
+      /* keep in sync with vk_properties */
+      compiler->nir_options.max_workgroup_count[0] =
+         compiler->nir_options.max_workgroup_count[1] =
+         compiler->nir_options.max_workgroup_count[2] = 65535;
+      compiler->nir_options.max_workgroup_invocations =
+         dev_info->threadsize_base * dev_info->max_waves;
+      if ((compiler->gen >= 6) && dev_info->props.supports_double_threadsize)
+         compiler->nir_options.max_workgroup_invocations *= 2;
    }
 
    if (options->lower_base_vertex) {

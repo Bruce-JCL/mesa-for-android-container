@@ -33,13 +33,34 @@ amd_packet_files = [
 ]
 
 amd_packet_headers = []
+amd_ib_parsers = []
 
 foreach gen : ['gfx11', 'gfx12']
   amd_packet_headers += custom_target(
     'amd_cp_packets_' + gen + '.h',
     input : ['../packets/parse_cp_pm4_table_data_json.py', amd_packet_files],
     output : 'amd_cp_packets_' + gen + '.h',
-    command : [prog_python, '@INPUT@', gen],
+    command : [prog_python, '@INPUT@', gen, 'packets_h'],
+    capture : true,
+  )
+
+  amd_ib_parsers += custom_target(
+    'amd_cp_print_packet_' + gen + '.c',
+    input : ['../packets/parse_cp_pm4_table_data_json.py',
+             '../packets/cp_pm4_table_data_' + gen + '.json',
+             '../packets/pm4_it_opcodes_' + gen + '.h'],
+    output : 'amd_cp_print_packet_' + gen + '.c',
+    command : [prog_python, '@INPUT@', gen, 'print_c'],
+    capture : true,
+  )
+
+  amd_ib_parsers += custom_target(
+    'amd_cp_print_packet_' + gen + '.h',
+    input : ['../packets/parse_cp_pm4_table_data_json.py',
+             '../packets/cp_pm4_table_data_' + gen + '.json',
+             '../packets/pm4_it_opcodes_' + gen + '.h'],
+    output : 'amd_cp_print_packet_' + gen + '.h',
+    command : [prog_python, '@INPUT@', gen, 'print_h'],
     capture : true,
   )
 endforeach
@@ -85,6 +106,8 @@ amd_common_files = files(
   'ac_shader_args.h',
   'ac_shader_util.c',
   'ac_shader_util.h',
+  'ac_guardband.c',
+  'ac_guardband.h',
   'ac_gather_context_rolls.c',
   'ac_gpu_info.c',
   'ac_gpu_info.h',
@@ -149,7 +172,6 @@ amd_common_files = files(
   'nir/ac_nir_lower_ngg_mesh.c',
   'nir/ac_nir_lower_ps_early.c',
   'nir/ac_nir_lower_ps_late.c',
-  'nir/ac_nir_lower_sin_cos.c',
   'nir/ac_nir_meta.h',
   'nir/ac_nir_meta_cs_blit.c',
   'nir/ac_nir_meta_cs_clear_copy_buffer.c',
@@ -159,7 +181,7 @@ amd_common_files = files(
   'nir/ac_nir_prerast_utils.c',
   'nir/ac_nir_surface.c',
   'nir/ac_nir_surface.h',
-)
+) + amd_ib_parsers
 
 if not with_platform_windows
   amd_common_files += files(

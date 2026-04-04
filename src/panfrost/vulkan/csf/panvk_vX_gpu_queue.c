@@ -97,9 +97,8 @@ init_render_desc_ringbuf(struct panvk_gpu_queue *queue)
                           "Failed to create a descriptor ring buffer context");
 
    if (!(flags & PAN_KMOD_BO_FLAG_NO_MMAP)) {
-      ringbuf->addr.host =
-         pan_kmod_bo_mmap(ringbuf->bo, 0, ringbuf->size, PROT_READ | PROT_WRITE,
-                          MAP_SHARED, NULL);
+      ringbuf->addr.host = pan_kmod_bo_mmap(ringbuf->bo, PROT_READ | PROT_WRITE,
+                                            MAP_SHARED, NULL);
       if (ringbuf->addr.host == MAP_FAILED)
          return panvk_errorf(dev, VK_ERROR_OUT_OF_HOST_MEMORY,
                              "Failed to CPU map ringbuf BO");
@@ -250,9 +249,8 @@ init_subqueue_tracing(struct panvk_gpu_queue *queue,
       return panvk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                           "Failed to create a CS tracebuf");
 
-   subq->tracebuf.addr.host =
-      pan_kmod_bo_mmap(subq->tracebuf.bo, 0, subq->tracebuf.size,
-                       PROT_READ | PROT_WRITE, MAP_SHARED, NULL);
+   subq->tracebuf.addr.host = pan_kmod_bo_mmap(
+      subq->tracebuf.bo, PROT_READ | PROT_WRITE, MAP_SHARED, NULL);
    if (subq->tracebuf.addr.host == MAP_FAILED) {
       subq->tracebuf.addr.host = NULL;
       return panvk_errorf(dev, VK_ERROR_OUT_OF_HOST_MEMORY,
@@ -1264,7 +1262,7 @@ panvk_queue_submit_process_debug(const struct panvk_queue_submit *submit,
       for (uint32_t i = 0; i < ARRAY_SIZE(queue->subqueues); i++) {
          panvk_priv_mem_readback(queue->subqueues[i].context, 0,
                                  struct panvk_cs_subqueue_context, ctx) {
-            size_t trace_size = trace_size =
+            size_t trace_size =
                ctx->debug.tracebuf.cs - queue->subqueues[i].tracebuf.addr.dev;
 
             if (trace_size) {

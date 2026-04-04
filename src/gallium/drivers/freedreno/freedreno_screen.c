@@ -149,6 +149,11 @@ fd_screen_destroy(struct pipe_screen *pscreen)
    if (screen->tess_bo)
       fd_bo_del(screen->tess_bo);
 
+   for (int i = 0; i < ARRAY_SIZE(screen->pvtmem); i++) {
+      if (screen->pvtmem[i].bo)
+         fd_bo_del(screen->pvtmem[i].bo);
+   }
+
    if (screen->pipe)
       fd_pipe_del(screen->pipe);
 
@@ -320,31 +325,31 @@ fd_init_shader_caps(struct fd_screen *screen)
 static void
 fd_init_compute_caps(struct fd_screen *screen)
 {
-   const struct fd_dev_info *info = screen->info;
    struct pipe_compute_caps *caps =
       (struct pipe_compute_caps *)&screen->base.compute_caps;
 
    if (!has_compute(screen))
       return;
 
+   /* all things that support compute are ir3 (no a2xx compute): */
+
    struct ir3_compiler *compiler = screen->compiler;
+   const nir_shader_compiler_options *options =
+      ir3_get_compiler_options(compiler);
 
    caps->address_bits = screen->gen >= 5 ? 64 : 32;
 
    caps->grid_dimension = 3;
 
-   caps->max_grid_size[0] =
-   caps->max_grid_size[1] =
-   caps->max_grid_size[2] = 65535;
+   caps->max_grid_size[0] = options->max_workgroup_count[0];
+   caps->max_grid_size[1] = options->max_workgroup_count[1];
+   caps->max_grid_size[2] = options->max_workgroup_count[2];
 
    caps->max_block_size[0] = 1024;
    caps->max_block_size[1] = 1024;
    caps->max_block_size[2] = 64;
 
-   caps->max_threads_per_block = info->threadsize_base * info->max_waves;
-
-   if (is_a6xx(screen) && info->props.supports_double_threadsize)
-      caps->max_threads_per_block *= 2;
+   caps->max_threads_per_block = options->max_workgroup_invocations;
 
    caps->max_global_size = screen->ram_size;
 
@@ -1129,7 +1134,7 @@ fd_screen_aux_context_get(struct pipe_screen *pscreen)
    simple_mtx_lock(&screen->aux_ctx_lock);
 
    if (!screen->aux_ctx) {
-      screen->aux_ctx = pscreen->context_create(pscreen, NULL, 0);
+      screen->aux_ctx = pscreen->context_create(pscreen, NULL, FD_CONTEXT_FLAG_AUX);
    }
 
    return fd_context(screen->aux_ctx);

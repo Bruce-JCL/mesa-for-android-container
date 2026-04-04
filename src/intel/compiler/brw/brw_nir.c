@@ -1699,6 +1699,8 @@ lower_bit_size_callback(const nir_instr *instr, void *data)
       case nir_intrinsic_shuffle_xor:
       case nir_intrinsic_shuffle_up:
       case nir_intrinsic_shuffle_down:
+      case nir_intrinsic_shuffle_up_intel:
+      case nir_intrinsic_shuffle_down_intel:
       case nir_intrinsic_quad_broadcast:
       case nir_intrinsic_quad_swap_horizontal:
       case nir_intrinsic_quad_swap_vertical:
@@ -2196,7 +2198,9 @@ brw_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
    if (low->intrinsic == nir_intrinsic_load_ubo_uniform_block_intel ||
        low->intrinsic == nir_intrinsic_load_ssbo_uniform_block_intel ||
        low->intrinsic == nir_intrinsic_load_shared_uniform_block_intel ||
-       low->intrinsic == nir_intrinsic_load_global_constant_uniform_block_intel) {
+       low->intrinsic == nir_intrinsic_load_global_constant_uniform_block_intel ||
+       (low->intrinsic == nir_intrinsic_load_shader_indirect_data_intel &&
+        low->src[0].ssa == high->src[0].ssa)) {
       if (num_components > 4) {
          if (bit_size != 32)
             return false;
@@ -2418,8 +2422,7 @@ brw_nir_ssbo_intel(nir_shader *shader)
 }
 
 static void
-brw_vectorize_lower_mem_access(brw_pass_tracker *pt,
-                               enum brw_robustness_flags robust_flags)
+brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
 {
    const struct intel_device_info *devinfo = pt->compiler->devinfo;
 
@@ -2431,9 +2434,9 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt,
       .robust_modes = (nir_variable_mode)0,
    };
 
-   if (robust_flags & BRW_ROBUSTNESS_UBO)
+   if (pt->key->robust_flags & BRW_ROBUSTNESS_UBO)
       options.robust_modes |= nir_var_mem_ubo;
-   if (robust_flags & BRW_ROBUSTNESS_SSBO)
+   if (pt->key->robust_flags & BRW_ROBUSTNESS_SSBO)
       options.robust_modes |= nir_var_mem_ssbo;
 
    OPT(nir_opt_load_store_vectorize, &options);
@@ -2675,8 +2678,7 @@ brw_nir_lower_int64(brw_pass_tracker *pt)
  * backend and is highly backend-specific.
  */
 void
-brw_postprocess_nir_opts(brw_pass_tracker *pt,
-                         enum brw_robustness_flags robust_flags)
+brw_postprocess_nir_opts(brw_pass_tracker *pt)
 {
    const struct brw_compiler *compiler = pt->compiler;
    const struct intel_device_info *devinfo = compiler->devinfo;
@@ -2712,7 +2714,7 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt,
    OPT(nir_opt_constant_folding);
 
    /* Needs to happen before the backend opcode selection */
-   OPT(brw_nir_pre_lower_texture);
+   OPT(brw_nir_pre_lower_texture, devinfo);
 
    /* Needs to happen before the texture lowering */
    OPT(brw_nir_texture_backend_opcode, devinfo);
@@ -2758,7 +2760,14 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt,
       brw_nir_optimize(pt);
    }
 
-   brw_vectorize_lower_mem_access(pt, robust_flags);
+   brw_vectorize_lower_mem_access(pt);
+
+   /* Fence LSC SLM writes to avoid workgroups WaW hazards to the same SLM
+    * location.
+    */
+   if (devinfo->has_lsc &&
+       mesa_shader_stage_uses_workgroup(nir->info.stage))
+      OPT(brw_nir_fence_shared_stores);
 
    /* Do this after lowering memory access bit-sizes */
    if (nir->info.stage == MESA_SHADER_MESH ||
@@ -2845,6 +2854,9 @@ brw_postprocess_nir_opts(brw_pass_tracker *pt,
 
    if (OPT(nir_opt_uniform_atomics, false))
       OPT(nir_lower_subgroups, &subgroups_options);
+
+   if (pt->key->divergent_atomics_flags)
+      OPT(brw_nir_opt_divergent_atomics, pt->key->divergent_atomics_flags);
 
    /* nir_opt_uniform_subgroup can create some operations (e.g.,
     * load_subgroup_lt_mask) that need to be lowered again.

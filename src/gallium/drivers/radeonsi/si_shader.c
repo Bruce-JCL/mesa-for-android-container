@@ -657,7 +657,7 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
    };
    NIR_PASS(progress, nir, nir_lower_image, &lower_image_options);
 
-   NIR_PASS(progress, nir, ac_nir_lower_sin_cos);
+   NIR_PASS(progress, nir, nir_normalize_sin_cos);
    NIR_PASS(progress, nir, si_nir_lower_intrinsics_early);
 
    if (nir->info.stage == MESA_SHADER_TASK) {
@@ -2020,6 +2020,7 @@ bool si_create_shader_variant(struct si_screen *sscreen, struct ac_llvm_compiler
          shader->info.writes_sample_mask &= !shader->key.ps.part.epilog.kill_samplemask;
          shader->info.uses_discard |= shader->key.ps.part.prolog.poly_stipple ||
                                       shader->key.ps.part.epilog.alpha_func != PIPE_FUNC_ALWAYS;
+         si_shader_update_spi_shader_formats(shader, NULL);
          break;
       default:;
       }
