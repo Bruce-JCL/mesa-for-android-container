@@ -33,6 +33,7 @@
 #include "nv_push_clcb97.h"
 #include "nv_push_clcd97.h"
 #include "clc7c0.h"
+#include "clc997.h"
 #include "clcb97.h"
 #include "clcd97.h"
 #include "drf.h"
@@ -269,8 +270,10 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
 
    P_IMMD(p, NV9097, SET_CT_SELECT, { .target_count = 1 });
 
-//   P_MTHD(cmd->push, NVC0_3D, CSAA_ENABLE);
-//   P_INLINE_DATA(cmd->push, 0);
+   /* TODO: The proprietary driver set method 0x15b4 to 0
+    * and the golden ctx set it to 1 so we should probably unset it.
+    * On the Gallium driver, the unofficial name of this is CSAA_ENABLE.
+    */
 
    P_IMMD(p, NV9097, SET_ALIASED_LINE_WIDTH_ENABLE, V_TRUE);
 
@@ -292,12 +295,9 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
 
    P_IMMD(p, NV9097, SET_ZCULL_STATS, ENABLE_TRUE);
 
-   P_IMMD(p, NV9097, SET_L1_CONFIGURATION,
-                     DIRECTLY_ADDRESSABLE_MEMORY_SIZE_48KB);
-
    P_IMMD(p, NV9097, SET_REDUCE_COLOR_THRESHOLDS_ENABLE, V_FALSE);
    P_IMMD(p, NV9097, SET_REDUCE_COLOR_THRESHOLDS_UNORM8, {
-      .all_covered_all_hit_once = 0xff,
+      .all_covered_all_hit_once = 0x4,
    });
    P_MTHD(p, NV9097, SET_REDUCE_COLOR_THRESHOLDS_UNORM10);
    P_NV9097_SET_REDUCE_COLOR_THRESHOLDS_UNORM10(p, {
@@ -313,8 +313,9 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
       .all_covered_all_hit_once = 0xff,
    });
    P_NV9097_SET_REDUCE_COLOR_THRESHOLDS_SRGB8(p, {
-      .all_covered_all_hit_once = 0xff,
+      .all_covered_all_hit_once = 0x4,
    });
+   P_IMMD(p, NV9097, SET_SHADER_CACHE_CONTROL, pdev->info.cls_eng3d >= ADA_A);
 
    if (pdev->info.cls_eng3d < VOLTA_A)
       P_IMMD(p, NV9097, SET_ALPHA_FRACTION, 0x3f);
@@ -331,6 +332,10 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
    if (pdev->info.cls_eng3d < MAXWELL_A)
       P_IMMD(p, NV9097, SET_SHADER_SCHEDULING, MODE_OLDEST_THREAD_FIRST);
 
+   P_IMMD(p, NV9097, SET_L2_CACHE_CONTROL_FOR_VAF_REQUESTS, {
+      .system_memory_volatile = false,
+      .policy                 = POLICY_EVICT_NORMAL,
+   });
    P_IMMD(p, NV9097, SET_L2_CACHE_CONTROL_FOR_ROP_PREFETCH_READ_REQUESTS,
                      POLICY_EVICT_NORMAL);
    P_IMMD(p, NV9097, SET_L2_CACHE_CONTROL_FOR_ROP_NONINTERLOCKED_READ_REQUESTS,
@@ -466,8 +471,6 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
                         BY_VIEWPORT_INDEX_FALSE);
    }
 
-   /* TODO: Vertex runout */
-
    P_IMMD(p, NV9097, SET_WINDOW_ORIGIN, {
       .mode    = MODE_UPPER_LEFT,
       .flip_y  = FLIP_Y_FALSE,
@@ -489,11 +492,6 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
    P_1INC(p, NV9097, CALL_MME_MACRO(NVK_MME_UPDATE_WINDOW_CLIP));
    P_INLINE_DATA(p, 1);
    P_IMMD(p, NV9097, SET_CLIP_ID_TEST, ENABLE_FALSE);
-
-//   P_IMMD(p, NV9097, X_X_X_SET_CLEAR_CONTROL, {
-//      .respect_stencil_mask   = RESPECT_STENCIL_MASK_FALSE,
-//      .use_clear_rect         = USE_CLEAR_RECT_FALSE,
-//   });
 
    P_IMMD(p, NV9097, SET_VIEWPORT_SCALE_OFFSET, ENABLE_TRUE);
 
@@ -562,18 +560,15 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
       }
    }
 
-//   P_MTHD(cmd->push, NVC0_3D, MACRO_GP_SELECT);
-//   P_INLINE_DATA(cmd->push, 0x40);
    P_IMMD(p, NV9097, SET_RT_LAYER, {
       .v = 0,
       .control = CONTROL_V_SELECTS_LAYER,
    });
-//   P_MTHD(cmd->push, NVC0_3D, MACRO_TEP_SELECT;
-//   P_INLINE_DATA(cmd->push, 0x30);
 
    P_IMMD(p, NV9097, SET_POINT_CENTER_MODE, V_OGL);
    P_IMMD(p, NV9097, SET_EDGE_FLAG, V_TRUE);
    P_IMMD(p, NV9097, SET_SAMPLER_BINDING, V_INDEPENDENTLY);
+   P_IMMD(p, NV9097, SET_PRIMITIVE_TOPOLOGY_CONTROL, OVERRIDE_USE_SEPARATE_TOPOLOGY_STATE);
 
    uint64_t zero_addr = dev->zero_page->va->addr;
    P_MTHD(p, NV9097, SET_VERTEX_STREAM_SUBSTITUTE_A);
@@ -2303,31 +2298,31 @@ vk_to_nv9097_primitive_topology(VkPrimitiveTopology prim)
 {
    switch (prim) {
    case VK_PRIMITIVE_TOPOLOGY_POINT_LIST:
-      return NV9097_BEGIN_OP_POINTS;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_POINTLIST;
    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST:
-      return NV9097_BEGIN_OP_LINES;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_LINELIST;
    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
-      return NV9097_BEGIN_OP_LINE_STRIP;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_LINESTRIP;
    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch"
    case VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA:
 #pragma GCC diagnostic pop
-      return NV9097_BEGIN_OP_TRIANGLES;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_TRIANGLELIST;
    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP:
-      return NV9097_BEGIN_OP_TRIANGLE_STRIP;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_TRIANGLESTRIP;
    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN:
-      return NV9097_BEGIN_OP_TRIANGLE_FAN;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_LEGACY_TRIANGLEFAN;
    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY:
-      return NV9097_BEGIN_OP_LINELIST_ADJCY;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_LINELIST_ADJCY;
    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY:
-      return NV9097_BEGIN_OP_LINESTRIP_ADJCY;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_LINESTRIP_ADJCY;
    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY:
-      return NV9097_BEGIN_OP_TRIANGLELIST_ADJCY;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_TRIANGLELIST_ADJCY;
    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY:
-      return NV9097_BEGIN_OP_TRIANGLESTRIP_ADJCY;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_TRIANGLESTRIP_ADJCY;
    case VK_PRIMITIVE_TOPOLOGY_PATCH_LIST:
-      return NV9097_BEGIN_OP_PATCH;
+      return NV9097_SET_PRIMITIVE_TOPOLOGY_V_PATCHLIST;
    default:
       UNREACHABLE("Invalid primitive topology");
    }
@@ -2341,7 +2336,7 @@ nvk_flush_ia_state(struct nvk_cmd_buffer *cmd)
 
    if (BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_IA_PRIMITIVE_TOPOLOGY)) {
       struct nv_push *p = nvk_cmd_buffer_push(cmd, 2);
-      P_MTHD(p, NV9097, SET_MME_SHADOW_SCRATCH(NVK_MME_SCRATCH_DRAW_TOPOLOGY));
+      P_MTHD(p, NV9097, SET_PRIMITIVE_TOPOLOGY);
       P_INLINE_DATA(p, vk_to_nv9097_primitive_topology(dyn->ia.primitive_topology));
    }
 
@@ -4511,27 +4506,36 @@ nvk_mme_build_draw_loop(struct mme_builder *b,
 {
 
    if (b->devinfo->cls_eng3d >= TURING_A) {
-      struct mme_value draw_control_a = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
-      mme_set_field_enum(b, draw_control_a, NVC597_SET_DRAW_CONTROL_A_INSTANCE_ITERATE_ENABLE, TRUE);
+      uint32_t draw_control_a;
+      V_NVC597_SET_DRAW_CONTROL_A(draw_control_a, {
+         .primitive_id = PRIMITIVE_ID_FIRST,
+         .instance_id = INSTANCE_ID_FIRST,
+         .split_mode = SPLIT_MODE_NORMAL_BEGIN_NORMAL_END,
+         .instance_iterate_enable = true,
+      });
 
       mme_mthd(b, NVC597_SET_DRAW_CONTROL_A);
-      mme_emit(b, draw_control_a);
+      mme_emit(b, mme_imm(draw_control_a));
       mme_emit(b, instance_count);
 
       mme_mthd(b, NVC597_DRAW_VERTEX_ARRAY_BEGIN_END_A);
       mme_emit(b, first_vertex);
       mme_emit(b, vertex_count);
-
-      mme_free_reg(b, draw_control_a);
    } else {
-      struct mme_value begin = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+      uint32_t begin_initial_value;
+      V_NVC197_BEGIN(begin_initial_value, {
+         .primitive_id = PRIMITIVE_ID_FIRST,
+         .instance_id = INSTANCE_ID_FIRST,
+         .split_mode = SPLIT_MODE_NORMAL_BEGIN_NORMAL_END,
+         .instance_iterate_enable = b->devinfo->cls_eng3d >= PASCAL_B,
+      });
+      struct mme_value begin = mme_mov(b, mme_imm(begin_initial_value));
 
       if (b->devinfo->cls_eng3d < PASCAL_B) {
          mme_start_loop(b, instance_count);
       } else {
          mme_mthd(b, NVC197_SET_INSTANCE_COUNT);
          mme_emit(b, instance_count);
-         mme_set_field_enum(b, begin, NVC197_BEGIN_INSTANCE_ITERATE_ENABLE, TRUE);
       }
 
       mme_mthd(b, NV9097_BEGIN);
@@ -4679,25 +4683,34 @@ nvk_mme_build_draw_indexed_loop(struct mme_builder *b,
 {
 
    if (b->devinfo->cls_eng3d >= TURING_A) {
-      struct mme_value draw_control_a = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
-      mme_set_field_enum(b, draw_control_a, NVC597_SET_DRAW_CONTROL_A_INSTANCE_ITERATE_ENABLE, TRUE);
+      uint32_t draw_control_a;
+      V_NVC597_SET_DRAW_CONTROL_A(draw_control_a, {
+         .primitive_id = PRIMITIVE_ID_FIRST,
+         .instance_id = INSTANCE_ID_FIRST,
+         .split_mode = SPLIT_MODE_NORMAL_BEGIN_NORMAL_END,
+         .instance_iterate_enable = true,
+      });
 
       mme_mthd(b, NVC597_SET_DRAW_CONTROL_A);
-      mme_emit(b, draw_control_a);
+      mme_emit(b, mme_imm(draw_control_a));
       mme_emit(b, instance_count);
       mme_emit(b, first_index);
       mme_emit(b, index_count);
-
-      mme_free_reg(b, draw_control_a);
    } else {
-      struct mme_value begin = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+      uint32_t begin_initial_value;
+      V_NVC197_BEGIN(begin_initial_value, {
+         .primitive_id = PRIMITIVE_ID_FIRST,
+         .instance_id = INSTANCE_ID_FIRST,
+         .split_mode = SPLIT_MODE_NORMAL_BEGIN_NORMAL_END,
+         .instance_iterate_enable = b->devinfo->cls_eng3d >= PASCAL_B,
+      });
+      struct mme_value begin = mme_mov(b, mme_imm(begin_initial_value));
 
       if (b->devinfo->cls_eng3d < PASCAL_B) {
          mme_start_loop(b, instance_count);
       } else {
          mme_mthd(b, NVC197_SET_INSTANCE_COUNT);
          mme_emit(b, instance_count);
-         mme_set_field_enum(b, begin, NVC197_BEGIN_INSTANCE_ITERATE_ENABLE, TRUE);
       }
 
       mme_mthd(b, NV9097_BEGIN);
@@ -5178,7 +5191,13 @@ nvk_mme_xfb_draw_indirect_loop(struct mme_builder *b,
                                struct mme_value instance_count,
                                struct mme_value counter)
 {
-   struct mme_value begin = nvk_mme_load_scratch(b, DRAW_TOPOLOGY);
+   uint32_t begin_initial_value;
+   V_NVC197_BEGIN(begin_initial_value, {
+      .primitive_id = PRIMITIVE_ID_FIRST,
+      .instance_id = INSTANCE_ID_FIRST,
+      .split_mode = SPLIT_MODE_NORMAL_BEGIN_NORMAL_END,
+   });
+   struct mme_value begin = mme_mov(b, mme_imm(begin_initial_value));
 
    /* NVC197_BEGIN_INSTANCE_ITERATE_ENABLE seems to be incompatible with xfb.
     * Always use an mme loop instead.

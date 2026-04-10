@@ -32,8 +32,9 @@ static void pan_stats_verbose(FILE *f, const char *prefix, bi_context *ctx,
 static bi_block *emit_cf_list(bi_context *ctx, struct exec_list *list);
 
 static bi_index
-bi_preload(bi_builder *b, unsigned reg)
+bi_preload(bi_builder *b, enum bi_preload val)
 {
+   unsigned reg = bi_preload_reg(val, b->shader->arch);
    if (bi_is_null(b->shader->preloaded[reg])) {
       /* Insert at the beginning of the shader */
       bi_builder b_ = *b;
@@ -50,7 +51,7 @@ static bi_index
 bi_coverage(bi_builder *b)
 {
    if (bi_is_null(b->shader->coverage))
-      b->shader->coverage = bi_preload(b, 60);
+      b->shader->coverage = bi_preload(b, BI_PRELOAD_CUMULATIVE_COVERAGE);
 
    return b->shader->coverage;
 }
@@ -63,20 +64,20 @@ bi_coverage(bi_builder *b)
 static inline bi_index
 bi_vertex_id(bi_builder *b)
 {
-   return bi_preload(b, (b->shader->arch >= 9) ? 60 : 61);
+   return bi_preload(b, BI_PRELOAD_VERTEX_ID);
 }
 
 static inline bi_index
 bi_instance_id(bi_builder *b)
 {
-   return bi_preload(b, (b->shader->arch >= 9) ? 61 : 62);
+   return bi_preload(b, BI_PRELOAD_INSTANCE_ID);
 }
 
 static inline bi_index
 bi_draw_id(bi_builder *b)
 {
    assert(b->shader->arch >= 9);
-   return bi_preload(b, 62);
+   return bi_preload(b, BI_PRELOAD_DRAW_ID);
 }
 
 static void
@@ -258,8 +259,9 @@ bi_varying_src0_for_barycentric(bi_builder *b, nir_intrinsic_instr *intr)
 {
    switch (intr->intrinsic) {
    case nir_intrinsic_load_barycentric_centroid:
+      return bi_preload(b, BI_PRELOAD_CENTROID_ID);
    case nir_intrinsic_load_barycentric_sample:
-      return bi_preload(b, 61);
+      return bi_preload(b, BI_PRELOAD_SAMPLE_ID);
 
    /* Need to put the sample ID in the top 16-bits */
    case nir_intrinsic_load_barycentric_at_sample:
@@ -328,7 +330,8 @@ bi_varying_src0_for_barycentric(bi_builder *b, nir_intrinsic_instr *intr)
 
    case nir_intrinsic_load_barycentric_pixel:
    default:
-      return b->shader->arch >= 9 ? bi_preload(b, 61) : bi_dontcare(b);
+      return b->shader->arch >= 9 ? bi_preload(b, BI_PRELOAD_CENTROID_ID)
+                                  : bi_dontcare(b);
    }
 }
 
@@ -550,7 +553,8 @@ bi_emit_lea_attr(bi_builder *b, nir_intrinsic_instr *intr)
       unsigned snap4 = 0x5E;
       uint32_t format = identity | (snap4 << 12) | (regfmt << 24);
       bi_collect_v3i32_to(b, bi_def_index(&intr->def),
-                          bi_preload(b, 58), bi_preload(b, 59),
+                          bi_preload(b, BI_PRELOAD_POS_RESULT_PTR_LO),
+                          bi_preload(b, BI_PRELOAD_POS_RESULT_PTR_HI),
                           bi_imm_u32(format));
       return;
    }
@@ -758,80 +762,6 @@ bi_emit_load_var_buf(bi_builder *b, nir_intrinsic_instr *intr)
    bi_split_def(b, &intr->def);
 }
 
-static bi_index
-bi_make_vec8_helper(bi_builder *b, bi_index *src, unsigned *channel,
-                    unsigned count)
-{
-   assert(1 <= count && count <= 4);
-
-   bi_index bytes[4] = {bi_imm_u8(0), bi_imm_u8(0), bi_imm_u8(0), bi_imm_u8(0)};
-
-   for (unsigned i = 0; i < count; ++i) {
-      unsigned chan = channel ? channel[i] : 0;
-      unsigned lane = chan & 3;
-      bi_index raw_data = bi_extract(b, src[i], chan >> 2);
-
-      /* On Bifrost, MKVEC.v4i8 cannot select b1 or b3 */
-      if (b->shader->arch < 9 && lane != 0 && lane != 2) {
-         bytes[i] = bi_byte(bi_rshift_or(b, 32, raw_data, bi_zero(),
-                                         bi_imm_u8(lane * 8), false),
-                            0);
-      } else {
-         bytes[i] = bi_byte(raw_data, lane);
-      }
-
-      assert(b->shader->arch >= 9 || bytes[i].swizzle == BI_SWIZZLE_B0 ||
-             bytes[i].swizzle == BI_SWIZZLE_B2);
-   }
-
-   if (b->shader->arch >= 9) {
-      bi_index vec = bi_zero();
-
-      if (count >= 3) {
-         if ((count == 3 && bytes[2].swizzle == BI_SWIZZLE_B0) ||
-             (count == 4 && bi_is_word_equiv(bytes[2], bytes[3]) &&
-              bytes[2].swizzle == BI_SWIZZLE_B0 &&
-              bytes[3].swizzle == BI_SWIZZLE_B1)) {
-            vec = bytes[2];
-            vec.swizzle = BI_SWIZZLE_B0123;
-         } else {
-            vec = bi_mkvec_v2i8(b, bytes[2], bytes[3], vec);
-         }
-      }
-
-      return bi_mkvec_v2i8(b, bytes[0], bytes[1], vec);
-   } else {
-      return bi_mkvec_v4i8(b, bytes[0], bytes[1], bytes[2], bytes[3]);
-   }
-}
-
-static bi_index
-bi_make_vec16_helper(bi_builder *b, bi_index *src, unsigned *channel,
-                     unsigned count)
-{
-   unsigned chan0 = channel ? channel[0] : 0;
-   bi_index w0 = bi_extract(b, src[0], chan0 >> 1);
-   bi_index h0 = bi_half(w0, chan0 & 1);
-
-   /* Zero extend */
-   if (count == 1)
-      return bi_mkvec_v2i16(b, h0, bi_imm_u16(0));
-
-   /* Else, create a vector */
-   assert(count == 2);
-
-   unsigned chan1 = channel ? channel[1] : 0;
-   bi_index w1 = bi_extract(b, src[1], chan1 >> 1);
-   bi_index h1 = bi_half(w1, chan1 & 1);
-
-   if (bi_is_word_equiv(w0, w1) && (chan0 & 1) == 0 && ((chan1 & 1) == 1))
-      return bi_mov_i32(b, w0);
-   else if (bi_is_word_equiv(w0, w1))
-      return bi_swz_v2i16(b, bi_swz_16(w0, chan0 & 1, chan1 & 1));
-   else
-      return bi_mkvec_v2i16(b, h0, h1);
-}
-
 bi_instr *
 bi_make_vec_to(bi_builder *b, bi_index dst, bi_index *src, unsigned *channel,
                unsigned count, unsigned bitsize)
@@ -839,6 +769,7 @@ bi_make_vec_to(bi_builder *b, bi_index dst, bi_index *src, unsigned *channel,
    assert(DIV_ROUND_UP(count * bitsize, 32) <= BI_MAX_SRCS &&
           "unnecessarily large vector should have been lowered");
 
+   assert(count <= BI_MAX_VEC);
    bi_index srcs[BI_MAX_VEC];
 
    if (bitsize == 64) {
@@ -848,25 +779,43 @@ bi_make_vec_to(bi_builder *b, bi_index dst, bi_index *src, unsigned *channel,
          srcs[i * 2 + 1] = bi_extract(b, src[i], c * 2 + 1);
       }
       return bi_emit_collect_to(b, dst, srcs, count * 2);
+   } else if (bitsize == 32) {
+      for (unsigned i = 0; i < count; i++) {
+         const unsigned c = channel ? channel[i] : 0;
+         srcs[i] = bi_extract(b, src[i], c);
+      }
+      return bi_emit_collect_to(b, dst, srcs, count);
+   } else if (bitsize == 16) {
+      for (unsigned i = 0; i < count; i++) {
+         const unsigned c = channel ? channel[i] : 0;
+         srcs[i] = bi_half(bi_extract(b, src[i], c >> 1), c & 1);
+      }
+
+      for (unsigned i = count; i < align(count, 2); i++)
+         srcs[i] = bi_imm_u16(0);
+
+      for (unsigned i = 0; i < count; i += 2)
+         srcs[i / 2] =  bi_mkvec_v2i16(b, srcs[i], srcs[i + 1]);
+
+      return bi_emit_collect_to(b, dst, srcs, DIV_ROUND_UP(count, 2));
+   } else if (bitsize == 8) {
+      for (unsigned i = 0; i < count; i++) {
+         const unsigned c = channel ? channel[i] : 0;
+         srcs[i] = bi_byte(bi_extract(b, src[i], c >> 2), c & 3);
+      }
+
+      for (unsigned i = count; i < align(count, 4); i++)
+         srcs[i] = bi_imm_u8(0);
+
+      for (unsigned i = 0; i < count; i += 4) {
+         srcs[i / 4] =  bi_mkvec_v4i8(b, srcs[i], srcs[i + 1],
+                                      srcs[i + 2], srcs[i + 3]);
+      }
+
+      return bi_emit_collect_to(b, dst, srcs, DIV_ROUND_UP(count, 4));
+   } else {
+      UNREACHABLE("Unsupported bit size");
    }
-
-   assert(bitsize == 8 || bitsize == 16 || bitsize == 32);
-   unsigned shift = (bitsize == 32) ? 0 : (bitsize == 16) ? 1 : 2;
-   unsigned chan_per_word = 1 << shift;
-
-   for (unsigned i = 0; i < count; i += chan_per_word) {
-      unsigned rem = MIN2(count - i, chan_per_word);
-      unsigned *channel_offset = channel ? (channel + i) : NULL;
-
-      if (bitsize == 32)
-         srcs[i] = bi_extract(b, src[i], channel_offset ? *channel_offset : 0);
-      else if (bitsize == 16)
-         srcs[i >> 1] = bi_make_vec16_helper(b, src + i, channel_offset, rem);
-      else
-         srcs[i >> 2] = bi_make_vec8_helper(b, src + i, channel_offset, rem);
-   }
-
-   return bi_emit_collect_to(b, dst, srcs, DIV_ROUND_UP(count, chan_per_word));
 }
 
 static inline bi_instr *
@@ -893,8 +842,8 @@ bi_load_sample_id_to(bi_builder *b, bi_index dst)
     * seem to read garbage (despite being architecturally defined
     * as zero), so use a 5-bit mask instead of 8-bits */
 
-   bi_rshift_and_i32_to(b, dst, bi_preload(b, 61), bi_imm_u32(0x1f),
-                        bi_imm_u8(16), false);
+   bi_rshift_and_i32_to(b, dst, bi_preload(b, BI_PRELOAD_SAMPLE_ID),
+                        bi_imm_u32(0x1f), bi_imm_u8(16), false);
 }
 
 static bi_index
@@ -927,12 +876,24 @@ static void
 bi_emit_load_blend_input(bi_builder *b, nir_intrinsic_instr *instr)
 {
    nir_io_semantics sem = nir_intrinsic_io_semantics(instr);
-   unsigned base = sem.dual_source_blend_index * 4;
    unsigned size = nir_alu_type_get_type_size(nir_intrinsic_dest_type(instr));
    assert(size == 16 || size == 32);
 
-   bi_index srcs[] = {bi_preload(b, base + 0), bi_preload(b, base + 1),
-                      bi_preload(b, base + 2), bi_preload(b, base + 3)};
+   bi_index srcs[4];
+   switch (sem.dual_source_blend_index) {
+   case 0:
+      srcs[0] = bi_preload(b, BI_PRELOAD_BLEND_SRC0_C0);
+      srcs[1] = bi_preload(b, BI_PRELOAD_BLEND_SRC0_C1);
+      srcs[2] = bi_preload(b, BI_PRELOAD_BLEND_SRC0_C2);
+      srcs[3] = bi_preload(b, BI_PRELOAD_BLEND_SRC0_C3);
+      break;
+   case 1:
+      srcs[0] = bi_preload(b, BI_PRELOAD_BLEND_SRC1_C0);
+      srcs[1] = bi_preload(b, BI_PRELOAD_BLEND_SRC1_C1);
+      srcs[2] = bi_preload(b, BI_PRELOAD_BLEND_SRC1_C2);
+      srcs[3] = bi_preload(b, BI_PRELOAD_BLEND_SRC1_C3);
+      break;
+   }
 
    bi_emit_collect_to(b, bi_def_index(&instr->def), srcs, size == 32 ? 4 : 2);
 }
@@ -1814,7 +1775,7 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
 
    case nir_intrinsic_load_cumulative_coverage_pan:
-      bi_mov_i32_to(b, dst, bi_preload(b, 60));
+      bi_mov_i32_to(b, dst, bi_preload(b, BI_PRELOAD_CUMULATIVE_COVERAGE));
       break;
 
    case nir_intrinsic_load_blend_descriptor_pan: {
@@ -1896,16 +1857,15 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
    }
 
    case nir_intrinsic_blend_return_pan:
-      /* Jump back to the fragment shader, return address is stored
-       * in r48 (see above). On Valhall, only jump if the address is
-       * nonzero. The check is free there and it implements the "jump
-       * to 0 terminates the blend shader" that's automatic on
-       * Bifrost.
+      /* Jump back to the fragment shader. On Valhall, only jump if the address
+       * is nonzero. The check is free there and it implements the "jump to 0
+       * terminates the blend shader" that's automatic on Bifrost.
        */
       if (b->shader->arch >= 9)
-         bi_branchzi(b, bi_preload(b, 48), bi_preload(b, 48), BI_CMPF_NE);
+         bi_branchzi(b, bi_preload(b, BI_PRELOAD_BLEND_LINK),
+                     bi_preload(b, BI_PRELOAD_BLEND_LINK), BI_CMPF_NE);
       else
-         bi_jump(b, bi_preload(b, 48));
+         bi_jump(b, bi_preload(b, BI_PRELOAD_BLEND_LINK));
       break;
 
    case nir_intrinsic_load_ubo:
@@ -2063,7 +2023,7 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
 
    case nir_intrinsic_load_pixel_coord:
       /* Vectorized load of the preloaded i16vec2 */
-      bi_mov_i32_to(b, dst, bi_preload(b, 59));
+      bi_mov_i32_to(b, dst, bi_preload(b, BI_PRELOAD_POSITION_XY));
       break;
 
    case nir_intrinsic_load_texel_buf_conv_pan:
@@ -2088,7 +2048,7 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
 
    case nir_intrinsic_load_idvs_output_buf_index_pan:
-      bi_mov_i32_to(b, dst, bi_preload(b, 59));
+      bi_mov_i32_to(b, dst, bi_preload(b, BI_PRELOAD_INTERNAL_ID));
       break;
 
    case nir_intrinsic_lea_attr_pan:
@@ -2122,8 +2082,9 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
 
    case nir_intrinsic_load_sample_mask_in:
-      /* r61[0:15] contains the coverage bitmap */
-      bi_u16_to_u32_to(b, dst, bi_half(bi_preload(b, 61), false));
+      /* [0:15] contains the coverage bitmap */
+      bi_u16_to_u32_to(
+         b, dst, bi_half(bi_preload(b, BI_PRELOAD_RASTERIZER_COVERAGE), false));
       break;
 
    case nir_intrinsic_load_sample_mask:
@@ -2135,12 +2096,12 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
       break;
 
    case nir_intrinsic_load_primitive_id:
-      bi_mov_i32_to(b, dst, bi_preload(b, 57));
+      bi_mov_i32_to(b, dst, bi_preload(b, BI_PRELOAD_PRIMITIVE_ID));
       break;
 
    case nir_intrinsic_load_front_face: {
-      /* (r58 & 1) == 0 means primitive is front facing */
-      bi_index primitive_facing = bi_preload(b, 58);
+      /* (primitive_flags & 1) == 0 means primitive is front facing */
+      bi_index primitive_facing = bi_preload(b, BI_PRELOAD_PRIMITIVE_FLAGS);
 
       /* Starting with v11, there is more fields defined in the primitive flags */
       if (b->shader->arch >= 11)
@@ -2205,20 +2166,23 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
    }
 
    case nir_intrinsic_load_local_invocation_id:
-      bi_collect_v3i32_to(b, dst,
-                          bi_u16_to_u32(b, bi_half(bi_preload(b, 55), 0)),
-                          bi_u16_to_u32(b, bi_half(bi_preload(b, 55), 1)),
-                          bi_u16_to_u32(b, bi_half(bi_preload(b, 56), 0)));
+      bi_collect_v3i32_to(
+         b, dst,
+         bi_u16_to_u32(b, bi_half(bi_preload(b, BI_PRELOAD_LOCAL_ID_0), 0)),
+         bi_u16_to_u32(b, bi_half(bi_preload(b, BI_PRELOAD_LOCAL_ID_1), 1)),
+         bi_u16_to_u32(b, bi_half(bi_preload(b, BI_PRELOAD_LOCAL_ID_2), 0)));
       break;
 
    case nir_intrinsic_load_workgroup_id:
-      bi_collect_v3i32_to(b, dst, bi_preload(b, 57), bi_preload(b, 58),
-                          bi_preload(b, 59));
+      bi_collect_v3i32_to(b, dst, bi_preload(b, BI_PRELOAD_WORKGROUP_ID_0),
+                          bi_preload(b, BI_PRELOAD_WORKGROUP_ID_1),
+                          bi_preload(b, BI_PRELOAD_WORKGROUP_ID_2));
       break;
 
    case nir_intrinsic_load_global_invocation_id:
-      bi_collect_v3i32_to(b, dst, bi_preload(b, 60), bi_preload(b, 61),
-                          bi_preload(b, 62));
+      bi_collect_v3i32_to(b, dst, bi_preload(b, BI_PRELOAD_GLOBAL_ID_0),
+                          bi_preload(b, BI_PRELOAD_GLOBAL_ID_1),
+                          bi_preload(b, BI_PRELOAD_GLOBAL_ID_2));
       break;
 
    case nir_intrinsic_shader_clock:
@@ -2245,7 +2209,9 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
    case nir_intrinsic_load_view_index:
    case nir_intrinsic_load_layer_id:
       assert(b->shader->arch >= 9);
-      bi_mov_i32_to(b, dst, bi_u8_to_u32(b, bi_byte(bi_preload(b, 62), 0)));
+      bi_mov_i32_to(
+         b, dst,
+         bi_u8_to_u32(b, bi_byte(bi_preload(b, BI_PRELOAD_FRAME_ARG), 0)));
       break;
 
    case nir_intrinsic_load_ssbo_address:
@@ -2330,50 +2296,6 @@ bi_emit_load_const(bi_builder *b, nir_load_const_instr *instr)
    }
 }
 
-
-static bool
-bi_byte_swizzle_from_nir_swizzle(unsigned *channels, unsigned comps,
-                                 enum bi_swizzle *out_swizzle)
-{
-   assert(comps == 4 || comps == 2);
-   unsigned index = 0;
-   for (unsigned i = 0; i < 4; i++) {
-      index = (index << 2) + channels[i * comps / 4];
-   }
-   switch (index) {
-#define B(b0, b1, b2, b3)                                                      \
-   case ((b0) << 6) | ((b1) << 4) | ((b2) << 2) | (b3):                        \
-      *out_swizzle = BI_SWIZZLE_B##b0##b1##b2##b3;                             \
-      return true;
-      B(0, 1, 0, 1);
-      B(0, 1, 2, 3);
-      B(2, 3, 0, 1);
-      B(2, 3, 2, 3);
-      B(0, 0, 0, 0);
-      B(1, 1, 1, 1);
-      B(2, 2, 2, 2);
-      B(3, 3, 3, 3);
-      B(0, 0, 1, 1);
-      B(2, 2, 3, 3);
-      B(1, 0, 3, 2);
-      B(3, 2, 1, 0);
-      B(0, 0, 2, 2);
-      B(1, 1, 0, 0);
-      B(2, 2, 0, 0);
-      B(3, 3, 0, 0);
-      B(2, 2, 1, 1);
-      B(3, 3, 1, 1);
-      B(1, 1, 2, 2);
-      B(3, 3, 2, 2);
-      B(0, 0, 3, 3);
-      B(1, 1, 3, 3);
-      B(1, 1, 2, 3);
-#undef B
-   default:
-      return false;
-   }
-}
-
 static bi_index
 bi_alu_src_index(bi_builder *b, nir_alu_src src, unsigned comps)
 {
@@ -2406,32 +2328,49 @@ bi_alu_src_index(bi_builder *b, nir_alu_src src, unsigned comps)
    } else if (bitsize == 8 && comps == 1) {
       idx.swizzle = BI_SWIZZLE_B0000 + (src.swizzle[0] & 3);
    } else if (bitsize == 8) {
-      if (comps == 2 || comps == 4) {
-         unsigned c[4] = {0};
-         for (unsigned i = 0; i < comps; ++i)
+      bool has_swizzle = false;
+      enum bi_swizzle swizzle = BI_SWIZZLE_H01;
+      if (comps == 3) {
+         unsigned c[4];
+         for (unsigned i = 0; i < 3; ++i)
             c[i] = src.swizzle[i] & 3;
 
-         enum bi_swizzle swizzle;
-         if (bi_byte_swizzle_from_nir_swizzle(c, comps, &swizzle)) {
-            idx.swizzle = swizzle;
-            return idx;
+         /* Try to find a swizzle that starts with the given v3i8 swizzle */
+         for (unsigned i = 0; i < 4; i++) {
+            c[3] = i;
+            if (bi_swizzle_from_byte_channels(c, &swizzle)) {
+               has_swizzle = true;
+               break;
+            }
          }
+      } else {
+         /* For 1 and 2-component, repeat the swizzle to increase the chances
+          * that it's a valid bi_swizzle.
+          */
+         unsigned c[4];
+         for (unsigned i = 0; i < 4; ++i)
+            c[i] = src.swizzle[i % comps] & 3;
+         has_swizzle = bi_swizzle_from_byte_channels(c, &swizzle);
       }
 
-      /* XXX: Use optimized swizzle when posisble */
-      bi_index unoffset_srcs[NIR_MAX_VEC_COMPONENTS] = {bi_null()};
-      unsigned channels[NIR_MAX_VEC_COMPONENTS] = {0};
-
-      for (unsigned i = 0; i < comps; ++i) {
-         unoffset_srcs[i] = bi_src_index(&src.src);
-         channels[i] = src.swizzle[i];
+      if (has_swizzle) {
+         idx.swizzle = swizzle;
+         return idx;
       }
 
-      bi_index temp = bi_temp(b->shader);
-      bi_make_vec_to(b, temp, unoffset_srcs, channels, comps, bitsize);
+      bi_index v4_srcs[4];
+      for (unsigned i = 0; i < comps; i++) {
+         v4_srcs[i] = idx;
+         v4_srcs[i].swizzle = BI_SWIZZLE_B0 + src.swizzle[i];
+      }
+      for (unsigned i = comps; i < 4; i++)
+         v4_srcs[i] = bi_imm_u8(0);
+
+      bi_index temp = bi_mkvec_v4i8(b, v4_srcs[0], v4_srcs[1],
+                                    v4_srcs[2], v4_srcs[3]);
 
       static const enum bi_swizzle swizzle_lut[] = {
-         BI_SWIZZLE_B0000, BI_SWIZZLE_B0011, BI_SWIZZLE_B0123, BI_SWIZZLE_B0123
+         BI_SWIZZLE_B0000, BI_SWIZZLE_B0101, BI_SWIZZLE_B0123, BI_SWIZZLE_B0123
       };
       assert(comps - 1 < ARRAY_SIZE(swizzle_lut));
 
@@ -2441,6 +2380,17 @@ bi_alu_src_index(bi_builder *b, nir_alu_src src, unsigned comps)
       return temp;
    }
 
+   return idx;
+}
+
+static bi_index
+bi_swiz_b01(bi_index idx)
+{
+   enum bi_swizzle swizzle;
+   bool valid = bi_try_compose_swizzles(&swizzle, BI_SWIZZLE_B01, idx.swizzle);
+   assert(valid);
+
+   idx.swizzle = swizzle;
    return idx;
 }
 
@@ -2961,12 +2911,6 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
    bi_index s2 =
       srcs > 2 ? bi_alu_src_index(b, instr->src[2], comps) : bi_null();
 
-   bool need_post_swizzle = sz == 8 && comps == 2;
-   bi_index post_swizzle_dst = dst;
-   if (need_post_swizzle) {
-      dst = bi_temp(b->shader);
-   }
-
    switch (instr->op) {
    case nir_op_ffma:
       bi_fma_to(b, sz, dst, s0, s1, s2);
@@ -3244,7 +3188,7 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       if (src_sz == 16)
          bi_v2u16_to_v2f16_to(b, dst, s0);
       else if (src_sz == 8)
-         bi_v2u8_to_v2f16_to(b, dst, s0);
+         bi_v2u8_to_v2f16_to(b, dst, bi_swiz_b01(s0));
       break;
 
    case nir_op_u2f32:
@@ -3270,7 +3214,7 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       if (src_sz == 16)
          bi_v2s16_to_v2f16_to(b, dst, s0);
       else if (src_sz == 8)
-         bi_v2s8_to_v2f16_to(b, dst, s0);
+         bi_v2s8_to_v2f16_to(b, dst, bi_swiz_b01(s0));
       break;
 
    case nir_op_i2f32:
@@ -3312,7 +3256,7 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       assert(src_sz == 8 || src_sz == 32);
 
       if (src_sz == 8)
-         bi_v2s8_to_v2s16_to(b, dst, s0);
+         bi_v2s8_to_v2s16_to(b, dst, bi_swiz_b01(s0));
       else
          bi_mov_i32_to(b, dst, s0);
       break;
@@ -3321,7 +3265,7 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       assert(src_sz == 8 || src_sz == 32);
 
       if (src_sz == 8)
-         bi_v2u8_to_v2u16_to(b, dst, s0);
+         bi_v2u8_to_v2u16_to(b, dst, bi_swiz_b01(s0));
       else
          bi_mov_i32_to(b, dst, s0);
       break;
@@ -3535,12 +3479,6 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
    default:
       fprintf(stderr, "Unhandled ALU op %s\n", nir_op_infos[instr->op].name);
       UNREACHABLE("Unknown ALU op");
-   }
-
-   if (need_post_swizzle) {
-      bi_index srcs[2] = {dst, dst};
-      unsigned channels[2] = {0, 2};
-      bi_make_vec_to(b, post_swizzle_dst, srcs, channels, 2, 8);
    }
 }
 
@@ -3762,7 +3700,8 @@ bi_emit_valhall_offsets(bi_builder *b, nir_tex_instr *instr)
    /* Component 2: multisample index */
    if (ms_idx >= 0 && (!nir_src_is_const(instr->src[ms_idx].src) ||
                        nir_src_as_uint(instr->src[ms_idx].src) != 0)) {
-      dest = bi_mkvec_v2i16(b, dest, bi_src_index(&instr->src[ms_idx].src));
+      bi_index ms = bi_src_index(&instr->src[ms_idx].src);
+      dest = bi_mkvec_v2i16(b, bi_half(dest, false), bi_half(ms, false));
    }
 
    /* Component 3: 8-bit LOD */
@@ -5025,7 +4964,7 @@ va_count_stats(bi_context *ctx, unsigned nr_ins, unsigned size,
 
    if (model == NULL) {
       /* Get G57 by default: */
-      model = pan_get_model(((uint32_t)0x9001) << 16, 0);
+      model = pan_get_model(((uint64_t)0x9001) << 16, 0);
       assert(model);
    }
 
@@ -5392,6 +5331,7 @@ bi_compile_variant_nir(nir_shader *nir,
    }
 
    bi_lower_opt_instructions(ctx);
+   bi_lower_mkvec_swz(ctx);
 
    if (ctx->arch >= 9) {
       va_lower_isel(ctx);
