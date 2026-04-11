@@ -32,7 +32,7 @@ jobs:
           apt install -y git ccache build-essential devscripts fakeroot quilt git-buildpackage pristine-tar libxfixes-dev libarchive-dev
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /root/.ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -65,7 +65,7 @@ jobs:
           echo "Mesa build completed successfully!"
 
       - name: Save ccache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         if: always()
         with:
           path: /root/.ccache
@@ -84,7 +84,7 @@ jobs:
           cat sha256sums.txt && echo
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mesa-for-android-container_${{ github.event.inputs.tag }}
           path: |
@@ -100,7 +100,7 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
 
