@@ -35,7 +35,8 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 |     Fedora 43      |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
 |     Arch Linux     |               [26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404)               |              [turnip-26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404)              |
 ### Direct Extraction
-ℹ️ **Note**: The `.tar.gz` installation packages in Releases can only overwrite the existing Mesa drivers. To uninstall, you must manually delete the extracted files. These packages are intended for testing purposes only.  
+> [!NOTE]
+> The `.tar.gz` installation packages in Releases can only overwrite the existing Mesa drivers. To uninstall, you must manually delete the extracted files. These packages are intended for testing purposes only.  
 
 1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download the `.tar.gz` installation packages. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution. For **Adreno 7xx/8xx**, it is generally recommended to first extract the standard installation package (which includes Freedreno), followed by the unpatched Turnip installation package. The latest releases for both are as follows:  
 
@@ -86,7 +87,7 @@ There are five workflows in this repository, briefly introduced below:
 
 |         File         |          Name           |                             Applicable Branches                             |          Build Target           |
 | :----------------: | :-------------------: | :----------------------------------------------------------: | :---------------------: |
-|    `build.yml`     |         Build         |                        `adreno-main`, etc.                        |        Latest standard installation packages         |
+|    `build.yml`     |         Build         |                        `merge/adreno-main`, etc.                        |        Latest standard installation packages         |
 | `build-turnip.yml` |     Build Turnip      |                        `turnip-main`, etc.                        |   Latest unpatched Turnip drivers    |
 | `build-debian.yml` | Build Debian Packages |        `adreno-debian-trixie`, `turnip-debian-trixie`, etc.        | Debian installation packages installable via `apt` |
 | `build-ubuntu.yml` | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`, `turnip-ubuntu-noble-updates`, etc. | Ubuntu installation packages installable via `apt` |
@@ -116,10 +117,10 @@ sudo apt build-dep mesa
 ```bash
 git clone https://github.com/lfdevs/mesa-for-android-container.git
 ```
-4.  Switch to the branch where the relevant patches have been applied, such as `adreno-main`.  
+4.  Switch to the tag where the relevant patches have been applied, such as `mesa-26.1.0-devel-20260404` (Freedreno KGSL) or `turnip-26.1.0-devel-20260404` (Turnip).  
 ```bash
 cd mesa-for-android-container
-git checkout adreno-main
+git checkout mesa-26.1.0-devel-20260404
 ```
 5.  Initialize the build directory. You can refer to the [meson.options](https://github.com/lfdevs/mesa-for-android-container/blob/main/meson.options) file to see all available build options.  
 ```bash

@@ -35,7 +35,8 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
 |    Arch Linux    |               [26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404)               |              [turnip-26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404)              |
 ### 直接解壓
-ℹ️**注意**：Releases 中 `.tar.gz` 格式的安裝包僅能覆蓋原有的 Mesa 驅動程式，卸載時需手動刪除解壓出來的檔案，僅供測試使用。  
+> [!NOTE]
+> Releases 中 `.tar.gz` 格式的安裝包僅能覆蓋原有的 Mesa 驅動程式，卸載時需手動刪除解壓出來的檔案，僅供測試使用。  
 
 1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下載 `.tar.gz` 格式的安裝包。請注意檔案名稱中的 Linux 發行版後綴（例如 `debian_trixie_arm64`），僅可安裝與發行版相符的安裝包。對於 **Adreno 7xx/8xx**，一般先解壓標準安裝包（包含 Freedreno），再解壓未打補丁的 Turnip 安裝包。兩者最新的 Release 如下：  
 
@@ -86,7 +87,7 @@ TU_DEBUG=noconform
 
 |         檔案         |          名稱           |                             適用分支                             |           建置目標            |
 | :----------------: | :-------------------: | :----------------------------------------------------------: | :-----------------------: |
-|    `build.yml`     |         Build         |                        `adreno-main`等                        |         最新的標準安裝包          |
+|    `build.yml`     |         Build         |                        `merge/adreno-main`等                        |         最新的標準安裝包          |
 | `build-turnip.yml` |     Build Turnip      |                        `turnip-main`等                        |    最新的未打補丁的 Turnip 驅動     |
 | `build-debian.yml` | Build Debian Packages |        `adreno-debian-trixie`、`turnip-debian-trixie`等        | 能夠使用 `apt` 安裝的 Debian 安裝包 |
 | `build-ubuntu.yml` | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`、`turnip-ubuntu-noble-updates`等 | 能夠使用 `apt` 安裝的 Ubuntu 安裝包 |
@@ -116,10 +117,10 @@ sudo apt build-dep mesa
 ```bash
 git clone https://github.com/lfdevs/mesa-for-android-container.git
 ```
-4.  切換到已應用相關修補程式的分支，如 `adreno-main`。  
+4.  切換到已應用相關修補程式的 TAG，如`mesa-26.1.0-devel-20260404`（Freedreno KGSL）或`turnip-26.1.0-devel-20260404`（Turnip）。  
 ```bash
 cd mesa-for-android-container
-git checkout adreno-main
+git checkout mesa-26.1.0-devel-20260404
 ```
 5.  初始化建置目錄。可以參照 [meson.options](https://github.com/lfdevs/mesa-for-android-container/blob/main/meson.options) 檔案來查看所有的建置選項。  
 ```bash
