@@ -101,12 +101,20 @@ TU_DEBUG=noconform
 
 **PS:** 由于 Arch Linux “滚动更新”的特性，能够使用`pacman`安装的 Arch Linux 安装包直接由`build.yml`、`build-turnip.yml`构建。  
 #### 输入参数
-所有工作流手动触发时均有两个输入参数，简单介绍如下：  
+除`build-turnip-weekly.yml`外的工作流手动触发时均有两个输入参数，简单介绍如下：  
 
 |       参数        |         名称          |              说明               |
 | :-------------: | :-----------------: | :---------------------------: |
 |      `tag`      |    Branch or tag    |       构建目标，支持分支或该分支下的标签       |
 | `draft_release` | Draft a new release | 自动生成草稿 Release（适用于构建目标为标签的情况） |
+
+工作流`build-turnip-weekly.yml`手动触发时有三个可选的输入参数，简单介绍如下：  
+
+|          参数           |          名称           |                    说明                     |
+| :-------------------: | :-------------------: | :---------------------------------------: |
+|      `mesa_hash`      |   Mesa commit hash    |           指定需要检出的 Mesa 上游提交哈希值            |
+| `skip_update_release` |  Skip update-release  |              不进行 Release 的更新              |
+| `skip_apply_patches`  | Skip applying patches | 不对源码应用`ci`分支`patches/turnip-weekly`目录下的补丁 |
 
 ### 本地构建
 详细构建过程请参照 Mesa 官方说明（[Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)），构建可以使用软件包管理器（如`apt`、`dnf`、`pacman`）安装的安装包的关键命令可参考[此文档](../common/build-for-distros.md)。以下为在 Debian 13 arm64 环境下构建的关键步骤：  

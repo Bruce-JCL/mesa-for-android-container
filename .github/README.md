@@ -101,12 +101,20 @@ There are six workflows in this repository, briefly introduced below:
 
 **PS:** Due to the "rolling release" nature of Arch Linux, Arch Linux installation packages that can be installed using `pacman` are directly built by `build.yml` and `build-turnip.yml`.  
 #### Input Parameters
-All workflows have two input parameters when manually triggered, briefly introduced as follows:  
+Workflows other than `build-turnip-weekly.yml` have two input parameters when manually triggered, briefly introduced as follows:  
 
 |    Parameter    |        Name         |                                    Description                                     |
 | :-------------: | :-----------------: | :--------------------------------------------------------------------------------: |
 |      `tag`      |    Branch or tag    |             Build target, supports branches or tags under that branch              |
 | `draft_release` | Draft a new release | Automatically generate a draft release (applicable when the build target is a tag) |
+
+The workflow `build-turnip-weekly.yml` has three optional input parameters when manually triggered, briefly introduced as follows:  
+
+|       Parameter       |         Name          |                                              Description                                              |
+| :-------------------: | :-------------------: | :---------------------------------------------------------------------------------------------------: |
+|      `mesa_hash`      |   Mesa commit hash    |                        Specify the upstream Mesa commit hash to be checked out                        |
+| `skip_update_release` |  Skip update-release  |                                    Do not perform a Release update                                    |
+| `skip_apply_patches`  | Skip applying patches | Do not apply patches from the `patches/turnip-weekly` directory of the `ci` branch to the source code |
 
 ### Local Build
 For detailed building procedures, please refer to the official Mesa documentation ([Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)). Key commands for building installable packages compatible with package managers (e.g., `apt`, `dnf`, `pacman`) can be found in [this document](docs/common/build-for-distros.md). Below are the key steps for building Mesa in a Debian 13 arm64 environment:  
