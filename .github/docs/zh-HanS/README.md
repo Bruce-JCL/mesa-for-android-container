@@ -43,6 +43,11 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |                                                         标准安装包                                                         |                                                        未打补丁的 Turnip 安装包                                                        |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
 | [26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404) | [turnip-26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404) |
+
+若需要尽可能新的 Mesa 上游特性，可以使用**Turnip 每周构建**：[turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)  
+它可以与标准安装包（Release 标题不带`turnip-`前缀）搭配使用，也可以单独使用 **（通常兼容性更好）**。单独使用时，需要将环境变量`MESA_LOADER_DRIVER_OVERRIDE`的值由`kgsl`改为`zink`。  
+> [!NOTE]
+> `turnip-weekly`由 GitHub Actions 每周定时拉取上游主线代码进行构建，且**不经测试直接发布**，所以可能会出现各种问题。这些问题通常是由于上游还未开发完成某个特性，需要等待上游将该特性开发完毕才能解决。所以当使用`turnip-weekly`遇到问题时，可以更换为其他版本的驱动，或者等待下周的构建。  
 2. 直接将安装包解压到根目录。  
 ```bash
 sudo tar -zxvf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
@@ -83,15 +88,16 @@ TU_DEBUG=noconform
 ### GitHub Actions
 本项目支持使用 [GitHub Actions](https://github.com/lfdevs/mesa-for-android-container/actions) 进行构建。你可以 Fork 本仓库，然后在 Fork 里启用 Actions。 
 #### 工作流
-本仓库共有五条工作流，简单介绍如下：  
+本仓库共有六条工作流，简单介绍如下：  
 
-|         文件         |          名称           |                             适用分支                             |          构建目标           |
-| :----------------: | :-------------------: | :----------------------------------------------------------: | :---------------------: |
-|    `build.yml`     |         Build         |                        `merge/adreno-main`等                        |        最新的标准安装包         |
-| `build-turnip.yml` |     Build Turnip      |                        `turnip-main`等                        |   最新的未打补丁的 Turnip 驱动    |
-| `build-debian.yml` | Build Debian Packages |        `adreno-debian-trixie`、`turnip-debian-trixie`等        | 能够使用`apt`安装的 Debian 安装包 |
-| `build-ubuntu.yml` | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`、`turnip-ubuntu-noble-updates`等 | 能够使用`apt`安装的 Ubuntu 安装包 |
-| `build-fedora.yml` | Build Fedora Packages |           `adreno-fedora-f43`、`turnip-fedora-f43`等           | 能够使用`dnf`安装的 Fedora 安装包 |
+|            文件             |          名称           |                             适用分支                             |          构建目标           |
+| :-----------------------: | :-------------------: | :----------------------------------------------------------: | :---------------------: |
+|        `build.yml`        |         Build         |                     `merge/adreno-main`等                     |        最新的标准安装包         |
+|    `build-turnip.yml`     |     Build Turnip      |                        `turnip-main`等                        |   最新的未打补丁的 Turnip 驱动    |
+| `build-turnip-weekly.yml` |  Build Turnip Weekly  |     使用上游`main`分支，并应用`ci`分支`patches/turnip-weekly`目录下的补丁      |       Turnip 每周构建       |
+|    `build-debian.yml`     | Build Debian Packages |        `adreno-debian-trixie`、`turnip-debian-trixie`等        | 能够使用`apt`安装的 Debian 安装包 |
+|    `build-ubuntu.yml`     | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`、`turnip-ubuntu-noble-updates`等 | 能够使用`apt`安装的 Ubuntu 安装包 |
+|    `build-fedora.yml`     | Build Fedora Packages |           `adreno-fedora-f43`、`turnip-fedora-f43`等           | 能够使用`dnf`安装的 Fedora 安装包 |
 
 **PS:** 由于 Arch Linux “滚动更新”的特性，能够使用`pacman`安装的 Arch Linux 安装包直接由`build.yml`、`build-turnip.yml`构建。  
 #### 输入参数

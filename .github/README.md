@@ -43,6 +43,11 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 |                                             Standard Installation Package                                             |                                             Unpatched Turnip Installation Package                                              |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
 | [26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404) | [turnip-26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404) |
+
+If you need the latest possible Mesa upstream features, you can use the **Turnip weekly builds**: [turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)  
+It can be used together with standard installation packages (those whose Release titles do not have the `turnip-` prefix), or it can be used alone **(usually with better compatibility)**. When used alone, you need to change the value of the environment variable `MESA_LOADER_DRIVER_OVERRIDE` from `kgsl` to `zink`.  
+> [!NOTE]
+> `turnip-weekly` is built weekly by GitHub Actions by pulling upstream mainline code and is **released directly without testing**, so various issues may occur. These issues are usually because upstream has not yet finished developing a certain feature, and it is necessary to wait for upstream to complete the development of that feature to resolve them. Therefore, when encountering issues with `turnip-weekly`, you can switch to other versions of the driver or wait for the next week's build.  
 2.  Extract the installation package directly to the root directory.  
 ```bash
 sudo tar -zxvf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
@@ -83,15 +88,16 @@ TU_DEBUG=noconform
 ### GitHub Actions
 This project supports building using [GitHub Actions](https://github.com/lfdevs/mesa-for-android-container/actions). You can fork this repository and then enable Actions in your fork. 
 #### Workflows
-There are five workflows in this repository, briefly introduced below:  
+There are six workflows in this repository, briefly introduced below:  
 
-|         File         |          Name           |                             Applicable Branches                             |          Build Target           |
-| :----------------: | :-------------------: | :----------------------------------------------------------: | :---------------------: |
-|    `build.yml`     |         Build         |                        `merge/adreno-main`, etc.                        |        Latest standard installation packages         |
-| `build-turnip.yml` |     Build Turnip      |                        `turnip-main`, etc.                        |   Latest unpatched Turnip drivers    |
-| `build-debian.yml` | Build Debian Packages |        `adreno-debian-trixie`, `turnip-debian-trixie`, etc.        | Debian installation packages installable via `apt` |
-| `build-ubuntu.yml` | Build Ubuntu Packages | `adreno-ubuntu-noble-updates`, `turnip-ubuntu-noble-updates`, etc. | Ubuntu installation packages installable via `apt` |
-| `build-fedora.yml` | Build Fedora Packages |           `adreno-fedora-f43`, `turnip-fedora-f43`, etc.           | Fedora installation packages installable via `dnf` |
+|           File            |         Name          |                                           Applicable Branches                                            |                    Build Target                    |
+| :-----------------------: | :-------------------: | :------------------------------------------------------------------------------------------------------: | :------------------------------------------------: |
+|        `build.yml`        |         Build         |                                        `merge/adreno-main`, etc.                                         |       Latest standard installation packages        |
+|    `build-turnip.yml`     |     Build Turnip      |                                           `turnip-main`, etc.                                            |          Latest unpatched Turnip drivers           |
+| `build-turnip-weekly.yml` |  Build Turnip Weekly  | Use upstream `main` branch and apply patches in the `patches/turnip-weekly` directory of the `ci` branch |                Turnip Weekly Builds                |
+|    `build-debian.yml`     | Build Debian Packages |                           `adreno-debian-trixie`, `turnip-debian-trixie`, etc.                           | Debian installation packages installable via `apt` |
+|    `build-ubuntu.yml`     | Build Ubuntu Packages |                    `adreno-ubuntu-noble-updates`, `turnip-ubuntu-noble-updates`, etc.                    | Ubuntu installation packages installable via `apt` |
+|    `build-fedora.yml`     | Build Fedora Packages |                              `adreno-fedora-f43`, `turnip-fedora-f43`, etc.                              | Fedora installation packages installable via `dnf` |
 
 **PS:** Due to the "rolling release" nature of Arch Linux, Arch Linux installation packages that can be installed using `pacman` are directly built by `build.yml` and `build-turnip.yml`.  
 #### Input Parameters
