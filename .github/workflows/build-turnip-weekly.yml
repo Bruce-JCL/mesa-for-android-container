@@ -6,16 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       mesa_hash:
-        description: 'Mesa commit hash to checkout (optional)'
+        description: 'Mesa commit hash'
         required: false
         type: string
       skip_update_release:
-        description: 'Skip update-release job'
+        description: 'Skip update-release'
         required: false
         type: boolean
         default: false
       skip_apply_patches:
-        description: 'Skip applying turnip-weekly patches in prepare-source'
+        description: 'Skip applying patches'
         required: false
         type: boolean
         default: false
