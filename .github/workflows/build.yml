@@ -6,7 +6,7 @@ on:
       tag:
         description: 'Branch or tag'
         required: true
-        default: 'adreno-main'
+        default: 'merge/adreno-main'
       draft_release:
         description: 'Draft a new release'
         required: true
@@ -372,10 +372,8 @@ jobs:
             cd /home/runner
             git config --global user.email "actions@github.com"
             git config --global user.name "GitHub Actions"
-            if [ "${{ github.event.inputs.tag }}" == "adreno-main" ]; then
+            if [ "${{ github.event.inputs.tag }}" == "merge/adreno-main" ] || [ "${{ github.event.inputs.tag }}" == "adreno-main" ]; then
               git clone -b freedreno --depth 1 https://github.com/lfdevs/archlinuxarm-PKGBUILDs.git
-            elif [ "${{ github.event.inputs.tag }}" == "turnip-main" ]; then
-              git clone -b turnip --depth 1 https://github.com/lfdevs/archlinuxarm-PKGBUILDs.git
             else
               git clone -b ${{ github.event.inputs.tag }} --depth 1 https://github.com/lfdevs/archlinuxarm-PKGBUILDs.git
             fi
