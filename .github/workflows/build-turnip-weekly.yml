@@ -5,6 +5,14 @@ on:
     - cron: '18 10 * * 1'
   workflow_dispatch:
     inputs:
+      mesa_git_url:
+        description: 'Mesa git URL'
+        required: false
+        type: string
+      mesa_git_branch:
+        description: 'Mesa git branch'
+        required: false
+        type: string
       mesa_hash:
         description: 'Mesa commit hash'
         required: false
@@ -34,20 +42,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mesa_git_url="${{ github.event.inputs.mesa_git_url || '' }}"
+          mesa_git_branch="${{ github.event.inputs.mesa_git_branch || '' }}"
           input_hash="${{ github.event.inputs.mesa_hash || '' }}"
+
+          if [ -z "$mesa_git_url" ]; then
+            mesa_git_url="https://gitlab.freedesktop.org/mesa/mesa.git"
+          fi
+          if [ -z "$mesa_git_branch" ]; then
+            mesa_git_branch="main"
+          fi
+
           if [ -n "$input_hash" ]; then
             echo "Using user-provided Mesa hash: $input_hash"
             echo "mesa_hash=$input_hash" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          resolved_hash=$(git ls-remote https://gitlab.freedesktop.org/mesa/mesa.git refs/heads/main | awk '{print $1}')
+          resolved_hash=$(git ls-remote "$mesa_git_url" "refs/heads/$mesa_git_branch" | awk '{print $1}')
           if [ -z "$resolved_hash" ]; then
-            echo "Failed to resolve latest hash for main branch"
+            echo "Failed to resolve latest hash for branch $mesa_git_branch from $mesa_git_url"
             exit 1
           fi
 
-          echo "Resolved latest Mesa main hash: $resolved_hash"
+          echo "Resolved latest Mesa $mesa_git_branch hash from $mesa_git_url: $resolved_hash"
           echo "mesa_hash=$resolved_hash" >> "$GITHUB_OUTPUT"
 
       - name: Prepare Mesa source
@@ -77,8 +95,17 @@ jobs:
           git config --global user.name "GitHub Actions"
           rm -rf mesa-for-android-container mesa-for-android-container-ci
 
+          mesa_git_url="${{ github.event.inputs.mesa_git_url || '' }}"
+          mesa_git_branch="${{ github.event.inputs.mesa_git_branch || '' }}"
+          if [ -z "$mesa_git_url" ]; then
+            mesa_git_url="https://gitlab.freedesktop.org/mesa/mesa.git"
+          fi
+          if [ -z "$mesa_git_branch" ]; then
+            mesa_git_branch="main"
+          fi
+
           mesa_hash="${{ steps.resolve.outputs.mesa_hash }}"
-          retry 5 30 git clone -b main --depth 1 --single-branch --no-tags https://gitlab.freedesktop.org/mesa/mesa.git mesa-for-android-container
+          retry 5 30 git clone -b "$mesa_git_branch" --depth 1 --single-branch --no-tags "$mesa_git_url" mesa-for-android-container
           cd mesa-for-android-container
           retry 5 30 git fetch origin "$mesa_hash"
           git checkout --detach "$mesa_hash"
