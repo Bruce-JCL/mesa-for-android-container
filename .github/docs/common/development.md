@@ -8,7 +8,7 @@ There are six workflows in this repository, briefly introduced below:
 
 |           File            |         Name          |                                           Applicable Branches                                            |                    Build Target                    |
 | :-----------------------: | :-------------------: | :------------------------------------------------------------------------------------------------------: | :------------------------------------------------: |
-|        `build.yml`        |         Build         |                                        `merge/adreno-main`, etc.                                         |       Latest standard installation packages        |
+|        `build.yml`        |         Build         |                                        `dev/adreno-main`, etc.                                         |       Latest standard installation packages        |
 |    `build-turnip.yml`     |     Build Turnip      |                                           `turnip-main`, etc.                                            |          Latest unpatched Turnip drivers           |
 | `build-turnip-weekly.yml` |  Build Turnip Weekly  | Use upstream `main` branch and apply patches in the `patches/turnip-weekly` directory of the `ci` branch |                Turnip Weekly Builds                |
 |    `build-debian.yml`     | Build Debian Packages |                           `adreno-debian-trixie`, `turnip-debian-trixie`, etc.                           | Debian installation packages installable via `apt` |
