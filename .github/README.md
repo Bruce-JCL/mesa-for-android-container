@@ -39,7 +39,8 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 |     Debian 13      |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 |  Ubuntu 24.04 LTS  | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |     Fedora 43      |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|     Arch Linux     |               [26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404)               |              [turnip-26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404)              |
+|     Arch Linux     |               [26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423)               |              [turnip-26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423)              |
+
 ### Direct Extraction
 
 > [!NOTE]
@@ -49,7 +50,7 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 
 |                                             Standard Installation Package                                             |                                             Unpatched Turnip Installation Package                                              |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404) | [turnip-26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404) |
+| [26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423) | [turnip-26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423) |
 
 If you need the latest possible Mesa upstream features, you can use the **Turnip weekly builds**: [turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 

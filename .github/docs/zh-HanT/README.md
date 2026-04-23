@@ -39,7 +39,8 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Debian 13     |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 | Ubuntu 24.04 LTS | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|    Arch Linux    |               [26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404)               |              [turnip-26.1.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404)              |
+|    Arch Linux    |               [26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423)               |              [turnip-26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423)              |
+
 ### 直接解壓
 
 > [!NOTE]
@@ -49,7 +50,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 |                                                         標準安裝包                                                         |                                                        未打補丁的 Turnip 安裝包                                                        |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.1.0-devel-20260404) | [turnip-26.1.0-devel-20260404](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.1.0-devel-20260404) |
+| [26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423) | [turnip-26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423) |
 
 若需要儘可能新的 Mesa 上游特性，可以使用**Turnip 每週建置**：[turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 
