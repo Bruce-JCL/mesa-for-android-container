@@ -46,6 +46,17 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 > [!NOTE]
 > Releases 中`.tar.gz`格式的安装包只能覆盖原来的 Mesa 驱动，卸载时需要手动删除解压得到的文件，仅供测试使用。
 
+目前“直接解压”方式支持以下 Linux 发行版：
+
+|    Linux 发行版     |        安装包文件名后缀        |
+| :--------------: | :--------------------: |
+|    Debian 13     | `debian_trixie_arm64`  |
+| Ubuntu 24.04 LTS |  `ubuntu_noble_arm64`  |
+|   Ubuntu 25.10   | `ubuntu_rolling_arm64` |
+|    Fedora 43     |   `fedora_43_arm64`    |
+|    Arch Linux    |   `archlinux_arm64`    |
+|    Void Linux    |      `void_arm64`      |
+
 1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下载`.tar.gz`格式的安装包。请注意文件名中的 Linux 发行版后缀，如`debian_trixie_arm64`，只能安装发行版匹配的安装包。对于 **Adreno 7xx/8xx**，一般先解压标准安装包（包含 Freedreno），再解压未打补丁的 Turnip 安装包。两者最新的 Release 如下：
 
 |                                                         标准安装包                                                         |                                                        未打补丁的 Turnip 安装包                                                        |
@@ -54,7 +65,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 若需要尽可能新的 Mesa 上游特性，可以使用**Turnip 每周构建**：[turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 
-它可以与标准安装包（Release 标题不带`turnip-`前缀）搭配使用，也可以单独使用 **（通常兼容性更好）**。单独使用时，需要将环境变量`MESA_LOADER_DRIVER_OVERRIDE`的值由`kgsl`改为`zink`。
+`turnip-weekly`可以与标准安装包（Release 标题不带`turnip-`前缀）搭配使用，也可以单独使用 **（通常兼容性更好）**。单独使用时，需要将环境变量`MESA_LOADER_DRIVER_OVERRIDE`的值由`kgsl`改为`zink`。
 
 > [!NOTE]
 > `turnip-weekly`由 GitHub Actions 每周定时拉取上游主线代码进行构建，且**不经测试直接发布**，所以可能会出现各种问题。这些问题通常是由于上游还未开发完成某个特性，需要等待上游将该特性开发完毕才能解决。所以当使用`turnip-weekly`遇到问题时，可以更换为其他版本的驱动，或者等待下周的构建。

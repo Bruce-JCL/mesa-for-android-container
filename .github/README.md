@@ -46,6 +46,17 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 > [!NOTE]
 > The `.tar.gz` installation packages in Releases can only overwrite the existing Mesa drivers. To uninstall, you must manually delete the extracted files. These packages are intended for testing purposes only.
 
+Currently, the "Direct Extraction" way supports the following Linux distributions:
+
+| Linux Distribution | Installation package filename suffix |
+| :----------------: | :----------------------------------: |
+|     Debian 13      |        `debian_trixie_arm64`         |
+|  Ubuntu 24.04 LTS  |         `ubuntu_noble_arm64`         |
+|    Ubuntu 25.10    |        `ubuntu_rolling_arm64`        |
+|     Fedora 43      |          `fedora_43_arm64`           |
+|     Arch Linux     |          `archlinux_arm64`           |
+|     Void Linux     |             `void_arm64`             |
+
 1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download the `.tar.gz` installation packages. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution. For **Adreno 7xx/8xx**, it is generally recommended to first extract the standard installation package (which includes Freedreno), followed by the unpatched Turnip installation package. The latest releases for both are as follows:
 
 |                                             Standard Installation Package                                             |                                             Unpatched Turnip Installation Package                                              |
@@ -54,7 +65,7 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 
 If you need the latest possible Mesa upstream features, you can use the **Turnip weekly builds**: [turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 
-It can be used together with standard installation packages (those whose Release titles do not have the `turnip-` prefix), or it can be used alone **(usually with better compatibility)**. When used alone, you need to change the value of the environment variable `MESA_LOADER_DRIVER_OVERRIDE` from `kgsl` to `zink`.
+`turnip-weekly` can be used together with standard installation packages (those whose Release titles do not have the `turnip-` prefix), or it can be used alone **(usually with better compatibility)**. When used alone, you need to change the value of the environment variable `MESA_LOADER_DRIVER_OVERRIDE` from `kgsl` to `zink`.
 
 > [!NOTE]
 > `turnip-weekly` is built weekly by GitHub Actions by pulling upstream mainline code and is **released directly without testing**, so various issues may occur. These issues are usually because upstream has not yet finished developing a certain feature, and it is necessary to wait for upstream to complete the development of that feature to resolve them. Therefore, when encountering issues with `turnip-weekly`, you can switch to other versions of the driver or wait for the next week's build.
