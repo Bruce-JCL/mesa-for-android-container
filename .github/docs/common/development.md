@@ -35,6 +35,20 @@ The workflow `build-turnip-weekly.yml` has five optional input parameters when m
 | `skip_update_release` |  Skip update-release  |                                    Do not perform a Release update                                    |
 | `skip_apply_patches`  | Skip applying patches | Do not apply patches from the `patches/turnip-weekly` directory of the `ci` branch to the source code |
 
+### Jenkins
+This project supports CI building using Jenkins. The Jenkinsfiles are located in the `Jenkins` directory of the `ci` branch.
+
+#### Requirements
+To run these pipelines, your Jenkins environment needs the following:
+- **Plugins**: In addition to the recommended plugins, you must install:
+  - Docker (`docker-plugin`)
+  - Docker Pipeline (`docker-workflow`)
+  - AnsiColor (`ansicolor`)
+- **Credentials**: If you want the pipeline to upload artifacts to GitHub Releases, you need to configure a "Secret text" credential with the ID `github-cli-token` containing a GitHub Personal Access Token (classic).
+- **Agent Node**: The pipelines require an agent node with Linux Arm64 architecture (using the `linux-arm64` label). The agent must have JRE and Docker installed.
+
+The pipeline stages and build parameters are very similar to the GitHub Actions workflows described above.
+
 ### Local Build
 For detailed building procedures, please refer to the official Mesa documentation ([Compilation and Installation Using Meson — The Mesa 3D Graphics Library latest documentation](https://docs.mesa3d.org/meson.html)). Key commands for building installable packages compatible with package managers (e.g., `apt`, `dnf`, `pacman`) can be found in [this document](build-for-distros.md). Below are the key steps for building Mesa in a Debian 13 arm64 environment:
 
