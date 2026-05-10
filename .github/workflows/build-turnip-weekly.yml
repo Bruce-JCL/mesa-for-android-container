@@ -434,11 +434,11 @@ jobs:
             ~/mesa-for-android-container/sha256sums.txt
           retention-days: 90
 
-  ubuntu-rolling:
+  ubuntu-questing:
     needs: prepare-source
     runs-on: ubuntu-24.04-arm
     container:
-      image: ubuntu:rolling
+      image: ubuntu:questing
       options: --privileged --user root
 
     steps:
@@ -507,7 +507,7 @@ jobs:
           cd ~/mesa-for-android-container
           version=$(grep -v '^[[:space:]]*$' VERSION | head -n1)
           build_date=$(TZ=Asia/Shanghai date +%Y%m%d)
-          echo "MESA_RELEASE_NAME_SUFFIX=${version}-${build_date}_ubuntu_rolling" >> "$GITHUB_ENV"
+          echo "MESA_RELEASE_NAME_SUFFIX=${version}-${build_date}_ubuntu_questing" >> "$GITHUB_ENV"
 
       - name: Build Mesa
         shell: bash
@@ -994,7 +994,7 @@ jobs:
     needs:
       - debian-trixie
       - ubuntu-noble
-      - ubuntu-rolling
+      - ubuntu-questing
       - fedora-43
       - archlinux
       - void-linux

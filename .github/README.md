@@ -52,7 +52,7 @@ Currently, the "Direct Extraction" way supports the following Linux distribution
 | :----------------: | :----------------------------------: |
 |     Debian 13      |        `debian_trixie_arm64`         |
 |  Ubuntu 24.04 LTS  |         `ubuntu_noble_arm64`         |
-|    Ubuntu 25.10    |        `ubuntu_rolling_arm64`        |
+|    Ubuntu 25.10    |        `ubuntu_questing_arm64`        |
 |     Fedora 43      |          `fedora_43_arm64`           |
 |     Arch Linux     |          `archlinux_arm64`           |
 |     Void Linux     |             `void_arm64`             |
