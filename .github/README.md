@@ -5,11 +5,11 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 ---
 
-A [Mesa](https://gitlab.freedesktop.org/mesa/mesa) build for containers on Android (Proot, Chroot, LXC, etc.), to support hardware acceleration with Adreno GPU.
+A [Mesa](https://gitlab.freedesktop.org/mesa/mesa) build for containers on Android (PRoot, Chroot, LXC, Droidspaces, etc.), to support hardware acceleration with Adreno GPU.
 
 ## Features
   - The Freedreno and Turnip driver in Mesa 26.0.0 and later versions supports Adreno 8xx GPU.
-  - Mesa drivers compiled in arm64 chroot containers across multiple popular Linux distributions offer better compatibility and can be used in Proot, chroot, and LXC containers hosted on Android.
+  - Mesa drivers compiled in ARM64 Docker containers across multiple popular Linux distributions offer better compatibility and can be used in PRoot, Chroot, Droidspaces, and LXC containers hosted on Android.
   - For some Adreno 6xx/7xx/8xx GPUs, the Freedreno driver can be used for OpenGL, OpenGL ES, and Vulkan, eliminating the need for Zink for graphics API call translation and significantly improving GPU utilization.
   - Only drivers relevant to the vast majority of Android devices are compiled to reduce the package size.
 
@@ -20,7 +20,7 @@ This section only displays GPU models confirmed to be supported through actual t
 | :----------------------------: | :----------: | :----------: | :----------: |
 |         **Adreno 660**         | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 | **Adreno 710/720/730/735/740/750** | ✔️ Supported | ✔️ Supported | ✔️ Supported |
-|       **Adreno 829/830/840**       | ✔️ Supported | ✔️ Supported | ✔️ Supported |
+|       **Adreno 810/829/830/840**       | ✔️ Supported | ✔️ Supported | ✔️ Supported |
 
 Experimental support (by [**whitebelyash**](https://github.com/whitebelyash)): **Adreno 825**
 
@@ -39,7 +39,7 @@ Depending on your Linux distribution, go to [Releases](https://github.com/lfdevs
 |     Debian 13      |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 |  Ubuntu 24.04 LTS  | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |     Fedora 43      |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|     Arch Linux     |               [26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423)               |              [turnip-26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423)              |
+|     Arch Linux     |               [26.2.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260511)               |              [turnip-26.2.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260511)              |
 
 ### Direct Extraction
 
@@ -53,15 +53,19 @@ Currently, the "Direct Extraction" way supports the following Linux distribution
 |     Debian 13      |        `debian_trixie_arm64`         |
 |  Ubuntu 24.04 LTS  |         `ubuntu_noble_arm64`         |
 |    Ubuntu 25.10    |        `ubuntu_questing_arm64`        |
+|  Ubuntu 26.04 LTS  |        `ubuntu_resolute_arm64`       |
 |     Fedora 43      |          `fedora_43_arm64`           |
 |     Arch Linux     |          `archlinux_arm64`           |
 |     Void Linux     |             `void_arm64`             |
 
-1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download the `.tar.gz` installation packages. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution. For **Adreno 7xx/8xx**, it is generally recommended to first extract the standard installation package (which includes Freedreno), followed by the unpatched Turnip installation package. The latest releases for both are as follows:
+1. Go to [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) and download the `.tar.gz` installation packages. Please note the Linux distribution suffix in the filename, such as `debian_trixie_arm64`. You can only install the package that matches your distribution. For **Adreno 7xx**, it is generally recommended to first extract the standard installation package (which includes Freedreno), followed by the unpatched Turnip installation package. The latest releases for both are as follows:
 
 |                                             Standard Installation Package                                             |                                             Unpatched Turnip Installation Package                                              |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423) | [turnip-26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423) |
+| [26.2.0-devel-20260511](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260511) | [turnip-26.2.0-devel-20260511](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260511) |
+
+> [!NOTE]
+> For Adreno 8XX (especially **830 & 840**), it should no longer be necessary to install unpatched Turnip drivers now. **Patched Turnip** from the standard release should work properly.
 
 If you need the latest possible Mesa upstream features, you can use the **Turnip weekly builds**: [turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 

@@ -5,11 +5,11 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 ---
 
-一個適用於 Android 容器（Proot、Chroot、LXC 等）的 [Mesa](https://gitlab.freedesktop.org/mesa/mesa) 建置版本，支援 Adreno GPU 的硬體加速。
+一個適用於 Android 容器（PRoot、Chroot、LXC、Droidspaces 等）的 [Mesa](https://gitlab.freedesktop.org/mesa/mesa) 建置版本，支援 Adreno GPU 的硬體加速。
 
 ## 特性
   - Mesa 26.0.0 及以上版本的 Freedreno 與 Turnip 驅動程式支援 Adreno 8xx GPU。
-  - 在多個主流 Linux 發行版的 arm64 Chroot 容器環境下分別編譯，相容性更佳，以 Android 為主機系統的 Proot、Chroot、LXC 容器皆可使用本專案所編譯的 Mesa 驅動程式。
+  - 在多個主流 Linux 發行版的 ARM64 Docker 容器環境下分別編譯，相容性更佳，以 Android 為主機系統的 PRoot、Chroot、LXC、Droidspaces 容器皆可使用本專案所編譯的 Mesa 驅動程式。
   - 對於部分 Adreno 6xx/7xx/8xx GPU，OpenGL、OpenGL ES、Vulkan 均可直接使用 Freedreno 驅動程式，不再需要透過 Zink 進行圖形 API 呼叫轉換，大幅提升了 GPU 的利用效率。
   - 僅編譯與絕大多數 Android 裝置相關的驅動程式，以縮小套件體積。
 
@@ -20,7 +20,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 | :----------------------------: | :----: | :-------: | :----: |
 |         **Adreno 660**         |  ✔️支援  |   ✔️支援    |  ✔️支援  |
 | **Adreno 710/720/730/735/740/750** |  ✔️支援  |   ✔️支援    |  ✔️支援  |
-|       **Adreno 829/830/840**       |  ✔️支援  |   ✔️支援    |  ✔️支援  |
+|       **Adreno 810/829/830/840**       |  ✔️支援  |   ✔️支援    |  ✔️支援  |
 
 實驗性支援（by [**whitebelyash**](https://github.com/whitebelyash)）：**Adreno 825**
 
@@ -39,7 +39,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Debian 13     |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 | Ubuntu 24.04 LTS | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|    Arch Linux    |               [26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423)               |              [turnip-26.2.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423)              |
+|    Arch Linux    |               [26.2.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260511)               |              [turnip-26.2.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260511)              |
 
 ### 直接解壓
 
@@ -53,15 +53,19 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Debian 13     | `debian_trixie_arm64`  |
 | Ubuntu 24.04 LTS |  `ubuntu_noble_arm64`  |
 |   Ubuntu 25.10   | `ubuntu_questing_arm64` |
+| Ubuntu 26.04 LTS | `ubuntu_resolute_arm64` |
 |    Fedora 43     |   `fedora_43_arm64`    |
 |    Arch Linux    |   `archlinux_arm64`    |
 |    Void Linux    |      `void_arm64`      |
 
-1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下載 `.tar.gz` 格式的安裝包。請注意檔案名稱中的 Linux 發行版後綴（例如 `debian_trixie_arm64`），僅可安裝與發行版相符的安裝包。對於 **Adreno 7xx/8xx**，一般先解壓標準安裝包（包含 Freedreno），再解壓未打補丁的 Turnip 安裝包。兩者最新的 Release 如下：
+1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下載 `.tar.gz` 格式的安裝包。請注意檔案名稱中的 Linux 發行版後綴（例如 `debian_trixie_arm64`），僅可安裝與發行版相符的安裝包。對於 **Adreno 7xx**，一般先解壓標準安裝包（包含 Freedreno），再解壓未打補丁的 Turnip 安裝包。兩者最新的 Release 如下：
 
 |                                                         標準安裝包                                                         |                                                        未打補丁的 Turnip 安裝包                                                        |
 | :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260423) | [turnip-26.2.0-devel-20260423](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260423) |
+| [26.2.0-devel-20260511](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260511) | [turnip-26.2.0-devel-20260511](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260511) |
+
+> [!NOTE]
+> 對於 Adreno 8XX （尤其是 **830 & 840**），現在應該不再需要安裝未打補丁的 Turnip 驅動程式了。標準安裝包中打過補丁的 Turnip 驅動程式應該能正常運作。
 
 若需要儘可能新的 Mesa 上游特性，可以使用**Turnip 每週建置**：[turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 
