@@ -822,7 +822,7 @@ jobs:
           printf '%s\n' '```' >> release_body.md
 
       - name: Upload archives to draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag }}
           name: ${{ github.event.inputs.tag }}
