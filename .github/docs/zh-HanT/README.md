@@ -137,3 +137,12 @@ TU_DEBUG=noconform
   - [whitebelyash](https://github.com/whitebelyash/mesa-tu8)：為 Adreno 825 新增實驗性支援。
   - [Termux 維護團隊及貢獻者](https://github.com/termux/termux-packages/tree/master/packages/mesa)：為 Mesa 驅動程式在 Termux 上的正常執行開發了一系列的修補程式。
 
+## Star 歷史
+
+<a href="https://www.star-history.com/?repos=lfdevs%2Fmesa-for-android-container&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left" />
+ </picture>
+</a>

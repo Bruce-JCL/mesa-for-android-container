@@ -137,3 +137,12 @@ Detailed test results: [benchmark-result](docs/common/benchmark-result.md)
   - [whitebelyash](https://github.com/whitebelyash/mesa-tu8): Add experimental support for Adreno 825.
   - [Termux maintenance team and contributors](https://github.com/termux/termux-packages/tree/master/packages/mesa): Developed a series of patches for the normal operation of Mesa drivers on Termux.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=lfdevs%2Fmesa-for-android-container&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left" />
+ </picture>
+</a>
