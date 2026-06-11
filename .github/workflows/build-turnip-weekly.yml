@@ -1130,6 +1130,7 @@ jobs:
           retention-days: 90
 
   alpine-324:
+    needs: prepare-source
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -1241,7 +1242,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: turnip-weekly_${{ env.MESA_RELEASE_NAME_SUFFIX }}
+          name: turnip-weekly_${{ env.MESA_RELEASE_NAME_SUFFIX }}_${{ needs.prepare-source.outputs.mesa_hash }}
           path: |
             ~/mesa-for-android-container/*.tar.gz
             ~/mesa-for-android-container/sha256sums.txt
