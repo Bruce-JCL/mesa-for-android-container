@@ -128,15 +128,12 @@ MESA_LOADER_DRIVER_OVERRIDE=kgsl
 ## 基准测试
 详细的测试结果：[benchmark-result](../common/benchmark-result.md)
 
-|        设备         |     型号     |        SoC         |    GPU     | glmark2 | glmark2-es2 | vkmark |
-| :---------------: | :--------: | :----------------: | :--------: | ------: | ----------: | -----: |
-|   Redmi K40 Pro   | M2012K11G  |      高通骁龙 888      | Adreno 660 |     842 |         771 |   1170 |
-| Xiaomi Pad 6 Pro  | 23046RP50C |   高通骁龙 8+ Gen 1    | Adreno 730 |    1169 |        1143 |    263 |
-|   REDMI K80 Pro   | 24122RKC7C |    高通骁龙 8 Elite    | Adreno 830 |    3081 |        3083 |    308 |
-| Xiaomi 17 Pro Max | 2509FPN0BC | 高通骁龙 8 Elite Gen 5 | Adreno 840 |    2947 |        2901 |    未测试 |
-|    OnePlus 15     |   PLK110   | 高通骁龙 8 Elite Gen 5 | Adreno 840 |    3574 |        3621 |    未测试 |
-
-**PS:** Xiaomi 17 Pro Max 执行基准测试时连接了电源，性能有折损，正常情况下实际分数会更高。
+| 设备 | SoC | GPU | 容器类型 | glmark2 | glmark2-es2 | vkmark |
+| :-: | :-: | :-: | :-: | -: | -: | -: |
+| Redmi K40 Pro | 骁龙 888 | Adreno 660 | LXC | 842 | 771 | 1170 |
+| Xiaomi Pad 6 Pro | 骁龙 8+ Gen 1 | Adreno 730 | Chroot | 1360 | 1222 | 2669 |
+| REDMI K80 Pro | 骁龙 8 Elite | Adreno 830 | PRoot | 2211 | 2206 | 1153 |
+| OnePlus 15 | 骁龙 8 Elite Gen 5 | Adreno 840 | PRoot | 3574 | 3621 | 未测试 |
 
 ## 感谢
   - [Lucas Fryzek](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/21570)：Mesa Freedreno 驱动的 KGSL 后端代码的作者。

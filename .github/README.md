@@ -128,15 +128,12 @@ If you are a developer and want to build the drivers from this project or contri
 ## Benchmarks
 Detailed test results: [benchmark-result](docs/common/benchmark-result.md)
 
-|      Device       |   Model    |                SoC                |    GPU     | glmark2 | glmark2-es2 |     vkmark |
-| :---------------: | :--------: | :-------------------------------: | :--------: | ------: | ----------: | ---------: |
-|   Redmi K40 Pro   | M2012K11G  |      Qualcomm Snapdragon 888      | Adreno 660 |     842 |         771 |       1170 |
-| Xiaomi Pad 6 Pro  | 23046RP50C |   Qualcomm Snapdragon 8+ Gen 1    | Adreno 730 |    1169 |        1143 |        263 |
-|   REDMI K80 Pro   | 24122RKC7C |    Qualcomm Snapdragon 8 Elite    | Adreno 830 |    3081 |        3083 |        308 |
-| Xiaomi 17 Pro Max | 2509FPN0BC | Qualcomm Snapdragon 8 Elite Gen 5 | Adreno 840 |    2947 |        2901 | Not tested |
-|    OnePlus 15     |   PLK110   | Qualcomm Snapdragon 8 Elite Gen 5 | Adreno 840 |    3574 |        3621 | Not tested |
-
-**PS:** The Xiaomi 17 Pro Max was connected to a power source during benchmarking, which caused performance throttling; the actual score would be higher under normal conditions.
+| Device | SoC | GPU | Container Type | glmark2 | glmark2-es2 | vkmark |
+| :-: | :-: | :-: | :-: | -: | -: | -: |
+| Redmi K40 Pro | Snapdragon 888 | Adreno 660 | LXC | 842 | 771 | 1170 |
+| Xiaomi Pad 6 Pro | Snapdragon 8+ Gen 1 | Adreno 730 | Chroot | 1360 | 1222 | 2669 |
+| REDMI K80 Pro | Snapdragon 8 Elite | Adreno 830 | PRoot | 2211 | 2206 | 1153 |
+| OnePlus 15 | Snapdragon 8 Elite Gen 5 | Adreno 840 | PRoot | 3574 | 3621 | Not tested |
 
 ## Acknowledgements
   - [Lucas Fryzek](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/21570): Author of the KGSL backend code for the Mesa Freedreno driver.

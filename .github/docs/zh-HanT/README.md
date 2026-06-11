@@ -128,15 +128,12 @@ MESA_LOADER_DRIVER_OVERRIDE=kgsl
 ## 基準測試
 詳細的測試結果： [benchmark-result](../common/benchmark-result.md)
 
-|        裝置         |     型號     |        SoC         |    GPU     | glmark2 | glmark2-es2 | vkmark |
-| :---------------: | :--------: | :----------------: | :--------: | ------: | ----------: | -----: |
-|   Redmi K40 Pro   | M2012K11G  |      高通驍龍 888      | Adreno 660 |     842 |         771 |   1170 |
-| Xiaomi Pad 6 Pro  | 23046RP50C |   高通驍龍 8+ Gen 1    | Adreno 730 |    1169 |        1143 |    263 |
-|   REDMI K80 Pro   | 24122RKC7C |    高通驍龍 8 Elite    | Adreno 830 |    3081 |        3083 |    308 |
-| Xiaomi 17 Pro Max | 2509FPN0BC | 高通驍龍 8 Elite Gen 5 | Adreno 840 |    2947 |        2901 |    未測試 |
-|    OnePlus 15     |   PLK110   | 高通驍龍 8 Elite Gen 5 | Adreno 840 |    3574 |        3621 |    未測試 |
-
-**PS：** Xiaomi 17 Pro Max 執行基準測試時連接了電源，效能有所折損，正常情況下實際分數會更高。
+| 裝置 | SoC | GPU | 容器類型 | glmark2 | glmark2-es2 | vkmark |
+| :-: | :-: | :-: | :-: | -: | -: | -: |
+| Redmi K40 Pro | 驍龍 888 | Adreno 660 | 842 | 771 | 1170 |
+| Xiaomi Pad 6 Pro | 驍龍 8+ Gen 1 | Adreno 730 | 1360 | 1222 | 2669 |
+| REDMI K80 Pro | 驍龍 8 Elite | Adreno 830 | 2211 | 2206 | 1153 |
+| OnePlus 15 | 驍龍 8 Elite Gen 5 | Adreno 840 | 3574 | 3621 | 未測試 |
 
 ## 感謝
   - [Lucas Fryzek](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/21570)：Mesa Freedreno 驅動程式的 KGSL 後端程式碼的作者。
