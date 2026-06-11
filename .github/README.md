@@ -104,15 +104,24 @@ sudo dnf reinstall mesa-filesystem mesa-libglapi mesa-libgbm mesa-libEGL mesa-li
 sudo pacman -S mesa mesa-docs opencl-mesa vulkan-freedreno vulkan-mesa-implicit-layers vulkan-mesa-layers
 ```
 ## Usage
-Specify the environment variables `MESA_LOADER_DRIVER_OVERRIDE` and `TU_DEBUG` when running a specific program, as follows:  
+Specify the environment variable `MESA_LOADER_DRIVER_OVERRIDE` when running a specific program, as follows:
+
 ```bash
-MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform glmark2
+MESA_LOADER_DRIVER_OVERRIDE=kgsl glmark2
 ```
-Alternatively, add them to the `/etc/environment` file so they are loaded automatically when the container starts:  
+
+Alternatively, add it to the `/etc/environment` file so it's loaded automatically when the container starts:
+
 ```plaintext
 MESA_LOADER_DRIVER_OVERRIDE=kgsl
-TU_DEBUG=noconform
 ```
+
+> [!TIP]
+> If screen tearing issues occur when running certain programs or games, you can add the following two environment variables to force-enable vertical sync:
+> ```bash
+> vblank_mode=3 MESA_VK_WSI_PRESENT_MODE=mailbox
+> ```
+
 ## Development
 If you are a developer and want to build the drivers from this project or contribute code, please refer to the [development documentation](docs/common/development.md).
 

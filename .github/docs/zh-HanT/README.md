@@ -104,15 +104,24 @@ sudo dnf reinstall mesa-filesystem mesa-libglapi mesa-libgbm mesa-libEGL mesa-li
 sudo pacman -S mesa mesa-docs opencl-mesa vulkan-freedreno vulkan-mesa-implicit-layers vulkan-mesa-layers
 ```
 ## 使用
-在執行特定程式時指定環境變數`MESA_LOADER_DRIVER_OVERRIDE`和`TU_DEBUG`，例如：  
+在執行特定程式時指定環境變數`MESA_LOADER_DRIVER_OVERRIDE`，例如：
+
 ```bash
-MESA_LOADER_DRIVER_OVERRIDE=kgsl TU_DEBUG=noconform glmark2
+MESA_LOADER_DRIVER_OVERRIDE=kgsl glmark2
 ```
-或者將其新增至`/etc/environment`檔案中，以便在開啟容器時自動載入：  
+
+或者將其新增至`/etc/environment`檔案中，以便在開啟容器時自動載入：
+
 ```plaintext
 MESA_LOADER_DRIVER_OVERRIDE=kgsl
-TU_DEBUG=noconform
 ```
+
+> [!TIP]
+> 若執行某些程式或遊戲時出現畫面撕裂問題，可新增以下兩個環境變數以強制開啟垂直同步：
+> ```bash
+> vblank_mode=3 MESA_VK_WSI_PRESENT_MODE=mailbox
+> ```
+
 ## 開發
 如果你是開發者，想要建置本專案的驅動程式或貢獻程式碼，請參閱[開發文件](../common/development.md)。
 
