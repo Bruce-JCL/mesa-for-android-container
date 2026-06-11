@@ -19,7 +19,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |              GPU               | OpenGL | OpenGL ES | Vulkan |
 | :----------------------------: | :----: | :-------: | :----: |
 |         **Adreno 660**         |  ✔️支持  |   ✔️支持    |  ✔️支持  |
-| **Adreno 710/720/730/735/740/750** |  ✔️支持  |   ✔️支持    |  ✔️支持  |
+| **Adreno 710/720/722/730/735/740/750** |  ✔️支持  |   ✔️支持    |  ✔️支持  |
 |       **Adreno 810/829/830/840**       |  ✔️支持  |   ✔️支持    |  ✔️支持  |
 
 实验性支持（by [**whitebelyash**](https://github.com/whitebelyash)）：**Adreno 825**
@@ -39,7 +39,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Debian 13     |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 | Ubuntu 24.04 LTS | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|    Arch Linux    |               [26.2.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260511)               |              [turnip-26.2.0-2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260511)              |
+|    Arch Linux    |               [26.2.0-3](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260610)               |              [turnip-26.2.0-3](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260610)              |
 
 ### 直接解压
 
@@ -57,15 +57,16 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Fedora 43     |   `fedora_43_arm64`    |
 |    Arch Linux    |   `archlinux_arm64`    |
 |    Void Linux    |      `void_arm64`      |
+|    Alpine 3.24   |   `alpine_3.24_arm64`  |
 
-1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下载`.tar.gz`格式的安装包。请注意文件名中的 Linux 发行版后缀，如`debian_trixie_arm64`，只能安装发行版匹配的安装包。对于 **Adreno 7xx**，一般先解压标准安装包（包含 Freedreno），再解压未打补丁的 Turnip 安装包。两者最新的 Release 如下：
+1. 前往 [Releases](https://github.com/lfdevs/mesa-for-android-container/releases) 下载`.tar.gz`格式的安装包。请注意文件名中的 Linux 发行版后缀，如`debian_trixie_arm64`，只能安装发行版匹配的安装包。
 
-|                                                         标准安装包                                                         |                                                        未打补丁的 Turnip 安装包                                                        |
-| :-------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------: |
-| [26.2.0-devel-20260511](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260511) | [turnip-26.2.0-devel-20260511](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260511) |
+| 标准安装包 | 未打补丁的 Turnip 安装包（通常不需要） |
+| :-: | :-: |
+| [26.2.0-devel-20260610](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260610) | [turnip-26.2.0-devel-20260610](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260610) |
 
 > [!NOTE]
-> 对于 Adreno 8XX （尤其是 **830 & 840**），现在应该不再需要安装未打补丁的 Turnip 驱动了。标准安装包中打了补丁的 Turnip 驱动应该能正常运行。
+> 对于 Adreno 7XX & 8XX，现在应该不再需要安装未打补丁的 Turnip 驱动了。标准安装包中打了补丁的 Turnip 驱动应该能正常运行。
 
 若需要尽可能新的 Mesa 上游特性，可以使用**Turnip 每周构建**：[turnip-weekly](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-weekly)
 
@@ -77,8 +78,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 2. 直接将安装包解压到根目录。
 
 ```bash
-sudo tar -zxvf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
-sudo tar -zxvf turnip_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
+sudo tar -zxvf mesa-for-android-container_26.2.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz -C /
 ```
 3. 刷新动态链接器缓存。
 
@@ -90,7 +90,7 @@ sudo ldconfig
 
 ```bash
 # 复制这条命令输出的文件列表
-tar tf mesa-for-android-container_26.0.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz | grep -v '/$' | tr '\n' ' ' ; echo
+tar tf mesa-for-android-container_26.2.0-devel-xxxxxxxx_debian_trixie_arm64.tar.gz | grep -v '/$' | tr '\n' ' ' ; echo
 cd /
 # 替换 <file-list> 为实际的文件列表
 sudo rm <file-list>
