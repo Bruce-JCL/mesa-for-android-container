@@ -39,7 +39,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Debian 13     |            [25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-adreno)            |            [turnip-25.0.7-2+deb13u1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/debian%2F25.0.7-2-turnip)            |
 | Ubuntu 24.04 LTS | [25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-adreno) | [turnip-25.0.7-0ubuntu0.24.04.2](https://github.com/lfdevs/mesa-for-android-container/releases/tag/import%2F25.0.7-0ubuntu0.24.04.2-turnip) |
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
-|    Arch Linux    |               [26.2.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260621)               |              [turnip-26.2.0-4](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260621)              |
+|    Arch Linux    |               [26.2.0-5](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260709)               |              [turnip-26.2.0-5](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260709)              |
 
 ### 直接解壓
 
@@ -55,6 +55,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |   Ubuntu 25.10   | `ubuntu_questing_arm64` |
 | Ubuntu 26.04 LTS | `ubuntu_resolute_arm64` |
 |    Fedora 43     |   `fedora_43_arm64`    |
+|    Fedora 44     |   `fedora_44_arm64`    |
 |    Arch Linux    |   `archlinux_arm64`    |
 |    Void Linux    |      `void_arm64`      |
 |    Alpine 3.24   |   `alpine_3.24_arm64`  |
@@ -63,7 +64,7 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 
 | 標準安裝包 | 未打補丁的 Turnip 安裝包（通常不需要） |
 | :-: | :--: |
-| [26.2.0-devel-20260621](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260621) | [turnip-26.2.0-devel-20260621](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260621) |
+| [26.2.0-devel-20260709](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.2.0-devel-20260709) | [turnip-26.2.0-devel-20260709](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.2.0-devel-20260709) |
 
 > [!NOTE]
 > 對於 7XX & 8XX，現在應該不再需要安裝未打補丁的 Turnip 驅動程式了。標準安裝包中打過補丁的 Turnip 驅動程式應該能正常運作。
