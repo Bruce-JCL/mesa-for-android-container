@@ -395,7 +395,7 @@ class Expression(Value):
       self.nnan = cond.pop('nnan', False)
       self.ninf = cond.pop('ninf', False)
       self.contract = cond.pop('contract', False)
-      self.swizzle = -1 if m.group('swizzle') is None else swizzles[m.group('swizzle').removeprefix('.')]
+      self.swizzle = -1 if m.group('swizzle') is None else swizzles[m.group('swizzle')[1:]]
 
       assert len(cond) <= 1
       self.cond = cond.popitem()[0] if cond else None

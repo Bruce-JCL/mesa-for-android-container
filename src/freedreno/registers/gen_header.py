@@ -960,7 +960,10 @@ def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--rnn', type=str, required=True)
 	parser.add_argument('--xml', type=str, required=True)
-	parser.add_argument('--validate', action=argparse.BooleanOptionalAction)
+	validate_group = parser.add_mutually_exclusive_group()
+	validate_group.add_argument('--validate', dest='validate', action='store_true')
+	validate_group.add_argument('--no-validate', dest='validate', action='store_false')
+	parser.set_defaults(validate=None)
 
 	subparsers = parser.add_subparsers()
 	subparsers.required = True

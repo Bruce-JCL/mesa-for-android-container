@@ -2043,7 +2043,11 @@ dep_glproto_version = '>= 1.4.14'
 dep_xcb_dri3_version = '>= 1.13'
 dep_xcb_glx_version = '>= 1.8.1'
 dep_xcb_present_version = '>= 1.13'
-dep_xlib_version = '>= 1.8'
+# Ubuntu 22.04 provides libX11 1.7.5.  Mesa does not use newer Xlib ABI
+# symbols here; 1.8 merely guarantees that XInitThreads is called by Xlib's
+# constructor.  Keep the Jammy cross sysroot usable (applications which use
+# Xlib from multiple threads must still call XInitThreads as before).
+dep_xlib_version = '>= 1.7.5'
 dep_xlib_xrandr_version = '>= 1.3'
 dep_xshmfence_version = '>= 1.1'
 
