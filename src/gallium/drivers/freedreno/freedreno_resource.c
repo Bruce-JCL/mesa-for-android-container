@@ -1438,6 +1438,8 @@ fd_resource_create_with_modifiers(struct pipe_screen *pscreen,
 
       /* note: alignment is wrong for a6xx */
       scanout_templat.width0 = align(tmpl->width0, screen->info->gmem_align_w);
+      scanout_templat.height0 =
+         align(tmpl->height0, screen->info->gmem_align_h);
 
       scanout =
          renderonly_scanout_for_resource(&scanout_templat, screen->ro, &handle);

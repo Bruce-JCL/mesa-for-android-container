@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <xf86drm.h>
 #include "drm-uapi/drm_fourcc.h"
 #include <sys/sysinfo.h>
 
@@ -362,6 +363,12 @@ fd_init_screen_caps(struct fd_screen *screen)
    u_init_pipe_screen_caps(&screen->base, 1);
 
    /* this is probably not totally correct.. but it's a start: */
+
+   /* Both MSM DRM and KGSL Freedreno backends can import and export dma-buf
+    * handles through resource_from_handle/resource_get_handle.  Advertise
+    * that capability so the DRI image frontend does not reject valid FDs
+    * before they reach the Freedreno winsys. */
+   caps->dmabuf = DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT;
 
    /* Supported features (boolean caps). */
    caps->npot_textures = true;
