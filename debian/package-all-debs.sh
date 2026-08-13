@@ -3,21 +3,24 @@ set -euo pipefail
 
 build_dir=$(realpath "${1:?缺少 Meson build 目录}")
 source_dir=$(realpath "${2:-$(dirname "$0")/..}")
-meson_py="$(dirname "$source_dir")/.build-tools/meson-1.4.2/meson.py"
+workspace_dir=$(dirname "$source_dir")
+meson_py="$workspace_dir/.build-tools/meson-1.4.2/meson.py"
 version="${MESA_DEB_VERSION:-25.3.0-devel-20250725+xory1}"
-wayland_version="${WAYLAND_PROTOCOLS_DEB_VERSION:-1.41-1+xory1}"
 arch=arm64
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/mesa-deb.XXXXXX")
 stage_dir="$work_dir/stage"
 packages_dir="$work_dir/packages"
-output_dir="$build_dir/deb-packages"
+output_dir="${MESA_DEB_OUTPUT_DIR:-$workspace_dir/deb-packages}"
 
 cleanup() { rm -rf "$work_dir"; }
 trap cleanup EXIT
 
 DESTDIR="$stage_dir" python3 "$meson_py" install -C "$build_dir"
 mkdir -p "$packages_dir" "$output_dir"
-rm -f "$output_dir"/*.deb
+for package in libegl-mesa0 libegl1-mesa-dev libgbm-dev libgbm1 \
+  libgl1-mesa-dri libglx-mesa0 mesa-common-dev mesa-vulkan-drivers; do
+  rm -f "$output_dir/${package}_"*.deb
+done
 
 make_control() {
   local package=$1 architecture=$2 depends=$3 description=$4 root="$packages_dir/$1"
@@ -75,11 +78,6 @@ make_control libgbm-dev "$arch" "libgbm1 (= $version)" \
   'Mesa GBM development files for Xory'
 make_control mesa-common-dev "$arch" 'libdrm-dev, libgl-dev, libglx-dev, libx11-dev' \
   'Mesa common development files for Xory'
-make_control wayland-protocols all '' \
-  'Wayland protocol definitions used by this Mesa build'
-sed -i "s/^Version: .*/Version: $wayland_version/" \
-  "$packages_dir/wayland-protocols/DEBIAN/control"
-
 for package in libgl1-mesa-dri libegl-mesa0 libglx-mesa0 libgbm1 mesa-vulkan-drivers; do
   cat >"$packages_dir/$package/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -125,8 +123,10 @@ move_tree mesa-common-dev usr/include/GL
 move_path mesa-vulkan-drivers "$libdir/libvulkan_freedreno.so"
 move_tree mesa-vulkan-drivers usr/share/vulkan
 
-move_tree wayland-protocols usr/share/wayland-protocols
-move_path wayland-protocols usr/share/pkgconfig/wayland-protocols.pc
+# wayland-protocols 1.41 is a build-time fallback.  It is not an output of
+# this Mesa project, so deliberately exclude its data from the Mesa deb set.
+rm -rf "$stage_dir/usr/share/wayland-protocols"
+rm -f "$stage_dir/usr/share/pkgconfig/wayland-protocols.pc"
 
 # Empty directories are harmless; any remaining file is an unassigned artifact
 # and must stop packaging so that new libraries can never be silently omitted.
@@ -148,10 +148,6 @@ for package_root in "$packages_dir"/*; do
   (cd "$package_root" && find usr -type f -exec md5sum {} + >DEBIAN/md5sums)
   dpkg-deb --root-owner-group --build "$package_root" "$output_dir/${package}_${version}_${arch}.deb" >/dev/null
 done
-
-# Architecture-all packages conventionally use _all in their filename.
-mv "$output_dir/wayland-protocols_${version}_${arch}.deb" \
-   "$output_dir/wayland-protocols_${wayland_version}_all.deb"
 
 echo "已生成全部 Mesa deb: $output_dir"
 ls -1 "$output_dir"/*.deb
