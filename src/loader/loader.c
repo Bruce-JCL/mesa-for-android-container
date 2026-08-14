@@ -706,8 +706,8 @@ loader_get_linux_pci_id_for_fd(int fd, int *vendor_id, int *chip_id)
 bool
 loader_get_pci_id_for_fd(int fd, int *vendor_id, int *chip_id)
 {
-#ifdef __TERMUX__
-   const char *env = getenv("MESA_LOADER_DRIVER_OVERRIDE");
+#ifdef HAVE_FREEDRENO_KGSL
+   const char *env = os_get_option("MESA_LOADER_DRIVER_OVERRIDE");
    if (env && strcmp(env, "kgsl") == 0) {
       return false;
    }

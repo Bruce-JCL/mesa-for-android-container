@@ -99,6 +99,12 @@ kgsl_pipe_get_param(struct fd_pipe *pipe, enum fd_param_id param,
       return -1;
    case FD_TIMESTAMP:
       return -1;
+   case FD_UCHE_TRAP_BASE:
+      /* KGSL does not expose this through the DRM-style pipe interface.
+       * Return unsupported without reporting an invalid parameter so the
+       * caller uses its generation-specific fallback address.
+       */
+      return -1;
    default:
       ERROR_MSG("invalid param id: %d", param);
       return -1;
