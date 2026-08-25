@@ -148,8 +148,8 @@ MESA_LOADER_DRIVER_OVERRIDE=kgsl
 
 <a href="https://www.star-history.com/?repos=lfdevs%2Fmesa-for-android-container&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&theme=dark&legend=top-left&sealed_token=f_dmxNgIuqmmKjmrOkhU7KUe8lBmL7tzUYuGN6079kOcgw8MpydWLZzyqBVtWaGXLNp4RkqgRycjHZrfRbuiCCulhb8LrNAdqB1Y_g8_9Jpb3AKRizW4C6hWR_z5YCw58SBuirNJMIJxrlvXInHCv0omeS98I4ONf7d1OOeaWGdqKT3VsE5npYReXBC1" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left&sealed_token=f_dmxNgIuqmmKjmrOkhU7KUe8lBmL7tzUYuGN6079kOcgw8MpydWLZzyqBVtWaGXLNp4RkqgRycjHZrfRbuiCCulhb8LrNAdqB1Y_g8_9Jpb3AKRizW4C6hWR_z5YCw58SBuirNJMIJxrlvXInHCv0omeS98I4ONf7d1OOeaWGdqKT3VsE5npYReXBC1" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left&sealed_token=f_dmxNgIuqmmKjmrOkhU7KUe8lBmL7tzUYuGN6079kOcgw8MpydWLZzyqBVtWaGXLNp4RkqgRycjHZrfRbuiCCulhb8LrNAdqB1Y_g8_9Jpb3AKRizW4C6hWR_z5YCw58SBuirNJMIJxrlvXInHCv0omeS98I4ONf7d1OOeaWGdqKT3VsE5npYReXBC1" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&theme=dark&legend=top-left&sealed_token=-2pLkYNq1aQwJzT6Y1uRCEDJafu_HLcd9hb1VGrC9AFHi5L1fU21UewEFoql9B96-B2_Th981yCh2-JTfhuYnWfcEZy3pynzSJZbRf7wZFfLfxXqRO-dcbgT5JFsZ_qyxdVKBbY9bX_gtmBCB7vhMYejuCdB1r1N3ssXmepoU3JLI4Ds637uH0CXhm_Y" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left&sealed_token=-2pLkYNq1aQwJzT6Y1uRCEDJafu_HLcd9hb1VGrC9AFHi5L1fU21UewEFoql9B96-B2_Th981yCh2-JTfhuYnWfcEZy3pynzSJZbRf7wZFfLfxXqRO-dcbgT5JFsZ_qyxdVKBbY9bX_gtmBCB7vhMYejuCdB1r1N3ssXmepoU3JLI4Ds637uH0CXhm_Y" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lfdevs/mesa-for-android-container&type=date&legend=top-left&sealed_token=-2pLkYNq1aQwJzT6Y1uRCEDJafu_HLcd9hb1VGrC9AFHi5L1fU21UewEFoql9B96-B2_Th981yCh2-JTfhuYnWfcEZy3pynzSJZbRf7wZFfLfxXqRO-dcbgT5JFsZ_qyxdVKBbY9bX_gtmBCB7vhMYejuCdB1r1N3ssXmepoU3JLI4Ds637uH0CXhm_Y" />
  </picture>
 </a>
