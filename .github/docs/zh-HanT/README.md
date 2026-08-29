@@ -42,6 +42,8 @@ Forked From [Mesa - The 3D Graphics Library](https://gitlab.freedesktop.org/mesa
 |    Fedora 43     |             [25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-25.2.7-4.fc43-adreno)             |               [turnip-25.2.7-4.fc43](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-25.2.7-4.fc43)                |
 |    Arch Linux    |               [26.3.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/mesa-26.3.0-devel-20260824)               |              [turnip-26.3.0-1](https://github.com/lfdevs/mesa-for-android-container/releases/tag/turnip-26.3.0-devel-20260824)              |
 
+若需要 Termux native 版本，請使用該 PR 的建置產物：<https://github.com/termux/termux-packages/pull/30162>
+
 ### 直接解壓
 
 > [!NOTE]
